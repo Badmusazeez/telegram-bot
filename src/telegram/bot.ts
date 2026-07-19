@@ -46,7 +46,7 @@ export function createTelegramBot(): Bot {
   bot.command("start", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      "robinhood-nft-copy-boy connected.\n\nTip: /track 0xWallet Label\n/help for all commands."
+      "robinhood-nft-copy-bot connected.\n\nTip: /track 0xWallet Label\n/help for all commands."
     );
   });
 

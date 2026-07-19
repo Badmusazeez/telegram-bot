@@ -1,4 +1,4 @@
-# robinhood-nft-copy-boy
+# robinhood-nft-copy-bot
 
 Telegram bot for **Robinhood Chain** free-mint NFT copy trading.
 

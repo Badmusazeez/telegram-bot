@@ -21,18 +21,13 @@ let saveQueue: Promise<void> = Promise.resolve();
 export async function loadState(): Promise<BotState> {
   try {
     const raw = await fs.readFile(config.statePath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<BotState> & {
-      maxBuyEth?: number;
-    };
+    const parsed = JSON.parse(raw) as Partial<BotState>;
     state = {
       ...structuredClone(DEFAULT_STATE),
       ...parsed,
       trackedWallets: parsed.trackedWallets ?? [],
       freeMintsOnly: parsed.freeMintsOnly ?? config.freeMintsOnly,
-      maxBuyRobinhood:
-        parsed.maxBuyRobinhood ??
-        parsed.maxBuyEth ??
-        config.maxBuyRobinhood,
+      maxBuyRobinhood: parsed.maxBuyRobinhood ?? config.maxBuyRobinhood,
       allowedCollections: parsed.allowedCollections ?? [
         ...config.allowedCollections,
       ],

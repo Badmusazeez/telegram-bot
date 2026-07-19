@@ -6,7 +6,7 @@ import { loadState } from "./store/state";
 import { broadcastPurchase, createTelegramBot } from "./telegram/bot";
 
 async function main(): Promise<void> {
-  console.log(`Starting robinhood-nft-copy-boy on ${config.chain.name}…`);
+  console.log(`Starting robinhood-nft-copy-bot on ${config.chain.name}…`);
   await loadState();
 
   const provider = getProvider();

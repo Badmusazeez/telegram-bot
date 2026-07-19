@@ -28,7 +28,7 @@ export function formatPurchaseAlert(
     : "";
 
   return [
-    `<b>robinhood-nft-copy-boy alert</b>`,
+    `<b>robinhood-nft-copy-bot alert</b>`,
     `<b>Chain:</b> ${escHtml(config.chain.name)}`,
     `<b>Type:</b> ${kind}`,
     ``,
@@ -55,7 +55,7 @@ export function formatStatus(params: {
   balanceRobinhood?: string;
 }): string {
   return [
-    `<b>robinhood-nft-copy-boy status</b>`,
+    `<b>robinhood-nft-copy-bot status</b>`,
     ``,
     `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>)`,
     `Mode: <b>${params.freeMintsOnly ? "FREE MINTS ONLY" : "ALL ACTIVITY"}</b>`,
@@ -72,7 +72,7 @@ export function formatStatus(params: {
 
 export function helpText(): string {
   return [
-    `<b>robinhood-nft-copy-boy</b>`,
+    `<b>robinhood-nft-copy-bot</b>`,
     `Active chain: <b>${escHtml(config.chain.name)}</b>`,
     ``,
     `Tracks whale wallets and auto-copies <b>free mints only</b> on Robinhood Chain. Paid buys are skipped.`,
