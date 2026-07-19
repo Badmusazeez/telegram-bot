@@ -23,13 +23,14 @@ async function enrichNft(
   contract: string,
   tokenId: string
 ): Promise<Pick<NftPurchase, "collectionName" | "tokenName" | "imageUrl">> {
+  const network = config.chain.alchemyNftNetwork;
   const key = config.alchemyApiKey || extractAlchemyKey(config.ethRpcUrl);
-  if (!key) {
+  if (!key || !network) {
     return {};
   }
 
   try {
-    const url = `https://eth-mainnet.g.alchemy.com/nft/v3/${key}/getNFTMetadata?contractAddress=${contract}&tokenId=${tokenId}&refreshCache=false`;
+    const url = `https://${network}.g.alchemy.com/nft/v3/${key}/getNFTMetadata?contractAddress=${contract}&tokenId=${tokenId}&refreshCache=false`;
     const res = await fetch(url);
     if (!res.ok) {
       return {};
@@ -134,8 +135,9 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
     ? state.lastProcessedBlock + 1
     : Math.max(0, latest - config.lookbackBlocks);
 
-  if (latest - fromBlock > 40) {
-    fromBlock = latest - 40;
+  const maxScan = config.chain.maxScanBlocks;
+  if (latest - fromBlock > maxScan) {
+    fromBlock = latest - maxScan;
   }
   if (fromBlock > latest) {
     return [];

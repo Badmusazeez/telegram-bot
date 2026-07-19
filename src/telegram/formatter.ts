@@ -1,3 +1,4 @@
+import { config } from "../config";
 import { describeWallet } from "../ethereum/monitor";
 import { shortAddress } from "../store/state";
 import type { CopyResult, NftPurchase } from "../types";
@@ -20,9 +21,12 @@ export function formatPurchaseAlert(
       ? `${purchase.valueEth.toFixed(4)} ETH`
       : "unknown / transfer";
   const market = purchase.marketplace || "n/a";
+  const txUrl = config.chain.explorerTxUrl(purchase.txHash);
+  const openSeaUrl = `https://opensea.io/assets/${config.chain.openseaChain}/${purchase.contract}/${purchase.tokenId}`;
 
   return [
     `<b>NFT activity detected</b>`,
+    `<b>Chain:</b> ${escHtml(config.chain.name)}`,
     ``,
     `<b>Wallet:</b> ${escHtml(describeWallet(purchase.buyer))}`,
     `<b>Collection:</b> ${escHtml(collection)}`,
@@ -31,7 +35,8 @@ export function formatPurchaseAlert(
     `<b>Contract:</b> <code>${escHtml(purchase.contract)}</code>`,
     `<b>Paid:</b> ${escHtml(price)}`,
     `<b>Venue:</b> ${escHtml(market)}`,
-    `<b>Tx:</b> <a href="https://etherscan.io/tx/${purchase.txHash}">etherscan</a>`,
+    `<b>Tx:</b> <a href="${txUrl}">explorer</a>`,
+    `<b>Buy:</b> <a href="${openSeaUrl}">OpenSea</a>`,
     ``,
     `<b>Copy:</b> ${escHtml(copy.reason)}`,
   ].join("\n");
@@ -49,6 +54,7 @@ export function formatStatus(params: {
   return [
     `<b>NFT Copy Bot status</b>`,
     ``,
+    `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>)`,
     `Tracked wallets: <b>${params.trackedCount}</b>`,
     `Copy mode: <b>${params.copyEnabled ? "ON" : "OFF"}</b>`,
     `Dry run: <b>${params.dryRun ? "ON" : "OFF"}</b>`,
@@ -62,9 +68,10 @@ export function formatStatus(params: {
 
 export function helpText(): string {
   return [
-    `<b>Ethereum NFT Copy Bot</b>`,
+    `<b>NFT Copy Bot</b>`,
+    `Active chain: <b>${escHtml(config.chain.name)}</b>`,
     ``,
-    `Track whale wallets. Get Telegram alerts when they buy NFTs. Optionally evaluate copy trades (dry-run by default).`,
+    `Track wallets. Get Telegram alerts when they receive NFTs. Optionally evaluate copy trades (dry-run by default).`,
     ``,
     `<b>Commands</b>`,
     `/start — register this chat for alerts`,

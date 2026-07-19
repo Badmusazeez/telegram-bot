@@ -6,21 +6,21 @@ import { loadState } from "./store/state";
 import { broadcastPurchase, createTelegramBot } from "./telegram/bot";
 
 async function main(): Promise<void> {
-  console.log("Starting Ethereum NFT copy bot…");
+  console.log(`Starting NFT copy bot on ${config.chain.name}…`);
   await loadState();
 
   const provider = getProvider();
   const network = await provider.getNetwork();
-  if (network.chainId !== 1n) {
+  if (network.chainId !== config.chain.chainId) {
     console.warn(
-      `Warning: connected chainId=${network.chainId} (expected 1 for Ethereum mainnet)`
+      `Warning: connected chainId=${network.chainId} (expected ${config.chain.chainId} for ${config.chain.name})`
     );
   }
 
   const bot = createTelegramBot();
   const wallet = getWallet();
 
-  console.log(`RPC ready (chainId=${network.chainId})`);
+  console.log(`RPC ready (chain=${config.chain.key} chainId=${network.chainId})`);
   console.log(
     `Copy=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun} maxBuy=${config.maxBuyEth} ETH`
   );

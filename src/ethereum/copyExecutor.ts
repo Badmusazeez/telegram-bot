@@ -153,7 +153,8 @@ async function fetchOpenSeaListing(
   contract: string,
   tokenId: string
 ): Promise<{ priceEth: number; orderHash: string } | null> {
-  const url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&token_ids=${tokenId}&order_by=eth_price&order_direction=asc&limit=1`;
+  const chain = config.chain.openseaChain;
+  const url = `https://api.opensea.io/api/v2/orders/${chain}/seaport/listings?asset_contract_address=${contract}&token_ids=${tokenId}&order_by=eth_price&order_direction=asc&limit=1`;
   const res = await fetch(url, {
     headers: {
       accept: "application/json",

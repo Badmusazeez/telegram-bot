@@ -1,10 +1,13 @@
 import "dotenv/config";
 import { z } from "zod";
+import { resolveChain, type ChainConfig } from "./chains";
 
 const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
-  ETH_RPC_URL: z.string().url("ETH_RPC_URL must be a valid RPC URL"),
+  /** ethereum | robinhood */
+  CHAIN: z.string().optional().default("ethereum"),
+  ETH_RPC_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
     .string()
@@ -28,16 +31,8 @@ const schema = z.object({
     .optional()
     .default("40")
     .transform((v) => Number(v)),
-  POLL_INTERVAL_MS: z
-    .string()
-    .optional()
-    .default("12000")
-    .transform((v) => Number(v)),
-  LOOKBACK_BLOCKS: z
-    .string()
-    .optional()
-    .default("8")
-    .transform((v) => Number(v)),
+  POLL_INTERVAL_MS: z.string().optional().default(""),
+  LOOKBACK_BLOCKS: z.string().optional().default(""),
   ALLOWED_COLLECTIONS: z.string().optional().default(""),
   OPENSEA_API_KEY: z.string().optional().default(""),
 });
@@ -52,6 +47,12 @@ if (!parsed.success) {
 }
 
 const env = parsed.data;
+const chain: ChainConfig = resolveChain(env.CHAIN);
+const rpcUrl = env.ETH_RPC_URL.trim() || chain.defaultRpcUrl;
+
+if (!rpcUrl.startsWith("http")) {
+  throw new Error("ETH_RPC_URL must be a valid RPC URL");
+}
 
 function splitCsv(value: string): string[] {
   return value
@@ -60,18 +61,27 @@ function splitCsv(value: string): string[] {
     .filter(Boolean);
 }
 
+function numberOr(value: string, fallback: number): number {
+  if (!value.trim()) {
+    return fallback;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export const config = {
   telegramToken: env.TELEGRAM_BOT_TOKEN,
   allowedChatIds: new Set(splitCsv(env.TELEGRAM_ALLOWED_CHAT_IDS)),
-  ethRpcUrl: env.ETH_RPC_URL,
+  chain,
+  ethRpcUrl: rpcUrl,
   alchemyApiKey: env.ALCHEMY_API_KEY,
   copyEnabled: env.COPY_ENABLED,
   dryRun: env.DRY_RUN,
   privateKey: env.PRIVATE_KEY,
   maxBuyEth: env.MAX_BUY_ETH,
   maxGasGwei: env.MAX_GAS_GWEI,
-  pollIntervalMs: env.POLL_INTERVAL_MS,
-  lookbackBlocks: env.LOOKBACK_BLOCKS,
+  pollIntervalMs: numberOr(env.POLL_INTERVAL_MS, chain.defaultPollIntervalMs),
+  lookbackBlocks: numberOr(env.LOOKBACK_BLOCKS, chain.defaultLookbackBlocks),
   allowedCollections: splitCsv(env.ALLOWED_COLLECTIONS).map((a) =>
     a.toLowerCase()
   ),
