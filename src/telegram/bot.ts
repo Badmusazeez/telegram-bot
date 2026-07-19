@@ -70,6 +70,7 @@ export function createTelegramBot(): Bot {
         trackedCount: state.trackedWallets.length,
         copyEnabled: state.copyEnabled,
         dryRun: state.dryRun,
+        freeMintsOnly: state.freeMintsOnly,
         maxBuyEth: state.maxBuyEth,
         lastBlock: state.lastProcessedBlock,
         walletAddress: wallet?.address,
@@ -132,7 +133,7 @@ export function createTelegramBot(): Bot {
     await updateState((s) => {
       s.copyEnabled = arg === "on";
     });
-    await ctx.reply(`Copy evaluation is now <b>${arg.toUpperCase()}</b>`, {
+    await ctx.reply(`Auto-mint is now <b>${arg.toUpperCase()}</b>`, {
       parse_mode: "HTML",
     });
   });
@@ -148,8 +149,24 @@ export function createTelegramBot(): Bot {
     });
     await ctx.reply(
       arg === "on"
-        ? "Dry-run ON — bot will simulate copies only."
-        : "Dry-run OFF — live path enabled (still requires safe fulfillment config)."
+        ? "Dry-run ON — bot will simulate free-mint copies only."
+        : "Dry-run OFF — live free-mint replay enabled (needs PRIVATE_KEY + gas ETH)."
+    );
+  });
+
+  bot.command("freemints", async (ctx) => {
+    const arg = (ctx.match || "").trim().toLowerCase();
+    if (arg !== "on" && arg !== "off") {
+      await ctx.reply("Usage: /freemints on|off");
+      return;
+    }
+    await updateState((s) => {
+      s.freeMintsOnly = arg === "on";
+    });
+    await ctx.reply(
+      arg === "on"
+        ? "Free-mints-only ON — paid buys will be skipped."
+        : "Free-mints-only OFF — bot will watch broader NFT activity."
     );
   });
 

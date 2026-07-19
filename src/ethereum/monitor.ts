@@ -174,8 +174,11 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         decoded.to
       );
 
-      // Skip free mints; keep marketplace fills and secondary transfers in.
-      if (decoded.from === ZERO && valueEth <= 0 && !marketplace) {
+      const isFreeMint = decoded.from === ZERO && valueEth <= 0 && !marketplace;
+      const isPaid = valueEth > 0 || !!marketplace;
+
+      // Free-mints-only mode: alert on mints, skip paid buys/transfers.
+      if (state.freeMintsOnly && !isFreeMint) {
         continue;
       }
 
@@ -191,7 +194,11 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         valueEth,
         blockNumber: log.blockNumber,
         timestamp: block?.timestamp ?? Math.floor(Date.now() / 1000),
-        marketplace: marketplace || (valueEth > 0 ? "on-chain" : "transfer"),
+        marketplace: isFreeMint
+          ? "free-mint"
+          : marketplace || (valueEth > 0 ? "on-chain" : "transfer"),
+        isFreeMint,
+        isPaid,
         ...meta,
       });
     }

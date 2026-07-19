@@ -6,7 +6,7 @@ import { loadState } from "./store/state";
 import { broadcastPurchase, createTelegramBot } from "./telegram/bot";
 
 async function main(): Promise<void> {
-  console.log(`Starting NFT copy bot on ${config.chain.name}…`);
+  console.log(`Starting free-mint copy bot on ${config.chain.name}…`);
   await loadState();
 
   const provider = getProvider();
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
 
   console.log(`RPC ready (chain=${config.chain.key} chainId=${network.chainId})`);
   console.log(
-    `Copy=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun} maxBuy=${config.maxBuyEth} ETH`
+    `freeMintsOnly=${config.freeMintsOnly} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun}`
   );
   console.log(
     wallet

@@ -1,107 +1,69 @@
-# NFT Copy Bot (Telegram) — Ethereum & Robinhood Chain
+# Free-Mint NFT Copy Bot (Telegram) — Robinhood Chain
 
-Track wallets in Telegram on **Ethereum** or **Robinhood Chain**. When a tracked wallet receives an ERC-721 NFT, the bot alerts you (with an OpenSea buy link) and can evaluate a copy trade.
+Track whale wallets on **Robinhood Chain** (or Ethereum). When they do a **free mint**, the bot can auto-replay the same mint calldata into your wallet. **Paid mints/buys are skipped.**
 
-**Dry-run is on by default.** Live auto-buy fulfillment is intentionally gated so a bad marketplace calldata path cannot drain funds.
+**Dry-run is on by default.** Turn on live auto-mint only after testing.
 
-## Supported chains
+## Mode
 
-| `CHAIN` | Chain ID | Default RPC | Explorer |
-|---|---|---|---|
-| `ethereum` | 1 | Alchemy mainnet URL | etherscan.io |
-| `robinhood` | 4663 | `https://rpc.mainnet.chain.robinhood.com` | robinhoodchain.blockscout.com |
+| Setting | Default | Meaning |
+|---|---|---|
+| `CHAIN` | `robinhood` | Robinhood Chain (4663) |
+| `FREE_MINTS_ONLY` | `true` | Skip paid activity |
+| `COPY_ENABLED` | `false` | Auto-mint off until `/copy on` |
+| `DRY_RUN` | `true` | Simulate; no spend |
 
-Robinhood Chain is an EVM L2 with OpenSea NFT support.
+## How auto free-mint works
 
-## Features
+1. Whale wallet receives an ERC-721 mint (`from = 0x0`, 0 ETH)
+2. Bot loads their mint transaction
+3. If they sent a **0 ETH** mint tx themselves, bot replays the same calldata
+4. Paid txs (`value > 0`) are skipped
 
-- Switch chains with `CHAIN=ethereum` or `CHAIN=robinhood`
-- Track wallets from Telegram
-- Poll for ERC-721 transfers to those wallets
-- OpenSea deep-link in every alert so you can buy from your own wallet
-- Copy-trade evaluation with max price, gas cap, and collection allowlist
-- Persistent state in `data/state.json`
-
-## Quick start (Robinhood Chain)
+## Quick start (Robinhood + free mints)
 
 ```bash
 cp .env.example .env
-# fill TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_CHAT_IDS
-# keep CHAIN=robinhood
+# fill TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS
+# add PRIVATE_KEY only when ready for live auto-mint
 npm install
 npm run dev
 ```
 
-### 1) Telegram bot
-
-1. Message [@BotFather](https://t.me/BotFather) → `/newbot`
-2. Copy the token into `TELEGRAM_BOT_TOKEN`
-3. Message your bot, then get your chat id from [@userinfobot](https://t.me/userinfobot)
-4. Set `TELEGRAM_ALLOWED_CHAT_IDS=your_chat_id`
-
-### 2) Chain / RPC
-
-**Robinhood Chain:**
-
-```env
-CHAIN=robinhood
-ETH_RPC_URL=https://rpc.mainnet.chain.robinhood.com
-```
-
-**Ethereum mainnet:**
-
-```env
-CHAIN=ethereum
-ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
-ALCHEMY_API_KEY=YOUR_KEY
-```
-
-### 3) Run
-
-```bash
-npm run dev
-```
-
-In Telegram:
+Telegram:
 
 ```text
 /start
-/track 0xWalletAddress Whale1
+/track 0xWhale FreeMinter
+/freemints on
+/copy on
+/dryrun on
 /status
 ```
 
-### Buy the NFT yourself (recommended)
+When dry-run looks good:
 
-When an alert arrives, tap **OpenSea** in the message, connect your wallet on the correct chain, and buy manually. Keep `DRY_RUN=true` until you understand the risks.
+```text
+/dryrun off
+```
 
-## Telegram commands
+Fund the buyer wallet with a little ETH on Robinhood Chain for gas first.
 
-| Command | Description |
-|---|---|
-| `/start` | Register chat for alerts |
-| `/help` | Command list |
-| `/status` | Chain, copy mode, dry-run, max buy, last block |
-| `/wallets` | List tracked wallets |
-| `/track <addr> [label]` | Start tracking a wallet |
-| `/untrack <addr>` | Stop tracking |
-| `/copy on\|off` | Toggle copy evaluation |
-| `/dryrun on\|off` | Toggle simulation mode |
-| `/maxbuy <eth>` | Max ETH for a copy |
-| `/allow <contract\|clear>` | Collection allowlist |
+## Network (MetaMask)
 
-## Copy trading safety
+- Name: Robinhood Chain  
+- Chain ID: `4663`  
+- RPC: `https://rpc.mainnet.chain.robinhood.com`  
+- Symbol: ETH  
+- Explorer: https://robinhoodchain.blockscout.com  
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `DRY_RUN` | `true` | Simulate only — recommended |
-| `COPY_ENABLED` | `false` | Must enable via env or `/copy on` |
-| `MAX_BUY_ETH` | `0.05` | Hard price ceiling |
-| `PRIVATE_KEY` | empty | Required only for live signing |
+## Safety
 
-Live Seaport auto-fulfill is **not** enabled by default.
+- Never paste a private key into Telegram
+- Use a fresh low-balance mint wallet
+- Malicious mint contracts can still waste gas or behave badly — allowlist collections with `/allow` when possible
+- Delete `data/state.json` when switching chains
 
-## Notes
+## Commands
 
-- When switching chains, delete `data/state.json` (or reset `lastProcessedBlock`) so block cursors don’t mix.
-- Robinhood Chain wallets are separate from Ethereum wallets even if the address string looks the same — activity is per-chain.
-- Never commit `.env` or a funded private key.
+`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow`

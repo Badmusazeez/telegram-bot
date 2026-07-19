@@ -6,7 +6,7 @@ const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
   /** ethereum | robinhood */
-  CHAIN: z.string().optional().default("ethereum"),
+  CHAIN: z.string().optional().default("robinhood"),
   ETH_RPC_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
@@ -15,6 +15,12 @@ const schema = z.object({
     .default("false")
     .transform((v) => v.toLowerCase() === "true"),
   DRY_RUN: z
+    .string()
+    .optional()
+    .default("true")
+    .transform((v) => v.toLowerCase() !== "false"),
+  /** Only alert/copy free mints; skip paid buys and transfers. */
+  FREE_MINTS_ONLY: z
     .string()
     .optional()
     .default("true")
@@ -30,6 +36,11 @@ const schema = z.object({
     .string()
     .optional()
     .default("40")
+    .transform((v) => Number(v)),
+  MAX_MINT_GAS_LIMIT: z
+    .string()
+    .optional()
+    .default("500000")
     .transform((v) => Number(v)),
   POLL_INTERVAL_MS: z.string().optional().default(""),
   LOOKBACK_BLOCKS: z.string().optional().default(""),
@@ -77,9 +88,11 @@ export const config = {
   alchemyApiKey: env.ALCHEMY_API_KEY,
   copyEnabled: env.COPY_ENABLED,
   dryRun: env.DRY_RUN,
+  freeMintsOnly: env.FREE_MINTS_ONLY,
   privateKey: env.PRIVATE_KEY,
   maxBuyEth: env.MAX_BUY_ETH,
   maxGasGwei: env.MAX_GAS_GWEI,
+  maxMintGasLimit: env.MAX_MINT_GAS_LIMIT,
   pollIntervalMs: numberOr(env.POLL_INTERVAL_MS, chain.defaultPollIntervalMs),
   lookbackBlocks: numberOr(env.LOOKBACK_BLOCKS, chain.defaultLookbackBlocks),
   allowedCollections: splitCsv(env.ALLOWED_COLLECTIONS).map((a) =>

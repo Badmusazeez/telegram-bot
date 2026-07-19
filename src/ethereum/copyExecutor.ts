@@ -1,29 +1,37 @@
+import { formatEther } from "ethers";
+import { config } from "../config";
 import { getState } from "../store/state";
 import type { CopyResult, NftPurchase } from "../types";
-import { config } from "../config";
-import { gasIsAffordable, getWallet } from "./provider";
+import { gasIsAffordable, getProvider, getWallet } from "./provider";
 
 /**
- * Copy executor with hard safety rails.
+ * Free-mint copy executor.
  *
- * Live marketplace fulfillment needs OpenSea/Blur order APIs and careful
- * calldata construction. This bot ships a production-safe pipeline:
- * - evaluates risk/limits
- * - dry-runs by default
- * - when live + OpenSea key is present, attempts to locate a listing and
- *   reports the actionable buy path (fulfillment can be extended)
+ * Strategy: when a tracked wallet initiates a 0-ETH mint tx, replay the same
+ * calldata from our wallet (after estimateGas). Paid mints/buys are skipped.
  */
 export async function maybeCopyPurchase(
   purchase: NftPurchase
 ): Promise<CopyResult> {
   const state = getState();
 
+  if (state.freeMintsOnly) {
+    if (!purchase.isFreeMint || purchase.isPaid || purchase.valueEth > 0) {
+      return {
+        attempted: false,
+        success: false,
+        dryRun: state.dryRun,
+        reason: "Skipped — paid mint/buy (free-mints-only mode).",
+      };
+    }
+  }
+
   if (!state.copyEnabled) {
     return {
       attempted: false,
       success: false,
       dryRun: state.dryRun,
-      reason: "Copy mode is disabled. Use /copy on to enable.",
+      reason: "Auto-mint is disabled. Use /copy on to enable.",
     };
   }
 
@@ -39,26 +47,12 @@ export async function maybeCopyPurchase(
     };
   }
 
-  const isMarketplace =
-    !!purchase.marketplace &&
-    purchase.marketplace !== "transfer" &&
-    purchase.marketplace !== "on-chain";
-
-  if (purchase.valueEth <= 0 && !isMarketplace) {
+  if (!purchase.isFreeMint) {
     return {
       attempted: false,
       success: false,
       dryRun: state.dryRun,
-      reason: "No on-chain ETH value detected (likely private transfer).",
-    };
-  }
-
-  if (purchase.valueEth > 0 && purchase.valueEth > state.maxBuyEth) {
-    return {
-      attempted: false,
-      success: false,
-      dryRun: state.dryRun,
-      reason: `Price ${purchase.valueEth.toFixed(4)} ETH exceeds max ${state.maxBuyEth} ETH.`,
+      reason: "Not a free mint — skipped.",
     };
   }
 
@@ -72,16 +66,52 @@ export async function maybeCopyPurchase(
     };
   }
 
+  const provider = getProvider();
+  const sourceTx = await provider.getTransaction(purchase.txHash);
+  if (!sourceTx) {
+    return {
+      attempted: false,
+      success: false,
+      dryRun: state.dryRun,
+      reason: "Could not load source mint transaction.",
+    };
+  }
+
+  if (sourceTx.value > 0n) {
+    return {
+      attempted: false,
+      success: false,
+      dryRun: state.dryRun,
+      reason: `Skipped paid mint (${formatEther(sourceTx.value)} ETH).`,
+    };
+  }
+
+  if (!sourceTx.to || !sourceTx.data || sourceTx.data === "0x") {
+    return {
+      attempted: false,
+      success: false,
+      dryRun: state.dryRun,
+      reason: "Source tx has no calldata to replay.",
+    };
+  }
+
+  // Only replay mints the whale themselves submitted (not random airdrops).
+  if (sourceTx.from.toLowerCase() !== purchase.buyer.toLowerCase()) {
+    return {
+      attempted: false,
+      success: false,
+      dryRun: state.dryRun,
+      reason:
+        "Skipped airdrop/mint-to-wallet — whale did not send the mint tx.",
+    };
+  }
+
   if (state.dryRun) {
-    const priceLabel =
-      purchase.valueEth > 0
-        ? `~${purchase.valueEth.toFixed(4)} ETH`
-        : "unknown WETH/ETH price";
     return {
       attempted: true,
       success: true,
       dryRun: true,
-      reason: `DRY RUN — would copy buy of token #${purchase.tokenId} for ${priceLabel}${purchase.marketplace ? ` via ${purchase.marketplace}` : ""}.`,
+      reason: `DRY RUN — would replay free mint calldata to ${sourceTx.to} for collection ${purchase.contract} (token #${purchase.tokenId}).`,
     };
   }
 
@@ -91,91 +121,58 @@ export async function maybeCopyPurchase(
       attempted: false,
       success: false,
       dryRun: false,
-      reason: "PRIVATE_KEY missing — cannot submit live copy trades.",
+      reason: "PRIVATE_KEY missing — cannot auto-mint.",
     };
   }
 
-  // Live path: look up OpenSea listing for transparency / future fulfillment.
-  if (config.openseaApiKey) {
-    try {
-      const listing = await fetchOpenSeaListing(
-        purchase.contract,
-        purchase.tokenId
-      );
-      if (!listing) {
-        return {
-          attempted: true,
-          success: false,
-          dryRun: false,
-          reason:
-            "No active OpenSea listing found for this token (may have been sniped).",
-        };
-      }
+  try {
+    const gasEstimate = await provider.estimateGas({
+      from: wallet.address,
+      to: sourceTx.to,
+      data: sourceTx.data,
+      value: 0n,
+    });
 
-      if (listing.priceEth > state.maxBuyEth) {
-        return {
-          attempted: true,
-          success: false,
-          dryRun: false,
-          reason: `OpenSea ask ${listing.priceEth.toFixed(4)} ETH exceeds max ${state.maxBuyEth} ETH.`,
-        };
-      }
-
-      // Explicit non-auto-fulfill guard: live broadcast of marketplace
-      // fulfillments is intentionally not enabled by default because a bad
-      // calldata path can drain funds. Operators can plug fulfillment here.
+    if (gasEstimate > BigInt(config.maxMintGasLimit)) {
       return {
         attempted: true,
         success: false,
         dryRun: false,
-        reason: `Live listing found at ${listing.priceEth.toFixed(4)} ETH (order ${listing.orderHash.slice(0, 10)}…). Auto-fulfill is disabled for safety — set DRY_RUN=true alerts-only, or extend copyExecutor.fulfillOrder().`,
-      };
-    } catch (err) {
-      return {
-        attempted: true,
-        success: false,
-        dryRun: false,
-        reason: `OpenSea lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `Gas estimate ${gasEstimate} exceeds MAX_MINT_GAS_LIMIT ${config.maxMintGasLimit}.`,
       };
     }
-  }
 
-  return {
-    attempted: true,
-    success: false,
-    dryRun: false,
-    reason:
-      "Live copy requires OPENSEA_API_KEY. Bot continues alerting; fulfillment not configured.",
-  };
-}
+    const sent = await wallet.sendTransaction({
+      to: sourceTx.to,
+      data: sourceTx.data,
+      value: 0n,
+      gasLimit: (gasEstimate * 120n) / 100n,
+    });
 
-async function fetchOpenSeaListing(
-  contract: string,
-  tokenId: string
-): Promise<{ priceEth: number; orderHash: string } | null> {
-  const chain = config.chain.openseaChain;
-  const url = `https://api.opensea.io/api/v2/orders/${chain}/seaport/listings?asset_contract_address=${contract}&token_ids=${tokenId}&order_by=eth_price&order_direction=asc&limit=1`;
-  const res = await fetch(url, {
-    headers: {
-      accept: "application/json",
-      "x-api-key": config.openseaApiKey,
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`OpenSea HTTP ${res.status}`);
+    const receipt = await sent.wait();
+    if (!receipt || receipt.status !== 1) {
+      return {
+        attempted: true,
+        success: false,
+        dryRun: false,
+        reason: `Mint tx failed on-chain: ${sent.hash}`,
+        txHash: sent.hash,
+      };
+    }
+
+    return {
+      attempted: true,
+      success: true,
+      dryRun: false,
+      reason: `Free mint copied successfully.`,
+      txHash: sent.hash,
+    };
+  } catch (err) {
+    return {
+      attempted: true,
+      success: false,
+      dryRun: false,
+      reason: `Auto-mint failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
-  const data = (await res.json()) as {
-    orders?: Array<{
-      order_hash: string;
-      price?: { current?: { value?: string; decimals?: number } };
-    }>;
-  };
-  const order = data.orders?.[0];
-  if (!order?.price?.current?.value) {
-    return null;
-  }
-  const decimals = order.price.current.decimals ?? 18;
-  const priceEth =
-    Number(order.price.current.value) / 10 ** decimals;
-  return { priceEth, orderHash: order.order_hash };
 }

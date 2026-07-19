@@ -7,6 +7,7 @@ const DEFAULT_STATE: BotState = {
   trackedWallets: [],
   copyEnabled: config.copyEnabled,
   dryRun: config.dryRun,
+  freeMintsOnly: config.freeMintsOnly,
   maxBuyEth: config.maxBuyEth,
   allowedCollections: [...config.allowedCollections],
   lastProcessedBlock: 0,
@@ -25,6 +26,7 @@ export async function loadState(): Promise<BotState> {
       ...structuredClone(DEFAULT_STATE),
       ...parsed,
       trackedWallets: parsed.trackedWallets ?? [],
+      freeMintsOnly: parsed.freeMintsOnly ?? config.freeMintsOnly,
       allowedCollections: parsed.allowedCollections ?? [
         ...config.allowedCollections,
       ],
