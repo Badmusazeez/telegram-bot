@@ -1,4 +1,4 @@
-export type ChainKey = "ethereum" | "robinhood";
+export type ChainKey = "robinhood";
 
 export interface ChainConfig {
   key: ChainKey;
@@ -18,19 +18,6 @@ export interface ChainConfig {
 }
 
 export const CHAINS: Record<ChainKey, ChainConfig> = {
-  ethereum: {
-    key: "ethereum",
-    name: "Ethereum Mainnet",
-    chainId: 1n,
-    defaultRpcUrl: "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY",
-    explorerTxUrl: (tx) => `https://etherscan.io/tx/${tx}`,
-    explorerAddressUrl: (addr) => `https://etherscan.io/address/${addr}`,
-    openseaChain: "ethereum",
-    alchemyNftNetwork: "eth-mainnet",
-    maxScanBlocks: 40,
-    defaultLookbackBlocks: 8,
-    defaultPollIntervalMs: 12_000,
-  },
   robinhood: {
     key: "robinhood",
     name: "Robinhood Chain",
@@ -40,9 +27,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     explorerAddressUrl: (addr) =>
       `https://robinhoodchain.blockscout.com/address/${addr}`,
     openseaChain: "robinhood",
-    // Alchemy NFT metadata may not be available on every RH endpoint.
     alchemyNftNetwork: undefined,
-    // ~100ms blocks → scan a wider window per poll.
     maxScanBlocks: 400,
     defaultLookbackBlocks: 120,
     defaultPollIntervalMs: 5_000,
@@ -50,7 +35,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
 };
 
 export function resolveChain(raw: string | undefined): ChainConfig {
-  const key = (raw || "ethereum").trim().toLowerCase() as ChainKey;
+  const key = (raw || "robinhood").trim().toLowerCase() as ChainKey;
   const chain = CHAINS[key];
   if (!chain) {
     throw new Error(

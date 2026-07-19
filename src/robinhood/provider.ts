@@ -7,7 +7,7 @@ let wallet: Wallet | null = null;
 
 export function getProvider(): JsonRpcProvider {
   if (!provider) {
-    provider = new JsonRpcProvider(config.ethRpcUrl);
+    provider = new JsonRpcProvider(config.rpcUrl);
   }
   return provider;
 }
@@ -22,7 +22,7 @@ export function getWallet(): Wallet | null {
   return wallet;
 }
 
-export async function getEthBalance(address: string): Promise<string> {
+export async function getNativeBalance(address: string): Promise<string> {
   const balance = await getProvider().getBalance(address);
   return formatEther(balance);
 }
@@ -36,6 +36,6 @@ export async function gasIsAffordable(): Promise<boolean> {
   return gwei <= config.maxGasGwei;
 }
 
-export function currentMaxBuyEth(): number {
-  return getState().maxBuyEth;
+export function currentMaxBuyRobinhood(): number {
+  return getState().maxBuyRobinhood;
 }

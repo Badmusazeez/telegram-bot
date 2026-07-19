@@ -24,7 +24,7 @@ async function enrichNft(
   tokenId: string
 ): Promise<Pick<NftPurchase, "collectionName" | "tokenName" | "imageUrl">> {
   const network = config.chain.alchemyNftNetwork;
-  const key = config.alchemyApiKey || extractAlchemyKey(config.ethRpcUrl);
+  const key = config.alchemyApiKey || extractAlchemyKey(config.rpcUrl);
   if (!key || !network) {
     return {};
   }
@@ -58,26 +58,26 @@ function extractAlchemyKey(rpcUrl: string): string | null {
 async function estimatePurchaseValue(
   txHash: string,
   buyer: string
-): Promise<{ valueEth: number; marketplace?: string }> {
+): Promise<{ valueRobinhood: number; marketplace?: string }> {
   try {
     const provider = getProvider();
     const tx = await provider.getTransaction(txHash);
     if (!tx) {
-      return { valueEth: 0 };
+      return { valueRobinhood: 0 };
     }
 
     const market = marketplaceName(tx.to);
-    let valueEth = 0;
+    let valueRobinhood = 0;
 
     if (tx.from.toLowerCase() === buyer && tx.value > 0n) {
-      valueEth = Number(formatEther(tx.value));
+      valueRobinhood = Number(formatEther(tx.value));
     } else if (tx.value > 0n) {
-      valueEth = Number(formatEther(tx.value));
+      valueRobinhood = Number(formatEther(tx.value));
     }
 
-    return { valueEth, marketplace: market };
+    return { valueRobinhood, marketplace: market };
   } catch {
-    return { valueEth: 0 };
+    return { valueRobinhood: 0 };
   }
 }
 
@@ -169,15 +169,15 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         continue;
       }
 
-      const { valueEth, marketplace } = await estimatePurchaseValue(
+      const { valueRobinhood, marketplace } = await estimatePurchaseValue(
         log.transactionHash,
         decoded.to
       );
 
-      const isFreeMint = decoded.from === ZERO && valueEth <= 0 && !marketplace;
-      const isPaid = valueEth > 0 || !!marketplace;
+      const isFreeMint =
+        decoded.from === ZERO && valueRobinhood <= 0 && !marketplace;
+      const isPaid = valueRobinhood > 0 || !!marketplace;
 
-      // Free-mints-only mode: alert on mints, skip paid buys/transfers.
       if (state.freeMintsOnly && !isFreeMint) {
         continue;
       }
@@ -191,12 +191,12 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         seller: decoded.from,
         contract: decoded.contract,
         tokenId: decoded.tokenId,
-        valueEth,
+        valueRobinhood,
         blockNumber: log.blockNumber,
         timestamp: block?.timestamp ?? Math.floor(Date.now() / 1000),
         marketplace: isFreeMint
           ? "free-mint"
-          : marketplace || (valueEth > 0 ? "on-chain" : "transfer"),
+          : marketplace || (valueRobinhood > 0 ? "on-chain" : "transfer"),
         isFreeMint,
         isPaid,
         ...meta,

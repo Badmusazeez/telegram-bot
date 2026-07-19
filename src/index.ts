@@ -1,12 +1,12 @@
 import { config } from "./config";
-import { maybeCopyPurchase } from "./ethereum/copyExecutor";
-import { startMonitor } from "./ethereum/monitor";
-import { getProvider, getWallet } from "./ethereum/provider";
+import { maybeCopyPurchase } from "./robinhood/copyExecutor";
+import { startMonitor } from "./robinhood/monitor";
+import { getProvider, getWallet } from "./robinhood/provider";
 import { loadState } from "./store/state";
 import { broadcastPurchase, createTelegramBot } from "./telegram/bot";
 
 async function main(): Promise<void> {
-  console.log(`Starting free-mint copy bot on ${config.chain.name}…`);
+  console.log(`Starting robinhood-nft-copy-boy on ${config.chain.name}…`);
   await loadState();
 
   const provider = getProvider();
@@ -20,7 +20,9 @@ async function main(): Promise<void> {
   const bot = createTelegramBot();
   const wallet = getWallet();
 
-  console.log(`RPC ready (chain=${config.chain.key} chainId=${network.chainId})`);
+  console.log(
+    `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
+  );
   console.log(
     `freeMintsOnly=${config.freeMintsOnly} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun}`
   );
@@ -32,7 +34,7 @@ async function main(): Promise<void> {
 
   const stopMonitor = await startMonitor(async (purchase) => {
     console.log(
-      `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueEth} ETH via ${purchase.marketplace}`
+      `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
     );
     const copy = await maybeCopyPurchase(purchase);
     await broadcastPurchase(bot, purchase, copy);

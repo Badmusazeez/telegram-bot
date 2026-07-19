@@ -10,7 +10,7 @@ export interface NftPurchase {
   seller: string;
   contract: string;
   tokenId: string;
-  valueEth: number;
+  valueRobinhood: number;
   blockNumber: number;
   timestamp: number;
   collectionName?: string;
@@ -19,7 +19,7 @@ export interface NftPurchase {
   marketplace?: string;
   /** True when Transfer is from the zero address (mint). */
   isFreeMint: boolean;
-  /** True when the mint/buy tx carried ETH value > 0. */
+  /** True when the mint/buy tx carried native value > 0. */
   isPaid: boolean;
 }
 
@@ -28,7 +28,7 @@ export interface BotState {
   copyEnabled: boolean;
   dryRun: boolean;
   freeMintsOnly: boolean;
-  maxBuyEth: number;
+  maxBuyRobinhood: number;
   allowedCollections: string[];
   lastProcessedBlock: number;
   notifyChatIds: string[];

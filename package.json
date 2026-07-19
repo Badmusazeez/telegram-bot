@@ -1,7 +1,7 @@
 {
-  "name": "eth-nft-copy-bot",
+  "name": "robinhood-nft-copy-boy",
   "version": "1.0.0",
-  "description": "Ethereum NFT copy-trading bot with Telegram tracking and controls",
+  "description": "Robinhood Chain free-mint NFT copy bot with Telegram tracking",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -13,10 +13,12 @@
     "node": ">=20"
   },
   "keywords": [
-    "ethereum",
+    "robinhood",
+    "robinhood-chain",
     "nft",
     "telegram",
     "copy-trading",
+    "free-mint",
     "bot"
   ],
   "license": "MIT",

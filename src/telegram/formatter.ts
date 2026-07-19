@@ -1,5 +1,5 @@
 import { config } from "../config";
-import { describeWallet } from "../ethereum/monitor";
+import { describeWallet } from "../robinhood/monitor";
 import { shortAddress } from "../store/state";
 import type { CopyResult, NftPurchase } from "../types";
 
@@ -28,7 +28,7 @@ export function formatPurchaseAlert(
     : "";
 
   return [
-    `<b>NFT activity detected</b>`,
+    `<b>robinhood-nft-copy-boy alert</b>`,
     `<b>Chain:</b> ${escHtml(config.chain.name)}`,
     `<b>Type:</b> ${kind}`,
     ``,
@@ -49,33 +49,33 @@ export function formatStatus(params: {
   copyEnabled: boolean;
   dryRun: boolean;
   freeMintsOnly: boolean;
-  maxBuyEth: number;
+  maxBuyRobinhood: number;
   lastBlock: number;
   walletAddress?: string;
-  balanceEth?: string;
+  balanceRobinhood?: string;
 }): string {
   return [
-    `<b>NFT Copy Bot status</b>`,
+    `<b>robinhood-nft-copy-boy status</b>`,
     ``,
     `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>)`,
     `Mode: <b>${params.freeMintsOnly ? "FREE MINTS ONLY" : "ALL ACTIVITY"}</b>`,
     `Tracked wallets: <b>${params.trackedCount}</b>`,
     `Auto-mint: <b>${params.copyEnabled ? "ON" : "OFF"}</b>`,
     `Dry run: <b>${params.dryRun ? "ON" : "OFF"}</b>`,
-    `Max buy (ignored for free mints): <b>${params.maxBuyEth} ETH</b>`,
+    `Max buy (ignored for free mints): <b>${params.maxBuyRobinhood}</b>`,
     `Last block: <code>${params.lastBlock || "—"}</code>`,
     params.walletAddress
-      ? `Bot wallet: <code>${escHtml(params.walletAddress)}</code> (${escHtml(params.balanceEth ?? "?")} ETH)`
+      ? `Bot wallet: <code>${escHtml(params.walletAddress)}</code> (balance ${escHtml(params.balanceRobinhood ?? "?")})`
       : `Bot wallet: <i>not configured</i>`,
   ].join("\n");
 }
 
 export function helpText(): string {
   return [
-    `<b>Free-Mint Copy Bot</b>`,
+    `<b>robinhood-nft-copy-boy</b>`,
     `Active chain: <b>${escHtml(config.chain.name)}</b>`,
     ``,
-    `Tracks whale wallets and auto-copies <b>free mints only</b>. Paid buys are skipped.`,
+    `Tracks whale wallets and auto-copies <b>free mints only</b> on Robinhood Chain. Paid buys are skipped.`,
     ``,
     `<b>Commands</b>`,
     `/start — register this chat for alerts`,
@@ -87,7 +87,7 @@ export function helpText(): string {
     `/copy on|off — toggle auto-mint`,
     `/dryrun on|off — toggle simulation mode`,
     `/freemints on|off — free-mints-only filter`,
-    `/maxbuy &lt;eth&gt; — max paid price (unused in free-mint mode)`,
+    `/maxbuy &lt;amount&gt; — max paid price (unused in free-mint mode)`,
     `/allow &lt;contract|clear&gt; — collection allowlist`,
   ].join("\n");
 }

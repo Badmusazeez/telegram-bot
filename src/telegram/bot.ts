@@ -1,7 +1,7 @@
 import { Bot, Context } from "grammy";
 import { isAddress } from "ethers";
 import { config } from "../config";
-import { getEthBalance, getWallet } from "../ethereum/provider";
+import { getNativeBalance, getWallet } from "../robinhood/provider";
 import {
   addTrackedWallet,
   getState,
@@ -46,7 +46,7 @@ export function createTelegramBot(): Bot {
   bot.command("start", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      "Connected. You will receive NFT alerts here.\n\nTip: /track 0xWallet Label\n/help for all commands."
+      "robinhood-nft-copy-boy connected.\n\nTip: /track 0xWallet Label\n/help for all commands."
     );
   });
 
@@ -57,12 +57,14 @@ export function createTelegramBot(): Bot {
   bot.command("status", async (ctx) => {
     const state = getState();
     const wallet = getWallet();
-    let balanceEth: string | undefined;
+    let balanceRobinhood: string | undefined;
     if (wallet) {
       try {
-        balanceEth = Number(await getEthBalance(wallet.address)).toFixed(4);
+        balanceRobinhood = Number(
+          await getNativeBalance(wallet.address)
+        ).toFixed(4);
       } catch {
-        balanceEth = "?";
+        balanceRobinhood = "?";
       }
     }
     await ctx.reply(
@@ -71,10 +73,10 @@ export function createTelegramBot(): Bot {
         copyEnabled: state.copyEnabled,
         dryRun: state.dryRun,
         freeMintsOnly: state.freeMintsOnly,
-        maxBuyEth: state.maxBuyEth,
+        maxBuyRobinhood: state.maxBuyRobinhood,
         lastBlock: state.lastProcessedBlock,
         walletAddress: wallet?.address,
-        balanceEth,
+        balanceRobinhood,
       }),
       { parse_mode: "HTML" }
     );
@@ -87,7 +89,8 @@ export function createTelegramBot(): Bot {
       return;
     }
     const lines = trackedWallets.map(
-      (w, i) => `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
+      (w, i) =>
+        `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
     );
     await ctx.reply(`<b>Tracked wallets</b>\n\n${lines.join("\n\n")}`, {
       parse_mode: "HTML",
@@ -150,7 +153,7 @@ export function createTelegramBot(): Bot {
     await ctx.reply(
       arg === "on"
         ? "Dry-run ON — bot will simulate free-mint copies only."
-        : "Dry-run OFF — live free-mint replay enabled (needs PRIVATE_KEY + gas ETH)."
+        : "Dry-run OFF — live free-mint replay enabled (needs PRIVATE_KEY + Robinhood gas)."
     );
   });
 
@@ -178,9 +181,9 @@ export function createTelegramBot(): Bot {
       return;
     }
     await updateState((s) => {
-      s.maxBuyEth = value;
+      s.maxBuyRobinhood = value;
     });
-    await ctx.reply(`Max buy set to ${value} ETH`);
+    await ctx.reply(`Max buy set to ${value} (Robinhood native)`);
   });
 
   bot.command("allow", async (ctx) => {

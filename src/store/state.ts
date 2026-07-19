@@ -8,7 +8,7 @@ const DEFAULT_STATE: BotState = {
   copyEnabled: config.copyEnabled,
   dryRun: config.dryRun,
   freeMintsOnly: config.freeMintsOnly,
-  maxBuyEth: config.maxBuyEth,
+  maxBuyRobinhood: config.maxBuyRobinhood,
   allowedCollections: [...config.allowedCollections],
   lastProcessedBlock: 0,
   notifyChatIds: [...config.allowedChatIds],
@@ -21,12 +21,18 @@ let saveQueue: Promise<void> = Promise.resolve();
 export async function loadState(): Promise<BotState> {
   try {
     const raw = await fs.readFile(config.statePath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<BotState>;
+    const parsed = JSON.parse(raw) as Partial<BotState> & {
+      maxBuyEth?: number;
+    };
     state = {
       ...structuredClone(DEFAULT_STATE),
       ...parsed,
       trackedWallets: parsed.trackedWallets ?? [],
       freeMintsOnly: parsed.freeMintsOnly ?? config.freeMintsOnly,
+      maxBuyRobinhood:
+        parsed.maxBuyRobinhood ??
+        parsed.maxBuyEth ??
+        config.maxBuyRobinhood,
       allowedCollections: parsed.allowedCollections ?? [
         ...config.allowedCollections,
       ],

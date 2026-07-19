@@ -5,9 +5,9 @@ import { resolveChain, type ChainConfig } from "./chains";
 const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
-  /** ethereum | robinhood */
+  /** robinhood */
   CHAIN: z.string().optional().default("robinhood"),
-  ETH_RPC_URL: z.string().optional().default(""),
+  ROBINHOOD_RPC_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
     .string()
@@ -26,12 +26,10 @@ const schema = z.object({
     .default("true")
     .transform((v) => v.toLowerCase() !== "false"),
   PRIVATE_KEY: z.string().optional().default(""),
-  MAX_BUY_ETH: z
+  MAX_BUY_ROBINHOOD: z
     .string()
     .optional()
-    .default("0.05")
-    .transform((v) => Number(v))
-    .refine((n) => Number.isFinite(n) && n > 0, "MAX_BUY_ETH must be > 0"),
+    .default("0.05"),
   MAX_GAS_GWEI: z
     .string()
     .optional()
@@ -59,10 +57,15 @@ if (!parsed.success) {
 
 const env = parsed.data;
 const chain: ChainConfig = resolveChain(env.CHAIN);
-const rpcUrl = env.ETH_RPC_URL.trim() || chain.defaultRpcUrl;
+const rpcUrl = env.ROBINHOOD_RPC_URL.trim() || chain.defaultRpcUrl;
 
 if (!rpcUrl.startsWith("http")) {
-  throw new Error("ETH_RPC_URL must be a valid RPC URL");
+  throw new Error("ROBINHOOD_RPC_URL must be a valid RPC URL");
+}
+
+const maxBuyRobinhood = Number(env.MAX_BUY_ROBINHOOD);
+if (!Number.isFinite(maxBuyRobinhood) || maxBuyRobinhood <= 0) {
+  throw new Error("MAX_BUY_ROBINHOOD must be > 0");
 }
 
 function splitCsv(value: string): string[] {
@@ -84,13 +87,13 @@ export const config = {
   telegramToken: env.TELEGRAM_BOT_TOKEN,
   allowedChatIds: new Set(splitCsv(env.TELEGRAM_ALLOWED_CHAT_IDS)),
   chain,
-  ethRpcUrl: rpcUrl,
+  rpcUrl,
   alchemyApiKey: env.ALCHEMY_API_KEY,
   copyEnabled: env.COPY_ENABLED,
   dryRun: env.DRY_RUN,
   freeMintsOnly: env.FREE_MINTS_ONLY,
   privateKey: env.PRIVATE_KEY,
-  maxBuyEth: env.MAX_BUY_ETH,
+  maxBuyRobinhood,
   maxGasGwei: env.MAX_GAS_GWEI,
   maxMintGasLimit: env.MAX_MINT_GAS_LIMIT,
   pollIntervalMs: numberOr(env.POLL_INTERVAL_MS, chain.defaultPollIntervalMs),

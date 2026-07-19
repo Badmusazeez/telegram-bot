@@ -5,10 +5,10 @@ import type { CopyResult, NftPurchase } from "../types";
 import { gasIsAffordable, getProvider, getWallet } from "./provider";
 
 /**
- * Free-mint copy executor.
+ * Free-mint copy executor for Robinhood Chain.
  *
- * Strategy: when a tracked wallet initiates a 0-ETH mint tx, replay the same
- * calldata from our wallet (after estimateGas). Paid mints/buys are skipped.
+ * When a tracked wallet initiates a 0-value mint tx, replay the same calldata
+ * from our wallet (after estimateGas). Paid mints/buys are skipped.
  */
 export async function maybeCopyPurchase(
   purchase: NftPurchase
@@ -16,7 +16,11 @@ export async function maybeCopyPurchase(
   const state = getState();
 
   if (state.freeMintsOnly) {
-    if (!purchase.isFreeMint || purchase.isPaid || purchase.valueEth > 0) {
+    if (
+      !purchase.isFreeMint ||
+      purchase.isPaid ||
+      purchase.valueRobinhood > 0
+    ) {
       return {
         attempted: false,
         success: false,
@@ -82,7 +86,7 @@ export async function maybeCopyPurchase(
       attempted: false,
       success: false,
       dryRun: state.dryRun,
-      reason: `Skipped paid mint (${formatEther(sourceTx.value)} ETH).`,
+      reason: `Skipped paid mint (${formatEther(sourceTx.value)} native).`,
     };
   }
 
@@ -95,7 +99,6 @@ export async function maybeCopyPurchase(
     };
   }
 
-  // Only replay mints the whale themselves submitted (not random airdrops).
   if (sourceTx.from.toLowerCase() !== purchase.buyer.toLowerCase()) {
     return {
       attempted: false,
@@ -164,7 +167,7 @@ export async function maybeCopyPurchase(
       attempted: true,
       success: true,
       dryRun: false,
-      reason: `Free mint copied successfully.`,
+      reason: `Free mint copied successfully on Robinhood Chain.`,
       txHash: sent.hash,
     };
   } catch (err) {
