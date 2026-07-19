@@ -4,28 +4,60 @@ Track Ethereum wallets in Telegram. When a tracked wallet receives an ERC-721 NF
 
 **Dry-run is on by default.** Live auto-buy fulfillment is intentionally gated so a bad marketplace calldata path cannot drain funds.
 
-## Features
+## Run on your computer (system terminal)
 
-- Track any number of Ethereum wallets from Telegram
-- Poll mainnet for ERC-721 transfers to those wallets
-- Detect OpenSea Seaport / Blur settlement contracts
-- Enrich alerts with Alchemy NFT metadata (name + image when available)
-- Copy-trade evaluation with max price, gas cap, and collection allowlist
-- Persistent state in `data/state.json`
+Everything is designed to run locally in **your** terminal (macOS Terminal, Windows PowerShell/cmd, Linux shell, or Cursor’s integrated terminal).
 
-## Quick start
+### Prerequisites
+
+1. Install **Node.js 20+** from [nodejs.org](https://nodejs.org) (includes `npm`)
+2. Open a terminal in this project folder
+
+### Fastest path
 
 ```bash
-cp .env.example .env
-# fill TELEGRAM_BOT_TOKEN + ETH_RPC_URL (Alchemy recommended)
-npm install
-npm run dev
+npm run setup      # interactive prompts → creates .env on your machine
+npm run bot        # installs deps if needed, checks .env, starts the bot
 ```
+
+Or use the launcher scripts:
+
+```bash
+# macOS / Linux / WSL / Git Bash
+chmod +x run.sh
+./run.sh
+
+# Windows Command Prompt or PowerShell
+.\run.cmd
+```
+
+Keep that terminal window open while the bot runs. Stop with `Ctrl+C`.
+
+### Manual steps (same result)
+
+```bash
+cp .env.example .env   # or: npm run setup
+# edit .env with your Telegram token + Alchemy RPC URL
+npm install
+npm run check          # validates .env before start
+npm run start:dev      # run once
+# or: npm run dev      # auto-reload while editing code
+# or: npm run build && npm start
+```
+
+### What goes where
+
+| You enter… | Where |
+|---|---|
+| Telegram bot token, chat id, Alchemy RPC URL, optional private key | Local `.env` file (created by `npm run setup`) |
+| Wallet addresses to copy | Telegram commands (`/track …`) while the bot is running |
+
+Never paste secrets into Telegram chat. `.env` stays on your computer and is git-ignored.
 
 ### 1) Telegram bot
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot`
-2. Copy the token into `TELEGRAM_BOT_TOKEN`
+2. Copy the token into `TELEGRAM_BOT_TOKEN` (via `npm run setup` or by editing `.env`)
 3. Message your bot, then get your chat id from [@userinfobot](https://t.me/userinfobot)
 4. Set `TELEGRAM_ALLOWED_CHAT_IDS=your_chat_id`
 
@@ -38,14 +70,9 @@ ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
 ALCHEMY_API_KEY=YOUR_KEY
 ```
 
-### 3) Run
+### 3) Use it in Telegram
 
-```bash
-npm run dev     # development
-npm run build && npm start
-```
-
-In Telegram:
+With the terminal bot still running:
 
 ```text
 /start
@@ -55,6 +82,27 @@ In Telegram:
 /copy on
 /maxbuy 0.05
 ```
+
+## Features
+
+- Track any number of Ethereum wallets from Telegram
+- Poll mainnet for ERC-721 transfers to those wallets
+- Detect OpenSea Seaport / Blur settlement contracts
+- Enrich alerts with Alchemy NFT metadata (name + image when available)
+- Copy-trade evaluation with max price, gas cap, and collection allowlist
+- Persistent state in `data/state.json`
+- Terminal setup wizard + env check so you can run it on your machine
+
+## npm commands
+
+| Command | What it does |
+|---|---|
+| `npm run setup` | Interactive terminal wizard → writes `.env` |
+| `npm run check` | Verifies Node + `.env` before start |
+| `npm run bot` | One-shot: install if needed, setup/check, run |
+| `npm run start:dev` | Start bot once (no file watch) |
+| `npm run dev` | Start with auto-reload |
+| `npm run build` / `npm start` | Compile TypeScript, then run `dist/` |
 
 ## Telegram commands
 
@@ -88,6 +136,8 @@ Live auto-fulfillment through Seaport is **not** enabled by default. When dry-ru
 ## Architecture
 
 ```text
+Your terminal ──► npm run bot ──► Telegram + Ethereum monitor
+                                      │
 Telegram commands ──► state store (data/state.json)
                            │
 Ethereum RPC poll ──► NFT transfer monitor ──► copy evaluator ──► Telegram alert

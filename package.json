@@ -4,6 +4,10 @@
   "description": "Ethereum NFT copy-trading bot with Telegram tracking and controls",
   "main": "dist/index.js",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "check": "node scripts/check-env.mjs",
+    "bot": "node scripts/run.mjs",
+    "start:dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
