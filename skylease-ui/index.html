@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SkyLease — House Rental UI · iPhone 17 Pro Max</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Outfit:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <header class="studio-header">
+        <div class="studio-brand">
+          <div class="studio-kicker">Mobile UI · Figma-ready frames</div>
+          <h1 class="studio-title">SkyLease</h1>
+          <p class="studio-sub">
+            Find a home, book an inspection, or list a flat for rent — designed
+            for iPhone 17 Pro Max (440×956) in sky blue &amp; white.
+          </p>
+        </div>
+        <div class="studio-meta">
+          <span class="chip"><span class="chip-dot"></span> iPhone 17 Pro Max</span>
+          <span class="chip">Primary · Sky Blue #0EA5E9</span>
+          <span class="chip">Surface · White</span>
+        </div>
+      </header>
+
+      <nav class="screen-nav" id="screenNav" aria-label="Screens">
+        <button type="button" data-target="splash" class="active">01 Splash</button>
+        <button type="button" data-target="role">02 Role</button>
+        <button type="button" data-target="explore">03 Explore</button>
+        <button type="button" data-target="detail">04 Detail</button>
+        <button type="button" data-target="book">05 Book</button>
+        <button type="button" data-target="landlord">06 Landlord</button>
+        <button type="button" data-target="list">07 List Property</button>
+      </nav>
+
+      <main class="gallery">
+        <!-- 01 Splash -->
+        <section class="frame-wrap" id="splash" data-screen="splash">
+          <div class="frame-label">01 · Splash</div>
+          <div class="iphone" data-figma-frame="01 Splash">
+            <span class="iphone-side left-top"></span>
+            <span class="iphone-side left-mid"></span>
+            <span class="iphone-side left-bot"></span>
+            <span class="iphone-side right"></span>
+            <div class="iphone-screen">
+              <div class="dynamic-island"></div>
+              <div class="status-bar light">
+                <span>9:41</span>
+                <span class="right">
+                  <svg width="17" height="12" viewBox="0 0 17 12" fill="currentColor"><rect x="0" y="3" width="3" height="9" rx="0.5"/><rect x="4.5" y="2" width="3" height="10" rx="0.5"/><rect x="9" y="0" width="3" height="12" rx="0.5"/><rect x="13.5" y="1" width="3.2" height="4" rx="0.5" opacity=".4"/></svg>
+                  <svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><path d="M8 3.2a6.4 6.4 0 0 1 4.5 1.9l1.1-1.1A8 8 0 0 0 8 1.2 8 8 0 0 0 2.4 4l1.1 1.1A6.4 6.4 0 0 1 8 3.2Zm0 3.2a3.2 3.2 0 0 1 2.3 1l1.1-1.1A4.8 4.8 0 0 0 8 4.8 4.8 4.8 0 0 0 4.6 6.3l1.1 1.1A3.2 3.2 0 0 1 8 6.4Zm0 4.4a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z"/></svg>
+                  <svg width="27" height="13" viewBox="0 0 27 13" fill="currentColor"><rect x="0" y="1" width="23" height="11" rx="3" stroke="currentColor" stroke-width="1" fill="none" opacity=".4"/><rect x="2" y="3" width="17" height="7" rx="1.5"/><rect x="24" y="4.5" width="2" height="4" rx="0.5" opacity=".4"/></svg>
+                </span>
+              </div>
+              <div class="app screen-splash">
+                <div>
+                  <div class="splash-mark" aria-hidden="true">
+                    <svg viewBox="0 0 36 36" fill="none">
+                      <path d="M6 16.5 18 7l12 9.5V29a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V16.5Z" stroke="white" stroke-width="2.2"/>
+                      <path d="M14 31V20h8v11" stroke="white" stroke-width="2.2"/>
+                      <circle cx="26" cy="10" r="3" fill="white" opacity=".9"/>
+                    </svg>
+                  </div>
+                  <div class="splash-copy">
+                    <div class="splash-brand">SkyLease</div>
+                    <p class="splash-tag">Homes you can visit, book, and move into — with clarity on availability and location.</p>
+                  </div>
+                  <div class="splash-art" aria-hidden="true">
+                    <span class="splash-orb o1"></span>
+                    <span class="splash-orb o2"></span>
+                    <div class="splash-skyline"></div>
+                  </div>
+                </div>
+                <div class="splash-actions">
+                  <button class="btn btn-primary btn-block" type="button" data-go="role">Get started</button>
+                  <button class="btn btn-secondary btn-block" type="button" data-go="explore">Browse homes</button>
+                </div>
+              </div>
+              <div class="home-indicator light"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 02 Role -->
+        <section class="frame-wrap" id="role" data-screen="role">
+          <div class="frame-label">02 · Choose Role</div>
+          <div class="iphone" data-figma-frame="02 Role Select">
+            <span class="iphone-side left-top"></span>
+            <span class="iphone-side left-mid"></span>
+            <span class="iphone-side left-bot"></span>
+            <span class="iphone-side right"></span>
+            <div class="iphone-screen">
+              <div class="dynamic-island"></div>
+              <div class="status-bar">
+                <span>9:41</span>
+                <span class="right">●●● ▮</span>
+              </div>
+              <div class="app screen-role">
+                <div>
+                  <h1 class="role-title">How will you use SkyLease?</h1>
+                  <p class="role-sub">Seekers book homes. Landlords list flats, bungalows, and more — with live availability.</p>
+                  <div class="role-stack">
+                    <button class="role-card primary" type="button" data-go="explore">
+                      <div class="role-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                      </div>
+                      <h3>Find a house</h3>
+                      <p>Search by type, check availability, view location, and book an inspection.</p>
+                    </button>
+                    <button class="role-card" type="button" data-go="landlord">
+                      <div class="role-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z"/></svg>
+                      </div>
+                      <h3>Lease my property</h3>
+                      <p>List a bedroom flat, bungalow, or duplex and manage inspections.</p>
+                    </button>
+                  </div>
+                </div>
+                <p class="role-note">You can switch roles anytime in settings.</p>
+              </div>
+              <div class="home-indicator"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 03 Explore -->
+        <section class="frame-wrap" id="explore" data-screen="explore">
+          <div class="frame-label">03 · Explore Homes</div>
+          <div class="iphone" data-figma-frame="03 Explore Homes">
+            <span class="iphone-side left-top"></span>
+            <span class="iphone-side left-mid"></span>
+            <span class="iphone-side left-bot"></span>
+            <span class="iphone-side right"></span>
+            <div class="iphone-screen">
+              <div class="dynamic-island"></div>
+              <div class="status-bar">
+                <span>9:41</span>
+                <span class="right">●●● ▮</span>
+              </div>
+              <div class="app screen-explore">
+                <div class="explore-top">
+                  <div class="explore-row">
+                    <div class="greet">Good morning<svg style="display:none"></svg>
+                      <strong>Find your next home</strong>
+                    </div>
+                    <button class="icon-btn" type="button" aria-label="Notifications">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9a6 6 0 1 1 12 0c0 7 3 7 3 7H3s3 0 3-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+                    </button>
+                  </div>
+                  <label class="search">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0284C7" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                    <input type="search" placeholder="City, area, or estate…" value="Lekki Phase 1" readonly />
+                  </label>
+                </div>
+                <div class="filters">
+                  <span class="pill active">All</span>
+                  <span class="pill">1 Bedroom</span>
+                  <span class="pill">2 Bedroom</span>
+                  <span class="pill">Bungalow</span>
+                  <span class="pill">Duplex</span>
+                </div>
+                <div class="section-head">
+                  <h2>Near you</h2>
+                  <button type="button">Map</button>
+                </div>
+                <div class="listing-scroll">
+                  <button class="listing" type="button" data-go="detail">
+                    <div class="listing-media" style="--media: linear-gradient(145deg,#7DD3FC,#0284C7)">
+                      <span class="listing-badge">2 Bedroom</span>
+                    </div>
+                    <div class="listing-body">
+                      <h3>Azure Court Flat</h3>
+                      <div class="listing-meta">
+                        <span>📍 Admiralty Way, Lekki</span>
+                        <span class="avail">Available · Inspect today</span>
+                      </div>
+                      <div class="listing-foot">
+                        <div class="price">₦2.4M <span>/ year</span></div>
+                        <span class="pill">4.9 ★</span>
+                      </div>
+                    </div>
+                  </button>
+                  <button class="listing" type="button" data-go="detail">
+                    <div class="listing-media" style="--media: linear-gradient(145deg,#BAE6FD,#0369A1)">
+                      <span class="listing-badge">Bungalow</span>
+                    </div>
+                    <div class="listing-body">
+                      <h3>Palm Breeze Bungalow</h3>
+                      <div class="listing-meta">
+                        <span>📍 Chevron Drive</span>
+                        <span class="avail">3 slots this week</span>
+                      </div>
+                      <div class="listing-foot">
+                        <div class="price">₦4.1M <span>/ year</span></div>
+                        <span class="pill">4.8 ★</span>
+                      </div>
+                    </div>
+                  </button>
+                  <button class="listing" type="button" data-go="detail">
+                    <div class="listing-media" style="--media: linear-gradient(145deg,#38BDF8,#075985)">
+                      <span class="listing-badge">1 Bedroom</span>
+                    </div>
+                    <div class="listing-body">
+                      <h3>Skyline Studio</h3>
+                      <div class="listing-meta">
+                        <span>📍 Ikate, Lagos</span>
+                        <span class="avail busy">Booked until Fri</span>
+                      </div>
+                      <div class="listing-foot">
+                        <div class="price">₦1.5M <span>/ year</span></div>
+                        <span class="pill">4.7 ★</span>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+                <nav class="bottom-nav" aria-label="Primary">
+                  <div class="nav-item active">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+                    Explore
+                  </div>
+                  <div class="nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                    Map
+                  </div>
+                  <div class="nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+                    Bookings
+                  </div>
+                  <div class="nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+                    Profile
+                  </div>
+                </nav>
+              </div>
+              <div class="home-indicator"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 04 Detail -->
+        <section class="frame-wrap" id="detail" data-screen="detail">
+          <div class="frame-label">04 · Property Detail</div>
+          <div class="iphone" data-figma-frame="04 Property Detail">
+            <span class="iphone-side left-top"></span>
+            <span class="iphone-side left-mid"></span>
+            <span class="iphone-side left-bot"></span>
+            <span class="iphone-side right"></span>
+            <div class="iphone-screen">
+              <div class="dynamic-island"></div>
+              <div class="status-bar light">
+                <span>9:41</span>
+                <span class="right">●●● ▮</span>
+              </div>
+              <div class="app screen-detail">
+                <div class="detail-hero">
+                  <div class="detail-top-actions">
+                    <button class="icon-btn" type="button" data-go="explore" aria-label="Back">←</button>
+                    <button class="icon-btn" type="button" aria-label="Save">♡</button>
+                  </div>
+                  <div class="detail-hero-copy">
+                    <span class="pill soft">2 Bedroom Flat</span>
+                    <h1>Azure Court Flat</h1>
+                    <p>Admiralty Way, Lekki Phase 1 · Lagos</p>
+                  </div>
+                </div>
+                <div class="detail-body">
+                  <div class="stat-row">
+                    <div class="stat"><strong>Available</strong><span>Move-in ready</span></div>
+                    <div class="stat"><strong>2 Bed</strong><span>1 Bath · SQ</span></div>
+                    <div class="stat"><strong>₦2.4M</strong><span>per year</span></div>
+                  </div>
+                  <div class="detail-block">
+                    <h3>About this home</h3>
+                    <p>Bright corner flat with cross-ventilation, fitted kitchen, and estate security. Ideal for professionals who want a calm Lekki base.</p>
+                  </div>
+                  <div class="detail-block">
+                    <h3>Location</h3>
+                    <div class="map-preview" aria-label="Map preview"><span class="map-pin"></span></div>
+                  </div>
+                  <div class="detail-block">
+                    <h3>Inspection slots</h3>
+                    <div class="inspect-slots">
+                      <button class="slot active" type="button"><strong>Today</strong><span>4:30 PM</span></button>
+                      <button class="slot" type="button"><strong>Wed</strong><span>11:00 AM</span></button>
+                      <button class="slot" type="button"><strong>Fri</strong><span>2:00 PM</span></button>
+                    </div>
+                  </div>
+                </div>
+                <div class="detail-cta">
+                  <button class="btn btn-ghost" type="button">Message</button>
+                  <button class="btn btn-primary" type="button" data-go="book">Book inspection</button>
+                </div>
+              </div>
+              <div class="home-indicator"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 05 Book -->
+        <section class="frame-wrap" id="book" data-screen="book">
+          <div class="frame-label">05 · Book Inspection</div>
+          <div class="iphone" data-figma-frame="05 Book Inspection">
+            <span class="iphone-side left-top"></span>
+            <span class="iphone-side left-mid"></span>
+            <span class="iphone-side left-bot"></span>
+            <span class="iphone-side right"></span>
+            <div class="iphone-screen">
+              <div class="dynamic-island"></div>
+              <div class="status-bar">
+                <span>9:41</span>
+                <span class="right">●●● ▮</span>
+              </div>
+              <div class="app screen-book">
+                <div class="book-head">
+                  <button class="icon-btn" type="button" data-go="detail" aria-label="Back">←</button>
+                  <h1>Book inspection</h1>
+                </div>
+                <div class="form-card">
+                  <div class="field">
+                    <label for="property">Property</label>
+                    <input id="property" value="Azure Court Flat · Lekki" readonly />
+                  </div>
+                  <div class="field">
+                    <label for="date">Preferred date</label>
+                    <input id="date" value="Today · Mon 20 Jul" readonly />
+                  </div>
+                  <div class="field">
+                    <label for="time">Time slot</label>
+                    <select id="time">
+                      <option>4:30 PM — Available</option>
+                      <option>5:15 PM — Available</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="guests">Visitors</label>
+                    <select id="guests">
+                      <option>Just me</option>
+                      <option>Me + 1</option>
+                    </select>
+                  </div>
+                  <div class="summary">
+                    <div class="summary-row"><span>Inspection fee</span><span>₦0</span></div>
+                    <div class="summary-row"><span>Agent present</span><span>Yes</span></div>
+                    <div class="summary-row"><span>Confirmation</span><span>Instant</span></div>
+                  </div>
+                </div>
+                <p class="book-note">You’ll get a map pin and landlord contact 30 minutes before the visit. Cancel anytime up to 2 hours prior.</p>
+                <button class="btn btn-primary btn-block" type="button">Confirm booking</button>
+              </div>
+              <div class="home-indicator"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 06 Landlord -->
+        <section class="frame-wrap" id="landlord" data-screen="landlord">
+          <div class="frame-label">06 · Landlord Hub</div>
+          <div class="iphone" data-figma-frame="06 Landlord Listings">
+            <span class="iphone-side left-top"></span>
+            <span class="iphone-side left-mid"></span>
+            <span class="iphone-side left-bot"></span>
+            <span class="iphone-side right"></span>
+            <div class="iphone-screen">
+              <div class="dynamic-island"></div>
+              <div class="status-bar light">
+                <span>9:41</span>
+                <span class="right">●●● ▮</span>
+              </div>
+              <div class="app screen-landlord">
+                <div class="landlord-hero">
+                  <span class="pill soft">Landlord</span>
+                  <h1>Your listings</h1>
+                  <p>Track availability, inspection requests, and lease interest.</p>
+                  <div class="kpi-row">
+                    <div class="kpi"><strong>3</strong><span>Active</span></div>
+                    <div class="kpi"><strong>8</strong><span>Inspections</span></div>
+                    <div class="kpi"><strong>2</strong><span>Offers</span></div>
+                  </div>
+                </div>
+                <div class="section-head">
+                  <h2>Properties</h2>
+                  <button type="button" data-go="list">+ Add</button>
+                </div>
+                <div class="landlord-list">
+                  <div class="ll-item">
+                    <div class="ll-thumb" style="background:linear-gradient(145deg,#7DD3FC,#0284C7)"></div>
+                    <div>
+                      <h3>Harbor View · 1 Bed</h3>
+                      <p>Yaba · Available</p>
+                    </div>
+                    <span class="ll-status">Open</span>
+                  </div>
+                  <div class="ll-item">
+                    <div class="ll-thumb" style="background:linear-gradient(145deg,#BAE6FD,#0369A1)"></div>
+                    <div>
+                      <h3>Garden Bungalow</h3>
+                      <p>Ikeja GRA · 2 tours</p>
+                    </div>
+                    <span class="ll-status">Busy</span>
+                  </div>
+                  <div class="ll-item">
+                    <div class="ll-thumb" style="background:linear-gradient(145deg,#38BDF8,#0C4A6E)"></div>
+                    <div>
+                      <h3>Maple Duplex</h3>
+                      <p>Ajah · Under offer</p>
+                    </div>
+                    <span class="ll-status">Offer</span>
+                  </div>
+                </div>
+                <nav class="bottom-nav" aria-label="Landlord">
+                  <div class="nav-item active">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+                    Home
+                  </div>
+                  <div class="nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18"/></svg>
+                    Calendar
+                  </div>
+                  <div class="nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    List
+                  </div>
+                  <div class="nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+                    Profile
+                  </div>
+                </nav>
+              </div>
+              <div class="home-indicator"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 07 List Property -->
+        <section class="frame-wrap" id="list" data-screen="list">
+          <div class="frame-label">07 · List Property</div>
+          <div class="iphone" data-figma-frame="07 List Property">
+            <span class="iphone-side left-top"></span>
+            <span class="iphone-side left-mid"></span>
+            <span class="iphone-side left-bot"></span>
+            <span class="iphone-side right"></span>
+            <div class="iphone-screen">
+              <div class="dynamic-island"></div>
+              <div class="status-bar">
+                <span>9:41</span>
+                <span class="right">●●● ▮</span>
+              </div>
+              <div class="app screen-list">
+                <div class="book-head">
+                  <button class="icon-btn" type="button" data-go="landlord" aria-label="Back">←</button>
+                  <h1>List a property</h1>
+                </div>
+                <div class="steps" aria-hidden="true">
+                  <span class="step-dot on"></span>
+                  <span class="step-dot on"></span>
+                  <span class="step-dot"></span>
+                  <span class="step-dot"></span>
+                </div>
+                <p style="font-size:13px;color:var(--ink-muted);margin-bottom:14px">Step 2 of 4 · Property type &amp; media</p>
+                <div class="type-grid">
+                  <button class="type-opt active" type="button">1 Bedroom<span>Compact flat</span></button>
+                  <button class="type-opt" type="button">2 Bedroom<span>Family flat</span></button>
+                  <button class="type-opt" type="button">Bungalow<span>Single level</span></button>
+                  <button class="type-opt" type="button">Duplex<span>Two floors</span></button>
+                </div>
+                <div class="upload">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0284C7" stroke-width="2"><path d="M12 16V4m0 0 4 4m-4-4-4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                  <strong>Add photos &amp; floor plan</strong>
+                  <span>Up to 12 images · JPG or PNG</span>
+                </div>
+                <div class="field">
+                  <label for="loc">Location</label>
+                  <input id="loc" value="12 Admiralty Way, Lekki" />
+                </div>
+                <div class="field">
+                  <label for="rent">Annual rent (₦)</label>
+                  <input id="rent" value="2,400,000" />
+                </div>
+                <button class="btn btn-primary btn-block" type="button">Continue to availability</button>
+              </div>
+              <div class="home-indicator"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="transfer-note">
+        <h2>Transfer to Figma</h2>
+        <p>
+          Each phone is a named <code>data-figma-frame</code> at
+          <strong>440×956</strong> (iPhone 17 Pro Max). Design tokens live in
+          <code>figma/design-tokens.json</code>.
+        </p>
+        <ul>
+          <li>Authenticate the Figma MCP in Cursor Desktop, then ask to “push SkyLease screens to Figma”.</li>
+          <li>Or open this page, screenshot each frame, and place on an iPhone 17 Pro Max artboard.</li>
+          <li>Import colors/typography from <code>figma/design-tokens.json</code> as Variables.</li>
+        </ul>
+      </aside>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
