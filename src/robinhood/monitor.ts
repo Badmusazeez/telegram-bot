@@ -109,18 +109,55 @@ function decodeTransfer(log: Log): {
   }
 }
 
-async function logsForBuyer(
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function logsForBuyerChunk(
   fromBlock: number,
   toBlock: number,
   buyer: string
 ): Promise<Log[]> {
   const provider = getProvider();
   const toTopic = zeroPadValue(buyer, 32);
-  return provider.getLogs({
-    fromBlock,
-    toBlock,
-    topics: [TRANSFER_TOPIC, null, toTopic],
-  });
+  let lastErr: unknown;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await provider.getLogs({
+        fromBlock,
+        toBlock,
+        topics: [TRANSFER_TOPIC, null, toTopic],
+      });
+    } catch (err) {
+      lastErr = err;
+      console.warn(
+        `[monitor] getLogs retry ${attempt}/3 for ${buyer} blocks ${fromBlock}-${toBlock}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      await sleep(800 * attempt);
+    }
+  }
+
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+async function logsForBuyer(
+  fromBlock: number,
+  toBlock: number,
+  buyer: string
+): Promise<Log[]> {
+  const chunkSize = Math.max(20, Math.floor(config.chain.maxScanBlocks / 4));
+  const all: Log[] = [];
+
+  for (let start = fromBlock; start <= toBlock; start += chunkSize) {
+    const end = Math.min(toBlock, start + chunkSize - 1);
+    const part = await logsForBuyerChunk(start, end, buyer);
+    all.push(...part);
+  }
+
+  return all;
 }
 
 export async function scanForPurchases(): Promise<NftPurchase[]> {
@@ -144,15 +181,20 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
   }
 
   const purchases: NftPurchase[] = [];
+  let scanOk = true;
 
   for (const wallet of state.trackedWallets) {
     let logs: Log[] = [];
     try {
       logs = await logsForBuyer(fromBlock, latest, wallet.address);
     } catch (err) {
+      scanOk = false;
       console.error(
         `[monitor] getLogs failed for ${wallet.address}:`,
         err instanceof Error ? err.message : err
+      );
+      console.error(
+        "[monitor] Tip: public Robinhood RPC is flaky — set ROBINHOOD_RPC_URL to Alchemy: https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY"
       );
       continue;
     }
@@ -204,9 +246,12 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
     }
   }
 
-  await updateState((s) => {
-    s.lastProcessedBlock = latest;
-  });
+  // Don't skip blocks when RPC fails — retry same window next poll.
+  if (scanOk) {
+    await updateState((s) => {
+      s.lastProcessedBlock = latest;
+    });
+  }
 
   return purchases;
 }

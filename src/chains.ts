@@ -22,15 +22,15 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     key: "robinhood",
     name: "Robinhood Chain",
     chainId: 4663n,
-    defaultRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+    defaultRpcUrl: "https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY",
     explorerTxUrl: (tx) => `https://robinhoodchain.blockscout.com/tx/${tx}`,
     explorerAddressUrl: (addr) =>
       `https://robinhoodchain.blockscout.com/address/${addr}`,
     openseaChain: "robinhood",
-    alchemyNftNetwork: undefined,
-    maxScanBlocks: 400,
-    defaultLookbackBlocks: 120,
-    defaultPollIntervalMs: 5_000,
+    alchemyNftNetwork: "robinhood-mainnet",
+    maxScanBlocks: 200,
+    defaultLookbackBlocks: 80,
+    defaultPollIntervalMs: 8_000,
   },
 };
 
