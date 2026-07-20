@@ -25,7 +25,9 @@ Track whale wallets. When they do a **free mint**, the bot can auto-replay the s
 ## Quick start
 
 ```bash
-cp .env.example .env
+# Windows PowerShell (env.example is easier to see than .env.example)
+copy env.example .env
+
 # fill TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS
 # add PRIVATE_KEY only when ready for live auto-mint
 npm install
