@@ -1,0 +1,71 @@
+{
+  "meta": {
+    "name": "SkyLease",
+    "description": "House rental app design tokens — sky blue & white. Import as Figma Variables.",
+    "device": "iPhone 17 Pro Max",
+    "frame": { "width": 440, "height": 956, "cornerRadius": 55, "safeAreaTop": 59, "safeAreaBottom": 34 }
+  },
+  "colors": {
+    "sky/50": { "value": "#F0F9FF", "type": "COLOR" },
+    "sky/100": { "value": "#E0F2FE", "type": "COLOR" },
+    "sky/200": { "value": "#BAE6FD", "type": "COLOR" },
+    "sky/300": { "value": "#7DD3FC", "type": "COLOR" },
+    "sky/400": { "value": "#38BDF8", "type": "COLOR" },
+    "sky/500": { "value": "#0EA5E9", "type": "COLOR" },
+    "sky/600": { "value": "#0284C7", "type": "COLOR" },
+    "sky/700": { "value": "#0369A1", "type": "COLOR" },
+    "sky/800": { "value": "#075985", "type": "COLOR" },
+    "sky/900": { "value": "#0C4A6E", "type": "COLOR" },
+    "white": { "value": "#FFFFFF", "type": "COLOR" },
+    "ink": { "value": "#0B1F2A", "type": "COLOR" },
+    "ink/muted": { "value": "#5B7380", "type": "COLOR" },
+    "success": { "value": "#10B981", "type": "COLOR" },
+    "warning": { "value": "#F59E0B", "type": "COLOR" },
+    "surface": { "value": "#FFFFFF", "type": "COLOR" },
+    "surface/soft": { "value": "#F7FBFF", "type": "COLOR" },
+    "border": { "value": "#D6EAF7", "type": "COLOR" }
+  },
+  "typography": {
+    "font/display": { "family": "Fraunces", "fallback": "Georgia, serif" },
+    "font/ui": { "family": "Outfit", "fallback": "system-ui, sans-serif" },
+    "styles": {
+      "brand/hero": { "family": "Fraunces", "size": 42, "weight": 600, "lineHeight": 1.1 },
+      "heading/xl": { "family": "Outfit", "size": 28, "weight": 700, "lineHeight": 1.2 },
+      "heading/lg": { "family": "Outfit", "size": 22, "weight": 650, "lineHeight": 1.25 },
+      "heading/md": { "family": "Outfit", "size": 18, "weight": 600, "lineHeight": 1.3 },
+      "body/lg": { "family": "Outfit", "size": 16, "weight": 400, "lineHeight": 1.5 },
+      "body/md": { "family": "Outfit", "size": 14, "weight": 400, "lineHeight": 1.45 },
+      "body/sm": { "family": "Outfit", "size": 12, "weight": 500, "lineHeight": 1.4 },
+      "label": { "family": "Outfit", "size": 13, "weight": 600, "lineHeight": 1.2 },
+      "price": { "family": "Outfit", "size": 20, "weight": 700, "lineHeight": 1.2 }
+    }
+  },
+  "spacing": {
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 40,
+    "screen-x": 20
+  },
+  "radius": {
+    "sm": 10,
+    "md": 16,
+    "lg": 22,
+    "xl": 28,
+    "pill": 999,
+    "device": 55,
+    "screen": 47
+  },
+  "screens": [
+    { "name": "01 Splash", "role": "brand" },
+    { "name": "02 Role Select", "role": "onboarding" },
+    { "name": "03 Explore Homes", "role": "tenant" },
+    { "name": "04 Property Detail", "role": "tenant" },
+    { "name": "05 Book Inspection", "role": "tenant" },
+    { "name": "06 Landlord Listings", "role": "landlord" },
+    { "name": "07 List Property", "role": "landlord" }
+  ]
+}
