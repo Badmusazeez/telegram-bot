@@ -148,7 +148,8 @@ async function logsForBuyer(
   toBlock: number,
   buyer: string
 ): Promise<Log[]> {
-  const chunkSize = Math.max(20, Math.floor(config.chain.maxScanBlocks / 4));
+  // Alchemy Free tier caps eth_getLogs at 10 blocks on Robinhood.
+  const chunkSize = Math.max(1, config.chain.getLogsMaxBlocks);
   const all: Log[] = [];
 
   for (let start = fromBlock; start <= toBlock; start += chunkSize) {

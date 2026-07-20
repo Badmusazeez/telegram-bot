@@ -13,6 +13,8 @@ export interface ChainConfig {
   alchemyNftNetwork?: string;
   /** Max blocks to scan in one poll (L2s are much denser). */
   maxScanBlocks: number;
+  /** Max blocks per eth_getLogs call (Alchemy Free = 10 on Robinhood). */
+  getLogsMaxBlocks: number;
   defaultLookbackBlocks: number;
   defaultPollIntervalMs: number;
 }
@@ -28,8 +30,9 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       `https://robinhoodchain.blockscout.com/address/${addr}`,
     openseaChain: "robinhood",
     alchemyNftNetwork: "robinhood-mainnet",
-    maxScanBlocks: 200,
-    defaultLookbackBlocks: 80,
+    maxScanBlocks: 100,
+    getLogsMaxBlocks: 10,
+    defaultLookbackBlocks: 40,
     defaultPollIntervalMs: 8_000,
   },
 };
