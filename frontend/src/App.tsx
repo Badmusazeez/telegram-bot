@@ -24,12 +24,7 @@ export default function App() {
       >
         {fp.error && <p className="error-banner">{fp.error}</p>}
         <Routes>
-          <Route
-            path="/"
-            element={
-              <HomePage market={fp.market} statusLabel={fp.statusLabel} phase={fp.phase} />
-            }
-          />
+          <Route path="/" element={<HomePage />} />
           <Route path="/prediction" element={<PredictionDetailsPage market={fp.market} />} />
           <Route
             path="/bet"

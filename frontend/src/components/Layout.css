@@ -8,63 +8,68 @@
 .atmosphere {
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: -2;
   background:
-    radial-gradient(1200px 600px at 10% -10%, rgba(212, 160, 23, 0.18), transparent 55%),
-    radial-gradient(900px 500px at 90% 0%, rgba(20, 110, 120, 0.22), transparent 50%),
-    linear-gradient(165deg, #f3efe4 0%, #e7eef0 42%, #d9e4e2 100%);
+    radial-gradient(900px 520px at 12% -8%, rgba(11, 110, 253, 0.16), transparent 58%),
+    radial-gradient(700px 480px at 88% 8%, rgba(31, 167, 160, 0.18), transparent 55%),
+    linear-gradient(160deg, #eef5f8 0%, #d9e7ef 45%, #c5d8e4 100%);
 }
 
-.atmosphere::after {
-  content: '';
-  position: absolute;
+.fold-grid {
+  position: fixed;
   inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cpath d='M0 80h160M80 0v160' stroke='%231a2a2e' stroke-opacity='0.04'/%3E%3C/svg%3E");
-  opacity: 0.7;
+  z-index: -1;
   pointer-events: none;
+  background-image:
+    linear-gradient(115deg, transparent 0 46%, rgba(11, 31, 42, 0.04) 46% 54%, transparent 54%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(11, 31, 42, 0.03) 0,
+      rgba(11, 31, 42, 0.03) 1px,
+      transparent 1px,
+      transparent 72px
+    );
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.55), transparent 85%);
 }
 
 .topbar {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 1.25rem;
+  gap: 1rem;
   align-items: center;
-  padding: 1.1rem clamp(1rem, 3vw, 2.5rem);
-  border-bottom: 1px solid rgba(26, 42, 46, 0.08);
-  backdrop-filter: blur(8px);
-  background: rgba(243, 239, 228, 0.55);
-  animation: drop-in 0.7s ease both;
+  padding: 1rem clamp(1rem, 3vw, 2.4rem);
+  border-bottom: 1px solid rgba(11, 31, 42, 0.08);
+  background: rgba(238, 245, 248, 0.62);
+  backdrop-filter: blur(10px);
+  animation: drop-in 0.65s ease both;
 }
 
 .brand {
   font-family: var(--display);
-  font-size: 1.55rem;
-  letter-spacing: -0.03em;
+  font-weight: 780;
+  font-size: 1.35rem;
+  letter-spacing: -0.04em;
   color: var(--ink);
   text-decoration: none;
-}
-
-.brand span {
-  color: var(--accent);
 }
 
 .nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 0.9rem;
+  gap: 0.25rem 1rem;
   justify-content: center;
 }
 
 .nav a {
   color: var(--muted);
   text-decoration: none;
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   font-weight: 500;
   position: relative;
 }
 
-.nav a.active,
-.nav a:hover {
+.nav a:hover,
+.nav a.active {
   color: var(--ink);
 }
 
@@ -73,9 +78,9 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: -0.35rem;
+  bottom: -0.4rem;
   height: 2px;
-  background: var(--accent);
+  background: var(--signal);
   transform-origin: left;
   animation: underline 0.35s ease both;
 }
@@ -83,43 +88,48 @@
 .session {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.75rem;
 }
 
-.phase-pill {
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
+.phase-line {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--teal);
-  border-bottom: 1px dashed rgba(20, 110, 120, 0.45);
+  color: var(--fold);
+  border-bottom: 1px solid rgba(31, 167, 160, 0.45);
   padding-bottom: 0.1rem;
+  white-space: nowrap;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .account {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--muted);
 }
 
 .main {
-  width: min(1100px, calc(100% - 2rem));
+  width: min(1120px, calc(100% - 2rem));
   margin: 0 auto;
-  padding: 2.5rem 0 4rem;
-  animation: rise 0.8s ease both;
+  padding: 2rem 0 3.5rem;
+  animation: rise 0.75s ease both;
 }
 
 .footer {
-  width: min(1100px, calc(100% - 2rem));
+  width: min(1120px, calc(100% - 2rem));
   margin: 0 auto 2rem;
   color: var(--muted);
-  font-size: 0.9rem;
-  line-height: 1.5;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  max-width: 62ch;
 }
 
 @keyframes drop-in {
   from {
     opacity: 0;
-    transform: translateY(-12px);
+    transform: translateY(-10px);
   }
   to {
     opacity: 1;
@@ -130,7 +140,7 @@
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(18px);
+    transform: translateY(16px);
   }
   to {
     opacity: 1;
@@ -147,7 +157,7 @@
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .topbar {
     grid-template-columns: 1fr;
     justify-items: start;
