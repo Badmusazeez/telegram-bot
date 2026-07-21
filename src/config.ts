@@ -44,6 +44,21 @@ const schema = z.object({
   LOOKBACK_BLOCKS: z.string().optional().default(""),
   ALLOWED_COLLECTIONS: z.string().optional().default(""),
   OPENSEA_API_KEY: z.string().optional().default(""),
+  PRICE_ALERTS_ENABLED: z
+    .string()
+    .optional()
+    .default("true")
+    .transform((v) => v.toLowerCase() !== "false"),
+  PRICE_ALERT_PCT: z
+    .string()
+    .optional()
+    .default("10")
+    .transform((v) => Number(v)),
+  PRICE_POLL_INTERVAL_MS: z
+    .string()
+    .optional()
+    .default("120000")
+    .transform((v) => Number(v)),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -102,5 +117,14 @@ export const config = {
     a.toLowerCase()
   ),
   openseaApiKey: env.OPENSEA_API_KEY,
+  priceAlertsEnabled: env.PRICE_ALERTS_ENABLED,
+  priceAlertPct:
+    Number.isFinite(env.PRICE_ALERT_PCT) && env.PRICE_ALERT_PCT > 0
+      ? env.PRICE_ALERT_PCT
+      : 10,
+  pricePollIntervalMs:
+    Number.isFinite(env.PRICE_POLL_INTERVAL_MS) && env.PRICE_POLL_INTERVAL_MS >= 30_000
+      ? env.PRICE_POLL_INTERVAL_MS
+      : 120_000,
   statePath: "data/state.json",
 };

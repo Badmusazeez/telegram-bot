@@ -1,9 +1,14 @@
 import { config } from "./config";
 import { maybeCopyPurchase } from "./robinhood/copyExecutor";
 import { startMonitor } from "./robinhood/monitor";
+import { startPriceWatcher } from "./robinhood/priceWatcher";
 import { getProvider, getWallet } from "./robinhood/provider";
-import { loadState } from "./store/state";
-import { broadcastPurchase, createTelegramBot } from "./telegram/bot";
+import { addWatchedPrice, loadState } from "./store/state";
+import {
+  broadcastPriceAlert,
+  broadcastPurchase,
+  createTelegramBot,
+} from "./telegram/bot";
 
 async function main(): Promise<void> {
   console.log(`Starting robinhood-nft-copy-bot on ${config.chain.name}…`);
@@ -27,6 +32,9 @@ async function main(): Promise<void> {
     `freeMintsOnly=${config.freeMintsOnly} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun}`
   );
   console.log(
+    `priceAlerts=${config.priceAlertsEnabled ? "on" : "off"} threshold=${config.priceAlertPct}% poll=${config.pricePollIntervalMs}ms`
+  );
+  console.log(
     wallet
       ? `Signer wallet: ${wallet.address}`
       : "Signer wallet: not configured (alerts-only / dry-run)"
@@ -38,11 +46,37 @@ async function main(): Promise<void> {
     );
     const copy = await maybeCopyPurchase(purchase);
     await broadcastPurchase(bot, purchase, copy);
+
+    // Auto-watch successful free mints (ours or dry-run candidates).
+    if (purchase.isFreeMint && (copy.success || copy.dryRun)) {
+      await addWatchedPrice({
+        contract: purchase.contract,
+        tokenId: purchase.tokenId,
+        label:
+          purchase.tokenName ||
+          purchase.collectionName ||
+          `${purchase.contract.slice(0, 6)}…#${purchase.tokenId}`,
+      });
+      await addWatchedPrice({
+        contract: purchase.contract,
+        label:
+          (purchase.collectionName || purchase.contract.slice(0, 10)) +
+          " floor",
+      });
+    }
+  });
+
+  const stopPrices = await startPriceWatcher(async (alert) => {
+    console.log(
+      `[price] ${alert.item.label} ${alert.oldPrice} -> ${alert.newPrice} (${alert.changePct?.toFixed(2)}%)`
+    );
+    await broadcastPriceAlert(bot, alert);
   });
 
   const shutdown = (signal: string) => {
     console.log(`Received ${signal}, shutting down…`);
     stopMonitor();
+    stopPrices();
     bot.stop();
   };
   process.once("SIGINT", () => shutdown("SIGINT"));

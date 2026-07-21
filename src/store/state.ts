@@ -1,18 +1,21 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { config } from "../config";
-import type { BotState, TrackedWallet } from "../types";
+import type { BotState, TrackedWallet, WatchedPriceItem } from "../types";
 
 const DEFAULT_STATE: BotState = {
   trackedWallets: [],
   copyEnabled: config.copyEnabled,
   dryRun: config.dryRun,
   freeMintsOnly: config.freeMintsOnly,
+  priceAlertsEnabled: config.priceAlertsEnabled,
+  priceAlertPct: config.priceAlertPct,
   maxBuyRobinhood: config.maxBuyRobinhood,
   allowedCollections: [...config.allowedCollections],
   lastProcessedBlock: 0,
   notifyChatIds: [...config.allowedChatIds],
   recentTxHashes: [],
+  watchedPrices: [],
 };
 
 let state: BotState = structuredClone(DEFAULT_STATE);
@@ -27,6 +30,9 @@ export async function loadState(): Promise<BotState> {
       ...parsed,
       trackedWallets: parsed.trackedWallets ?? [],
       freeMintsOnly: parsed.freeMintsOnly ?? config.freeMintsOnly,
+      priceAlertsEnabled:
+        parsed.priceAlertsEnabled ?? config.priceAlertsEnabled,
+      priceAlertPct: parsed.priceAlertPct ?? config.priceAlertPct,
       maxBuyRobinhood: parsed.maxBuyRobinhood ?? config.maxBuyRobinhood,
       allowedCollections: parsed.allowedCollections ?? [
         ...config.allowedCollections,
@@ -36,6 +42,7 @@ export async function loadState(): Promise<BotState> {
           ? parsed.notifyChatIds
           : [...config.allowedChatIds],
       recentTxHashes: parsed.recentTxHashes ?? [],
+      watchedPrices: parsed.watchedPrices ?? [],
     };
   } catch {
     state = structuredClone(DEFAULT_STATE);
@@ -125,4 +132,70 @@ export async function registerNotifyChat(chatId: string): Promise<void> {
     state.notifyChatIds.push(chatId);
     await persistState();
   }
+}
+
+export function watchId(contract: string, tokenId = ""): string {
+  return `${normalizeAddress(contract)}:${tokenId || "floor"}`;
+}
+
+export async function addWatchedPrice(params: {
+  contract: string;
+  tokenId?: string;
+  label?: string;
+}): Promise<WatchedPriceItem> {
+  const contract = normalizeAddress(params.contract);
+  const tokenId = params.tokenId?.trim() || "";
+  const id = watchId(contract, tokenId);
+  const existing = state.watchedPrices.find((w) => w.id === id);
+  if (existing) {
+    if (params.label) {
+      existing.label = params.label;
+      await persistState();
+    }
+    return existing;
+  }
+
+  const item: WatchedPriceItem = {
+    id,
+    contract,
+    tokenId,
+    label:
+      params.label ||
+      (tokenId
+        ? `${shortAddress(contract)} #${tokenId}`
+        : `${shortAddress(contract)} floor`),
+    lastPrice: null,
+    lastCheckedAt: null,
+    addedAt: new Date().toISOString(),
+  };
+  state.watchedPrices.push(item);
+  await persistState();
+  return item;
+}
+
+export async function removeWatchedPrice(
+  contract: string,
+  tokenId = ""
+): Promise<boolean> {
+  const id = watchId(contract, tokenId);
+  const before = state.watchedPrices.length;
+  state.watchedPrices = state.watchedPrices.filter((w) => w.id !== id);
+  if (state.watchedPrices.length !== before) {
+    await persistState();
+    return true;
+  }
+  return false;
+}
+
+export async function updateWatchedPrice(
+  id: string,
+  price: number
+): Promise<void> {
+  const item = state.watchedPrices.find((w) => w.id === id);
+  if (!item) {
+    return;
+  }
+  item.lastPrice = price;
+  item.lastCheckedAt = new Date().toISOString();
+  await persistState();
 }

@@ -4,14 +4,21 @@ import { config } from "../config";
 import { getNativeBalance, getWallet } from "../robinhood/provider";
 import {
   addTrackedWallet,
+  addWatchedPrice,
   getState,
   registerNotifyChat,
   removeTrackedWallet,
+  removeWatchedPrice,
   shortAddress,
   updateState,
 } from "../store/state";
-import { formatPurchaseAlert, formatStatus, helpText } from "./formatter";
-import type { CopyResult, NftPurchase } from "../types";
+import {
+  formatPriceAlert,
+  formatPurchaseAlert,
+  formatStatus,
+  helpText,
+} from "./formatter";
+import type { CopyResult, NftPurchase, PriceChangeAlert } from "../types";
 
 function chatId(ctx: Context): string {
   return String(ctx.chat?.id ?? "");
@@ -70,9 +77,12 @@ export function createTelegramBot(): Bot {
     await ctx.reply(
       formatStatus({
         trackedCount: state.trackedWallets.length,
+        watchedPrices: state.watchedPrices.length,
         copyEnabled: state.copyEnabled,
         dryRun: state.dryRun,
         freeMintsOnly: state.freeMintsOnly,
+        priceAlertsEnabled: state.priceAlertsEnabled,
+        priceAlertPct: state.priceAlertPct,
         maxBuyRobinhood: state.maxBuyRobinhood,
         lastBlock: state.lastProcessedBlock,
         walletAddress: wallet?.address,
@@ -219,6 +229,89 @@ export function createTelegramBot(): Bot {
     });
   });
 
+  bot.command("prices", async (ctx) => {
+    const list = getState().watchedPrices;
+    if (list.length === 0) {
+      await ctx.reply(
+        "No price watches yet.\nSuccessful free mints are auto-watched.\nOr use /watchprice 0xContract [tokenId]"
+      );
+      return;
+    }
+    const lines = list.map((w, i) => {
+      const price =
+        w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+      const token = w.tokenId ? `#${w.tokenId}` : "floor";
+      return `${i + 1}. <b>${escape(w.label)}</b> (${token})\n   <code>${w.contract}</code>\n   last: ${price}`;
+    });
+    await ctx.reply(`<b>Watched prices</b>\n\n${lines.join("\n\n")}`, {
+      parse_mode: "HTML",
+    });
+  });
+
+  bot.command("watchprice", async (ctx) => {
+    const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    const contract = parts[0];
+    const tokenId = parts[1];
+    if (!contract || !isAddress(contract)) {
+      await ctx.reply(
+        "Usage:\n/watchprice 0xContract\n/watchprice 0xContract 123"
+      );
+      return;
+    }
+    const item = await addWatchedPrice({
+      contract,
+      tokenId,
+      label: tokenId
+        ? `${shortAddress(contract.toLowerCase())} #${tokenId}`
+        : `${shortAddress(contract.toLowerCase())} floor`,
+    });
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(
+      `Watching price for <b>${escape(item.label)}</b>\n<code>${item.contract}</code>${
+        item.tokenId ? `\nToken <code>${item.tokenId}</code>` : "\n(collection floor)"
+      }`,
+      { parse_mode: "HTML" }
+    );
+  });
+
+  bot.command("unwatchprice", async (ctx) => {
+    const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    const contract = parts[0];
+    const tokenId = parts[1] || "";
+    if (!contract || !isAddress(contract)) {
+      await ctx.reply("Usage: /unwatchprice 0xContract [tokenId]");
+      return;
+    }
+    const removed = await removeWatchedPrice(contract, tokenId);
+    await ctx.reply(removed ? "Stopped watching that price." : "Not watched.");
+  });
+
+  bot.command("pricealerts", async (ctx) => {
+    const arg = (ctx.match || "").trim().toLowerCase();
+    if (arg !== "on" && arg !== "off") {
+      await ctx.reply("Usage: /pricealerts on|off");
+      return;
+    }
+    await updateState((s) => {
+      s.priceAlertsEnabled = arg === "on";
+    });
+    await ctx.reply(`Price alerts are now <b>${arg.toUpperCase()}</b>`, {
+      parse_mode: "HTML",
+    });
+  });
+
+  bot.command("pricepct", async (ctx) => {
+    const value = Number((ctx.match || "").trim());
+    if (!Number.isFinite(value) || value <= 0) {
+      await ctx.reply("Usage: /pricepct 10");
+      return;
+    }
+    await updateState((s) => {
+      s.priceAlertPct = value;
+    });
+    await ctx.reply(`Price alert threshold set to ${value}%`);
+  });
+
   bot.catch((err) => {
     console.error("[telegram] bot error:", err);
   });
@@ -253,6 +346,29 @@ export async function broadcastPurchase(
       });
     } catch (err) {
       console.error(`[telegram] failed to notify ${id}:`, err);
+    }
+  }
+}
+
+export async function broadcastPriceAlert(
+  bot: Bot,
+  alert: PriceChangeAlert
+): Promise<void> {
+  const state = getState();
+  const text = formatPriceAlert(alert);
+  const targets =
+    state.notifyChatIds.length > 0
+      ? state.notifyChatIds
+      : [...config.allowedChatIds];
+
+  for (const id of targets) {
+    try {
+      await bot.api.sendMessage(id, text, {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
+    } catch (err) {
+      console.error(`[telegram] failed price alert to ${id}:`, err);
     }
   }
 }

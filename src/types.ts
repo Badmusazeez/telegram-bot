@@ -23,16 +23,31 @@ export interface NftPurchase {
   isPaid: boolean;
 }
 
+/** NFT / collection watched for OpenSea price changes. */
+export interface WatchedPriceItem {
+  id: string;
+  contract: string;
+  /** Empty string means collection-floor watch only. */
+  tokenId: string;
+  label: string;
+  lastPrice: number | null;
+  lastCheckedAt: string | null;
+  addedAt: string;
+}
+
 export interface BotState {
   trackedWallets: TrackedWallet[];
   copyEnabled: boolean;
   dryRun: boolean;
   freeMintsOnly: boolean;
+  priceAlertsEnabled: boolean;
+  priceAlertPct: number;
   maxBuyRobinhood: number;
   allowedCollections: string[];
   lastProcessedBlock: number;
   notifyChatIds: string[];
   recentTxHashes: string[];
+  watchedPrices: WatchedPriceItem[];
 }
 
 export interface CopyResult {
@@ -41,4 +56,12 @@ export interface CopyResult {
   dryRun: boolean;
   reason: string;
   txHash?: string;
+}
+
+export interface PriceChangeAlert {
+  item: WatchedPriceItem;
+  oldPrice: number | null;
+  newPrice: number;
+  changePct: number | null;
+  openSeaUrl: string;
 }

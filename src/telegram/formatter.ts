@@ -1,7 +1,7 @@
 import { config } from "../config";
 import { describeWallet } from "../robinhood/monitor";
 import { shortAddress } from "../store/state";
-import type { CopyResult, NftPurchase } from "../types";
+import type { CopyResult, NftPurchase, PriceChangeAlert } from "../types";
 
 function escHtml(text: string): string {
   return text
@@ -44,11 +44,38 @@ export function formatPurchaseAlert(
   ].join("\n");
 }
 
+export function formatPriceAlert(alert: PriceChangeAlert): string {
+  const direction =
+    alert.changePct !== null && alert.changePct >= 0 ? "UP" : "DOWN";
+  const pct =
+    alert.changePct === null ? "n/a" : `${alert.changePct.toFixed(2)}%`;
+  const oldP = alert.oldPrice === null ? "—" : alert.oldPrice.toFixed(6);
+  const kind = alert.item.tokenId ? "Token listing" : "Collection floor";
+
+  return [
+    `<b>Price alert</b>`,
+    `<b>Chain:</b> ${escHtml(config.chain.name)}`,
+    `<b>Type:</b> ${kind} ${direction}`,
+    `<b>Item:</b> ${escHtml(alert.item.label)}`,
+    `<b>Contract:</b> <code>${escHtml(alert.item.contract)}</code>`,
+    alert.item.tokenId
+      ? `<b>Token ID:</b> <code>${escHtml(alert.item.tokenId)}</code>`
+      : `<b>Watch:</b> collection floor`,
+    `<b>Old:</b> ${oldP}`,
+    `<b>New:</b> ${alert.newPrice.toFixed(6)}`,
+    `<b>Change:</b> ${escHtml(pct)}`,
+    `<b>OpenSea:</b> <a href="${alert.openSeaUrl}">view</a>`,
+  ].join("\n");
+}
+
 export function formatStatus(params: {
   trackedCount: number;
+  watchedPrices: number;
   copyEnabled: boolean;
   dryRun: boolean;
   freeMintsOnly: boolean;
+  priceAlertsEnabled: boolean;
+  priceAlertPct: number;
   maxBuyRobinhood: number;
   lastBlock: number;
   walletAddress?: string;
@@ -60,6 +87,8 @@ export function formatStatus(params: {
     `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>)`,
     `Mode: <b>${params.freeMintsOnly ? "FREE MINTS ONLY" : "ALL ACTIVITY"}</b>`,
     `Tracked wallets: <b>${params.trackedCount}</b>`,
+    `Price watches: <b>${params.watchedPrices}</b>`,
+    `Price alerts: <b>${params.priceAlertsEnabled ? "ON" : "OFF"}</b> (≥${params.priceAlertPct}%)`,
     `Auto-mint: <b>${params.copyEnabled ? "ON" : "OFF"}</b>`,
     `Dry run: <b>${params.dryRun ? "ON" : "OFF"}</b>`,
     `Max buy (ignored for free mints): <b>${params.maxBuyRobinhood}</b>`,
@@ -76,6 +105,7 @@ export function helpText(): string {
     `Active chain: <b>${escHtml(config.chain.name)}</b>`,
     ``,
     `Tracks whale wallets and auto-copies <b>free mints only</b> on Robinhood Chain. Paid buys are skipped.`,
+    `Also watches minted NFT / collection prices and alerts on Telegram.`,
     ``,
     `<b>Commands</b>`,
     `/start — register this chat for alerts`,
@@ -89,5 +119,10 @@ export function helpText(): string {
     `/freemints on|off — free-mints-only filter`,
     `/maxbuy &lt;amount&gt; — max paid price (unused in free-mint mode)`,
     `/allow &lt;contract|clear&gt; — collection allowlist`,
+    `/prices — list watched NFT prices`,
+    `/watchprice &lt;contract&gt; [tokenId] — watch token or collection floor`,
+    `/unwatchprice &lt;contract&gt; [tokenId] — stop watching`,
+    `/pricealerts on|off — toggle price alerts`,
+    `/pricepct &lt;percent&gt; — alert when price moves by this %`,
   ].join("\n");
 }
