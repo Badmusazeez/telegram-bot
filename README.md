@@ -30,6 +30,12 @@ npm run setup      # interactive prompts → creates .env
 npm run bot        # installs deps if needed, checks .env, starts scanner
 ```
 
+If `npm run bot` fails on Windows with `'C:\Program' is not recognized`, use:
+
+```bash
+npm run start:dev
+```
+
 Or:
 
 ```bash
