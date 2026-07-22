@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { formatFunnelTelegram } from "../analysis/funnel";
 import type { ScannerStats, TradeSignal } from "../types";
 
 function esc(text: string): string {
@@ -88,7 +89,7 @@ export function formatStatus(stats: ScannerStats, paused: boolean): string {
   const last = stats.lastScanAt
     ? new Date(stats.lastScanAt).toISOString()
     : "never";
-  return [
+  const lines = [
     `<b>Institutional Futures Assistant</b>`,
     `Exchange: <b>${esc(config.exchange.toUpperCase())}</b> · TF ${esc(config.timeframe)} + 1H/4H/D`,
     `Gate: confidence ≥ ${config.minConfidence}% · RR ≥ ${config.minRiskReward} · vol ≥ 1.5×`,
@@ -97,12 +98,14 @@ export function formatStatus(stats: ScannerStats, paused: boolean): string {
     `Duration: ${(stats.lastScanDurationMs / 1000).toFixed(1)}s`,
     `Pairs: ${stats.pairsScanned} · Signals: ${stats.signalsFound} · Alerts: ${stats.alertsSent}`,
     `Errors: ${stats.errors}`,
-    stats.lastError
-      ? `Last error: <code>${esc(stats.lastError.slice(0, 300))}</code>`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+  if (stats.lastError) {
+    lines.push(`Last error: <code>${esc(stats.lastError.slice(0, 300))}</code>`);
+  }
+  if (stats.lastFunnel) {
+    lines.push("", formatFunnelTelegram(stats.lastFunnel));
+  }
+  return lines.filter(Boolean).join("\n");
 }
 
 export function helpText(): string {

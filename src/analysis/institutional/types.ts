@@ -33,6 +33,18 @@ export interface InstitutionalAnalysis {
   verdict: Verdict;
   noTrade: boolean;
   noTradeReason: string | null;
+  /** First failing funnel stage, or "passed". */
+  rejectStage:
+    | "trend"
+    | "momentum"
+    | "volume"
+    | "priceAction"
+    | "smc"
+    | "conflict"
+    | "confidence"
+    | "riskReward"
+    | "verdict"
+    | "passed";
   factors: FactorResult[];
   htfTrend: string;
   whyValid: string[];

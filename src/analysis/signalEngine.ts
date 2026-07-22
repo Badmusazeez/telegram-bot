@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { config } from "../config";
+import type { FunnelStage } from "./funnel";
 import { runInstitutionalAnalysis } from "./institutional/engine";
 import type { MultiTfBundle } from "./institutional/types";
 import type { Candle, TradeSignal } from "../types";
@@ -13,16 +14,23 @@ function signalId(symbol: string, side: string, candleCloseTime: number): string
     .slice(0, 16);
 }
 
+export interface EvalResult {
+  signal: TradeSignal | null;
+  /** First failing stage, or passed. */
+  stage: FunnelStage | "verdict";
+  confidence: number;
+  noTradeReason: string | null;
+}
+
 /**
- * Institutional multi-factor evaluation.
- * Returns null when verdict is NO TRADE / WAIT (unless caller logs no-trade).
+ * Institutional multi-factor evaluation with funnel stage attribution.
  */
 export async function evaluateSymbol(
   symbol: string,
   candles: Candle[],
   trendCandles?: Candle[],
   extra?: { h4?: Candle[]; d1?: Candle[] }
-): Promise<TradeSignal | null> {
+): Promise<EvalResult> {
   const bundle: MultiTfBundle = {
     primary: candles,
     h1: trendCandles && trendCandles.length ? trendCandles : candles,
@@ -31,32 +39,33 @@ export async function evaluateSymbol(
   };
 
   const analysis = await runInstitutionalAnalysis(symbol, bundle);
+  const stage = (analysis.rejectStage === "verdict"
+    ? "verdict"
+    : analysis.rejectStage) as EvalResult["stage"];
 
   if (analysis.noTrade || !analysis.side) {
     if (config.logNoTrade) {
       console.log(`[no-trade] ${symbol}: ${analysis.noTradeReason}`);
     }
-    return null;
-  }
-
-  if (
-    analysis.verdict !== "BUY" &&
-    analysis.verdict !== "STRONG BUY" &&
-    analysis.verdict !== "SELL" &&
-    analysis.verdict !== "STRONG SELL"
-  ) {
-    return null;
+    return {
+      signal: null,
+      stage,
+      confidence: analysis.confidence,
+      noTradeReason: analysis.noTradeReason,
+    };
   }
 
   const closed = candles[candles.length - 2] ?? candles[candles.length - 1];
   const techReasons = analysis.factors
-    .filter((f) => ["trend", "momentum", "volume", "priceAction", "smc"].includes(f.name))
+    .filter((f) =>
+      ["trend", "momentum", "volume", "priceAction", "smc"].includes(f.name)
+    )
     .flatMap((f) => f.reasons);
   const fundReasons = analysis.factors
     .filter((f) => f.name === "futures" || f.name === "fundamental")
     .flatMap((f) => f.reasons);
 
-  return {
+  const signal: TradeSignal = {
     id: signalId(symbol, analysis.side, closed.closeTime),
     symbol,
     side: analysis.side,
@@ -113,5 +122,12 @@ export async function evaluateSymbol(
       score: Math.round(f.score * 100),
       aligned: f.aligned,
     })),
+  };
+
+  return {
+    signal,
+    stage: "passed",
+    confidence: analysis.confidence,
+    noTradeReason: null,
   };
 }

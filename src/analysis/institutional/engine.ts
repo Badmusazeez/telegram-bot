@@ -65,11 +65,6 @@ export async function runInstitutionalAnalysis(
     .filter((f) => f.missingKey)
     .map((f) => `${f.name}: ${f.reasons[0] ?? "incomplete"}`);
 
-  const keyMissing = [trend, momentum, volume, priceAction, smc].some(
-    (f) => f.missingKey || !f.aligned
-  );
-
-  // Direction conflicts across key factors
   const keySides = [trend, momentum, volume, priceAction, smc]
     .map((f) => f.directionBias)
     .filter((s): s is Side => s === "BUY" || s === "SELL");
@@ -86,12 +81,18 @@ export async function runInstitutionalAnalysis(
   const atrSeries = atr(closed(bundle.primary), 14);
   const atrVal = atrSeries[closed(bundle.primary).length - 1] ?? entry * 0.01;
 
-  const empty = (reason: string): InstitutionalAnalysis => ({
+  type RejectStage = InstitutionalAnalysis["rejectStage"];
+
+  const empty = (
+    reason: string,
+    rejectStage: RejectStage
+  ): InstitutionalAnalysis => ({
     side: null,
     confidence,
     verdict: "NO TRADE",
     noTrade: true,
     noTradeReason: reason,
+    rejectStage,
     factors,
     htfTrend: summarizeHtf(bundle),
     whyValid: [],
@@ -106,19 +107,40 @@ export async function runInstitutionalAnalysis(
     riskPercent: config.riskPercent,
     estimatedHolding: estimateHolding(config.timeframe),
     invalidation: [],
-    majorRisks: factors.flatMap((f) => f.reasons.filter((r) => /miss|conflict|caution|unavailable|choppy/i.test(r))).slice(0, 6),
+    majorRisks: factors
+      .flatMap((f) =>
+        f.reasons.filter((r) =>
+          /miss|conflict|caution|unavailable|choppy/i.test(r)
+        )
+      )
+      .slice(0, 6),
     missing,
   });
 
-  if (preferred === "NEUTRAL" || keyMissing || conflict || confidence < config.minConfidence) {
-    const reason = conflict
-      ? `${NO_TRADE} (conflicting factor directions)`
-      : keyMissing
-        ? `${NO_TRADE} (missing: ${missing.slice(0, 3).join("; ") || "key confirmations"})`
-        : preferred === "NEUTRAL"
-          ? `${NO_TRADE} (no clear EMA/HTF trend)`
-          : `${NO_TRADE} (confidence ${confidence}% < ${config.minConfidence}%)`;
-    return empty(reason);
+  // Waterfall: first failing key stage wins for funnel attribution
+  if (!trend.aligned || preferred === "NEUTRAL") {
+    return empty(`${NO_TRADE} (trend incomplete)`, "trend");
+  }
+  if (!momentum.aligned) {
+    return empty(`${NO_TRADE} (momentum incomplete)`, "momentum");
+  }
+  if (!volume.aligned) {
+    return empty(`${NO_TRADE} (volume incomplete)`, "volume");
+  }
+  if (!priceAction.aligned) {
+    return empty(`${NO_TRADE} (price action incomplete)`, "priceAction");
+  }
+  if (!smc.aligned) {
+    return empty(`${NO_TRADE} (SMC incomplete)`, "smc");
+  }
+  if (conflict) {
+    return empty(`${NO_TRADE} (conflicting factor directions)`, "conflict");
+  }
+  if (confidence < config.minConfidence) {
+    return empty(
+      `${NO_TRADE} (confidence ${confidence}% < ${config.minConfidence}%)`,
+      "confidence"
+    );
   }
 
   const side = preferred;
@@ -126,7 +148,8 @@ export async function runInstitutionalAnalysis(
   const risk = Math.abs(entry - stopLoss);
   if (risk <= 0 || risk / entry > config.maxStopPct) {
     return empty(
-      `${NO_TRADE} (stop distance ${(100 * risk) / entry}% exceeds max ${config.maxStopPct * 100}% or invalid)`
+      `${NO_TRADE} (stop distance ${(100 * risk) / Math.max(entry, 1e-9)}% exceeds max ${config.maxStopPct * 100}% or invalid)`,
+      "riskReward"
     );
   }
 
@@ -162,12 +185,23 @@ export async function runInstitutionalAnalysis(
     "News/macro not fully monitored without calendar API",
   ].slice(0, 6);
 
+  const verdict = verdictFor(side, confidence);
+  if (
+    verdict !== "BUY" &&
+    verdict !== "STRONG BUY" &&
+    verdict !== "SELL" &&
+    verdict !== "STRONG SELL"
+  ) {
+    return empty(`${NO_TRADE} (verdict ${verdict})`, "verdict");
+  }
+
   return {
     side,
     confidence,
-    verdict: verdictFor(side, confidence),
+    verdict,
     noTrade: false,
     noTradeReason: null,
+    rejectStage: "passed",
     factors,
     htfTrend: summarizeHtf(bundle),
     whyValid,

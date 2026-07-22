@@ -6,6 +6,12 @@ import {
   mapPool,
 } from "../exchange";
 import { toMexcSymbol } from "../exchange/mexc";
+import {
+  bumpReject,
+  emptyFunnel,
+  finalizeFunnel,
+  formatFunnelLog,
+} from "../analysis/funnel";
 import { evaluateSymbol } from "../analysis/signalEngine";
 import {
   getState,
@@ -13,7 +19,7 @@ import {
   rememberSignal,
   updateState,
 } from "../store/state";
-import type { TradeSignal } from "../types";
+import type { ScanFunnel, TradeSignal } from "../types";
 
 export type SignalHandler = (signal: TradeSignal) => Promise<void>;
 
@@ -21,7 +27,11 @@ function normalizeFilterSymbol(symbol: string): string {
   return config.exchange === "mexc" ? toMexcSymbol(symbol) : symbol.toUpperCase();
 }
 
-async function selectSymbols(): Promise<string[]> {
+async function selectSymbols(): Promise<{
+  symbols: string[];
+  totalUniverse: number;
+  passedLiquidity: number;
+}> {
   const [pairs, tickers] = await Promise.all([
     fetchExchangePairs(),
     fetchTickers24h(),
@@ -32,6 +42,7 @@ async function selectSymbols(): Promise<string[]> {
   );
 
   let symbols = pairs.map((p) => p.symbol);
+  const totalUniverse = symbols.length;
 
   if (config.symbolWhitelist.length > 0) {
     const allow = new Set(config.symbolWhitelist.map(normalizeFilterSymbol));
@@ -48,6 +59,7 @@ async function selectSymbols(): Promise<string[]> {
   symbols = symbols.filter(
     (s) => (volumeBySymbol.get(s) ?? 0) >= config.minQuoteVolumeUsdt
   );
+  const passedLiquidity = symbols.length;
 
   symbols.sort(
     (a, b) => (volumeBySymbol.get(b) ?? 0) - (volumeBySymbol.get(a) ?? 0)
@@ -57,7 +69,86 @@ async function selectSymbols(): Promise<string[]> {
     symbols = symbols.slice(0, config.maxPairs);
   }
 
-  return symbols;
+  return { symbols, totalUniverse, passedLiquidity };
+}
+
+function recordEval(funnel: ScanFunnel, stage: string): void {
+  const passedThrough: Record<string, () => void> = {
+    trend: () => {
+      bumpReject(funnel, "trend");
+    },
+    momentum: () => {
+      funnel.passedTrend += 1;
+      bumpReject(funnel, "momentum");
+    },
+    volume: () => {
+      funnel.passedTrend += 1;
+      funnel.passedMomentum += 1;
+      bumpReject(funnel, "volume");
+    },
+    priceAction: () => {
+      funnel.passedTrend += 1;
+      funnel.passedMomentum += 1;
+      funnel.passedVolume += 1;
+      bumpReject(funnel, "priceAction");
+    },
+    smc: () => {
+      funnel.passedTrend += 1;
+      funnel.passedMomentum += 1;
+      funnel.passedVolume += 1;
+      funnel.passedPriceAction += 1;
+      bumpReject(funnel, "smc");
+    },
+    conflict: () => {
+      funnel.passedTrend += 1;
+      funnel.passedMomentum += 1;
+      funnel.passedVolume += 1;
+      funnel.passedPriceAction += 1;
+      funnel.passedSmc += 1;
+      bumpReject(funnel, "conflict");
+    },
+    confidence: () => {
+      funnel.passedTrend += 1;
+      funnel.passedMomentum += 1;
+      funnel.passedVolume += 1;
+      funnel.passedPriceAction += 1;
+      funnel.passedSmc += 1;
+      bumpReject(funnel, "confidence");
+    },
+    riskReward: () => {
+      funnel.passedTrend += 1;
+      funnel.passedMomentum += 1;
+      funnel.passedVolume += 1;
+      funnel.passedPriceAction += 1;
+      funnel.passedSmc += 1;
+      funnel.passedConfidence += 1;
+      bumpReject(funnel, "riskReward");
+    },
+    verdict: () => {
+      funnel.passedTrend += 1;
+      funnel.passedMomentum += 1;
+      funnel.passedVolume += 1;
+      funnel.passedPriceAction += 1;
+      funnel.passedSmc += 1;
+      funnel.passedConfidence += 1;
+      funnel.passedRiskReward += 1;
+      bumpReject(funnel, "verdict");
+    },
+    passed: () => {
+      funnel.passedTrend += 1;
+      funnel.passedMomentum += 1;
+      funnel.passedVolume += 1;
+      funnel.passedPriceAction += 1;
+      funnel.passedSmc += 1;
+      funnel.passedConfidence += 1;
+      funnel.passedRiskReward += 1;
+      funnel.finalSignals += 1;
+    },
+  };
+
+  const fn = passedThrough[stage];
+  if (fn) fn();
+  else bumpReject(funnel, "scanned");
 }
 
 export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
@@ -65,6 +156,7 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
   const found: TradeSignal[] = [];
   let errors = 0;
   let pairsScanned = 0;
+  const funnel = emptyFunnel();
 
   await updateState((s) => {
     s.stats.running = true;
@@ -73,8 +165,13 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
   let lastError: string | null = null;
 
   try {
-    const symbols = await selectSymbols();
+    const selected = await selectSymbols();
+    const symbols = selected.symbols;
+    funnel.totalUniverse = selected.totalUniverse;
+    funnel.passedLiquidity = selected.passedLiquidity;
     pairsScanned = symbols.length;
+    funnel.scanned = pairsScanned;
+
     if (pairsScanned === 0) {
       lastError =
         `0 pairs matched filters on ${config.exchange}. Lower MIN_QUOTE_VOLUME_USDT in .env, or the exchange returned no symbols.`;
@@ -87,25 +184,28 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
 
     await mapPool(symbols, 1, async (symbol) => {
       try {
-        // Sequential TF fetches — parallel bursts trigger MEXC code 510
         const primary = await fetchKlines(symbol, config.timeframe, 260);
         const h1 = await fetchKlines(symbol, "1h", 260);
         const h4 = await fetchKlines(symbol, "4h", 220);
         const d1 = await fetchKlines(symbol, "1d", 220);
-        const signal = await evaluateSymbol(symbol, primary, h1, { h4, d1 });
-        if (!signal) return;
+        const result = await evaluateSymbol(symbol, primary, h1, { h4, d1 });
+        recordEval(funnel, result.stage);
 
-        if (isOnCooldown(signal.symbol, signal.side)) {
-          console.log(`[skip] ${signal.symbol} ${signal.side} on cooldown`);
+        if (!result.signal) return;
+
+        if (isOnCooldown(result.signal.symbol, result.signal.side)) {
+          console.log(
+            `[skip] ${result.signal.symbol} ${result.signal.side} on cooldown`
+          );
           return;
         }
 
         const state = getState();
-        if (state.recentSignalIds.includes(signal.id)) {
+        if (state.recentSignalIds.includes(result.signal.id)) {
           return;
         }
 
-        found.push(signal);
+        found.push(result.signal);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         lastError = `${symbol}: ${msg}`;
@@ -120,7 +220,6 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
       }
     });
 
-    // Rank by confidence; only alert the best N per scan
     found.sort((a, b) => b.confidence - a.confidence);
     const toSend =
       config.maxAlertsPerScan > 0
@@ -145,6 +244,7 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
     errors += 1;
     console.error("[scan] fatal:", lastError);
   } finally {
+    finalizeFunnel(funnel);
     const duration = Date.now() - started;
     await updateState((s) => {
       s.stats.running = false;
@@ -152,12 +252,14 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
       s.stats.lastScanDurationMs = duration;
       s.stats.pairsScanned = pairsScanned;
       s.stats.errors += errors;
+      s.stats.lastFunnel = funnel;
       if (lastError) s.stats.lastError = lastError;
       else if (errors === 0 && pairsScanned > 0) s.stats.lastError = null;
     });
     console.log(
       `[scan] done in ${(duration / 1000).toFixed(1)}s — ${found.length} signal(s), ${errors} error(s)`
     );
+    console.log(`[funnel]\n${formatFunnelLog(funnel)}`);
   }
 
   return found;

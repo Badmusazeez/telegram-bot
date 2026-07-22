@@ -15,6 +15,7 @@ const defaultState = (): BotState => ({
     errors: 0,
     running: false,
     lastError: null,
+    lastFunnel: null,
   },
   recentSignalIds: [],
   lastSignals: {},
@@ -108,5 +109,6 @@ export async function resetStats(): Promise<void> {
     s.stats.alertsSent = 0;
     s.stats.pairsScanned = 0;
     s.stats.lastScanDurationMs = 0;
+    s.stats.lastFunnel = null;
   });
 }

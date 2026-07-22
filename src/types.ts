@@ -117,6 +117,24 @@ export interface ScannerStats {
   errors: number;
   running: boolean;
   lastError: string | null;
+  lastFunnel: ScanFunnel | null;
+}
+
+export interface ScanFunnel {
+  totalUniverse: number;
+  passedLiquidity: number;
+  scanned: number;
+  passedTrend: number;
+  passedMomentum: number;
+  passedVolume: number;
+  passedPriceAction: number;
+  passedSmc: number;
+  passedConfidence: number;
+  passedRiskReward: number;
+  finalSignals: number;
+  rejectCounts: Partial<Record<string, number>>;
+  topRejectStage: string | null;
+  topRejectCount: number;
 }
 
 export interface BotState {
