@@ -253,7 +253,8 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
   } finally {
     finalizeFunnel(funnel);
     nearMissCandidates.sort((a, b) => a.distance - b.distance);
-    funnel.nearMisses = nearMissCandidates.slice(0, 8).map((n) => n.line);
+    // Ranked scorecards (per-stage %); keep a few for /status + logs
+    funnel.nearMisses = nearMissCandidates.slice(0, 5).map((n) => n.line);
     const duration = Date.now() - started;
     await updateState((s) => {
       s.stats.running = false;

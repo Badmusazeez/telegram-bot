@@ -70,10 +70,17 @@ export function formatFunnelLog(funnel: ScanFunnel): string {
     );
   }
   if (funnel.nearMisses.length) {
-    lines.push("Closest rejects:");
-    for (const m of funnel.nearMisses) lines.push(`  ${m}`);
+    lines.push("Closest rejects (warming up):");
+    for (const m of funnel.nearMisses) {
+      lines.push("");
+      for (const row of m.split("\n")) lines.push(`  ${row}`);
+    }
   }
   return lines.join("\n");
+}
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export function formatFunnelTelegram(funnel: ScanFunnel): string {
@@ -97,9 +104,10 @@ export function formatFunnelTelegram(funnel: ScanFunnel): string {
     );
   }
   if (funnel.nearMisses.length) {
-    lines.push("", `<b>Closest rejects</b>`);
-    for (const m of funnel.nearMisses.slice(0, 8)) {
-      lines.push(`• ${m.replace(/&/g, "&amp;").replace(/</g, "&lt;")}`);
+    lines.push("", `<b>Closest rejects (warming up)</b>`);
+    // Multi-line scorecards — keep top 3 so /status stays readable
+    for (const m of funnel.nearMisses.slice(0, 3)) {
+      lines.push(`<pre>${escHtml(m)}</pre>`);
     }
   }
   return lines.join("\n");

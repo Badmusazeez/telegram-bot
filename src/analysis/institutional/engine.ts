@@ -37,11 +37,85 @@ function estimateHolding(timeframe: string): string {
   return map[timeframe] ?? "several hours to 1–2 days";
 }
 
-function mark(ok: boolean): string {
-  return ok ? "✓" : "✗";
+const CORE_LABELS: Array<{ name: FactorResult["name"]; label: string }> = [
+  { name: "trend", label: "Trend" },
+  { name: "momentum", label: "Momentum" },
+  { name: "volume", label: "Volume" },
+  { name: "priceAction", label: "Price Action" },
+  { name: "smc", label: "SMC" },
+];
+
+function pct(score: number | undefined): number {
+  return Math.round(Math.max(0, Math.min(1, score ?? 0)) * 100);
 }
 
-function buildNearMissLine(
+function scoreLine(label: string, value: number, width = 14): string {
+  const dots = ".".repeat(Math.max(2, width - label.length));
+  return `${label} ${dots} ${value}%`;
+}
+
+function rejectReasonBullets(
+  rejectStage: InstitutionalAnalysis["rejectStage"],
+  factors: FactorResult[],
+  confidence: number,
+  extras?: { stopPct?: number }
+): string[] {
+  const byName = Object.fromEntries(factors.map((f) => [f.name, f]));
+  const bullets: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (text: string) => {
+    const t = text.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    bullets.push(t);
+  };
+
+  if (rejectStage === "volume") {
+    const mult = byName.volume?.metrics?.volumeMult ?? 0;
+    const need = byName.volume?.metrics?.volumeNeed ?? config.volumeSpikeMult;
+    if (mult < need) push(`Volume below ${need.toFixed(2)}× (now ${mult.toFixed(2)}×)`);
+  } else if (rejectStage === "confidence") {
+    push(`Overall confidence ${confidence}% < ${config.minConfidence}%`);
+  } else if (rejectStage === "momentum") {
+    const adx = byName.momentum?.metrics?.adx ?? 0;
+    if (adx <= 25) push(`ADX = ${adx.toFixed(1)} (needs >25)`);
+  } else if (rejectStage === "trend") {
+    push("Trend stack / HTF not aligned");
+  } else if (rejectStage === "priceAction") {
+    push("Breakout/retest/candle confirmation missing");
+  } else if (rejectStage === "smc") {
+    push("BOS/CHoCH/OB/FVG/zone incomplete");
+  } else if (rejectStage === "riskReward") {
+    const stopPct = extras?.stopPct ?? 0;
+    push(
+      `Stop = ${(stopPct * 100).toFixed(2)}% (max ${(config.maxStopPct * 100).toFixed(2)}%) or RR invalid`
+    );
+  } else if (rejectStage === "conflict") {
+    push("Conflicting factor directions");
+  } else if (rejectStage === "verdict") {
+    push(`Verdict not actionable (confidence ${confidence}%)`);
+  }
+
+  const missHint =
+    /miss|needs|insufficient|conflict|incomplete|below|not aligned|choppy|unavailable|ADX|MACD|Volume|OBV|CMF|BOS|FVG|retest|breakout/i;
+
+  for (const { name } of CORE_LABELS) {
+    const f = byName[name];
+    if (!f || f.aligned) continue;
+    for (const r of f.reasons) {
+      if (missHint.test(r)) push(r);
+      if (bullets.length >= 5) break;
+    }
+    if (bullets.length >= 5) break;
+  }
+
+  if (!bullets.length) push(`Rejected at ${rejectStage}`);
+  return bullets.slice(0, 5);
+}
+
+/** Multi-line scorecard for rejected / near-miss candidates. */
+export function buildNearMissLine(
   symbol: string,
   rejectStage: InstitutionalAnalysis["rejectStage"],
   factors: FactorResult[],
@@ -49,72 +123,53 @@ function buildNearMissLine(
   extras?: { stopPct?: number }
 ): { line: string; distance: number } {
   const byName = Object.fromEntries(factors.map((f) => [f.name, f]));
-  const trend = byName.trend;
-  const momentum = byName.momentum;
-  const volume = byName.volume;
-  const priceAction = byName.priceAction;
-  const smc = byName.smc;
+  const core = CORE_LABELS.map(({ name }) => byName[name]);
 
-  const parts: string[] = [
-    `Trend ${mark(!!trend?.aligned)}`,
-    `Momentum ${mark(!!momentum?.aligned)}`,
-    `Volume ${mark(!!volume?.aligned)}`,
-    `PA ${mark(!!priceAction?.aligned)}`,
-    `SMC ${mark(!!smc?.aligned)}`,
-  ];
-
-  let distance = 100;
-  let detail = "";
-
-  if (rejectStage === "volume") {
-    const mult = volume?.metrics?.volumeMult ?? 0;
-    const need = volume?.metrics?.volumeNeed ?? config.volumeSpikeMult;
-    detail = `Volume = ${mult.toFixed(2)}x (needs ${need.toFixed(2)}x)`;
-    distance = Math.max(0, need - mult) * 10 + 1; // closer vol => smaller distance
-  } else if (rejectStage === "confidence") {
-    detail = `Confidence = ${confidence}% (needs ${config.minConfidence}%)`;
-    distance = Math.max(0, config.minConfidence - confidence);
-  } else if (rejectStage === "momentum") {
-    const adx = momentum?.metrics?.adx ?? 0;
-    const rsi = momentum?.metrics?.rsi ?? 0;
-    detail = `ADX = ${adx.toFixed(1)} (needs >25), RSI = ${rsi.toFixed(1)}`;
-    distance = Math.max(0, 25 - adx) + 5;
-  } else if (rejectStage === "trend") {
-    detail = "Trend stack / HTF not aligned";
-    distance = 40;
-  } else if (rejectStage === "priceAction") {
-    detail = "Breakout/retest/candle confirmation missing";
-    distance = 30;
-  } else if (rejectStage === "smc") {
-    detail = "BOS/CHoCH/OB/FVG/zone incomplete";
-    distance = 30;
-  } else if (rejectStage === "riskReward") {
-    const stopPct = extras?.stopPct ?? 0;
-    detail = `Stop = ${(stopPct * 100).toFixed(2)}% (max ${(config.maxStopPct * 100).toFixed(2)}%) or RR invalid`;
-    distance = Math.max(0, stopPct - config.maxStopPct) * 100 + 2;
-  } else if (rejectStage === "conflict") {
-    detail = "Conflicting factor directions";
-    distance = 50;
-  } else if (rejectStage === "verdict") {
-    detail = `Verdict not actionable (confidence ${confidence}%)`;
-    distance = Math.max(0, config.minConfidence - confidence) + 3;
-  } else {
-    detail = "Passed";
-    distance = 0;
+  if (rejectStage === "passed") {
+    return { line: `${symbol}: PASSED`, distance: 0 };
   }
 
-  // Prefer candidates that already passed earlier stages
-  const passedCount = [trend, momentum, volume, priceAction, smc].filter(
-    (f) => f?.aligned
-  ).length;
-  distance += Math.max(0, 5 - passedCount) * 0.1;
+  const scoreLines = CORE_LABELS.map(({ name, label }) =>
+    scoreLine(label, pct(byName[name]?.score))
+  );
+  const reasons = rejectReasonBullets(
+    rejectStage,
+    factors,
+    confidence,
+    extras
+  );
 
-  const checks = parts.join(", ");
-  const line =
-    rejectStage === "passed"
-      ? `${symbol}: PASSED`
-      : `${symbol} rejected: ${checks} · ${detail}`;
+  const line = [
+    symbol,
+    ...scoreLines,
+    `Overall Confidence: ${confidence}%`,
+    "Reason rejected:",
+    ...reasons.map((r) => `* ${r}`),
+  ].join("\n");
 
+  // Rank "warming up" candidates: high confidence + high avg core scores first
+  const avgCore =
+    core.reduce((sum, f) => sum + (f?.score ?? 0), 0) / Math.max(1, core.length);
+  const passedCount = core.filter((f) => f?.aligned).length;
+  let distance =
+    Math.max(0, config.minConfidence - confidence) + (1 - avgCore) * 20;
+
+  if (rejectStage === "volume") {
+    const mult = byName.volume?.metrics?.volumeMult ?? 0;
+    const need = byName.volume?.metrics?.volumeNeed ?? config.volumeSpikeMult;
+    distance = Math.min(distance, Math.max(0, need - mult) * 10 + 1);
+  } else if (rejectStage === "momentum") {
+    const adx = byName.momentum?.metrics?.adx ?? 0;
+    distance = Math.min(distance, Math.max(0, 25 - adx) + 5);
+  } else if (rejectStage === "riskReward") {
+    const stopPct = extras?.stopPct ?? 0;
+    distance = Math.min(
+      distance,
+      Math.max(0, stopPct - config.maxStopPct) * 100 + 2
+    );
+  }
+
+  distance += Math.max(0, 5 - passedCount) * 0.15;
   return { line, distance };
 }
 

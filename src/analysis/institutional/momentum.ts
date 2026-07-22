@@ -129,11 +129,17 @@ export function analyzeMomentum(
     reasons.push("ADX≤25 — trend strength insufficient (key miss)");
   }
 
+  const macdOk =
+    (side === "BUY" && macdBull) || (side === "SELL" && macdBear);
+  if (side !== "NEUTRAL" && !macdOk) {
+    reasons.push("Momentum missing MACD confirmation");
+  }
+
   const aligned =
     strongTrend &&
     side !== "NEUTRAL" &&
     (preferredSide === "NEUTRAL" || side === preferredSide) &&
-    ((side === "BUY" && macdBull) || (side === "SELL" && macdBear));
+    macdOk;
 
   return {
     name: "momentum",

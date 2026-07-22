@@ -63,7 +63,7 @@ export interface InstitutionalAnalysis {
   invalidation: string[];
   majorRisks: string[];
   missing: string[];
-  /** Human-readable near-miss line for rejects. */
+  /** Multi-line near-miss scorecard (per-stage % + reject reasons). */
   nearMissLine: string | null;
   /** Lower = closer to passing (for ranking near misses). */
   nearMissDistance: number;
