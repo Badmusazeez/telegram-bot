@@ -55,7 +55,7 @@ export function formatStatus(stats: ScannerStats, paused: boolean): string {
   const last = stats.lastScanAt
     ? new Date(stats.lastScanAt).toISOString()
     : "never";
-  return [
+  const lines = [
     `<b>AI Futures Assistant</b>`,
     `Status: ${paused ? "⏸ paused" : stats.running ? "🔎 scanning" : "✅ idle"}`,
     `Last scan: <code>${last}</code>`,
@@ -64,7 +64,17 @@ export function formatStatus(stats: ScannerStats, paused: boolean): string {
     `Signals found: ${stats.signalsFound}`,
     `Alerts sent: ${stats.alertsSent}`,
     `Errors: ${stats.errors}`,
-  ].join("\n");
+  ];
+  if (stats.lastError) {
+    lines.push(`Last error: <code>${esc(stats.lastError.slice(0, 350))}</code>`);
+  }
+  if (stats.pairsScanned === 0) {
+    lines.push(
+      "",
+      "<i>0 pairs usually means Binance is blocked (HTTP 451) from this network, or MIN_QUOTE_VOLUME_USDT is too high.</i>"
+    );
+  }
+  return lines.join("\n");
 }
 
 export function helpText(): string {

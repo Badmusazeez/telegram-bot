@@ -62,12 +62,20 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
     s.stats.running = true;
   });
 
+  let lastError: string | null = null;
+
   try {
     const symbols = await selectSymbols();
     pairsScanned = symbols.length;
-    console.log(
-      `[scan] ${symbols.length} USDT-M perpetuals (min vol $${config.minQuoteVolumeUsdt.toLocaleString()}) on ${config.timeframe}`
-    );
+    if (pairsScanned === 0) {
+      lastError =
+        "0 pairs matched filters. Lower MIN_QUOTE_VOLUME_USDT in .env, or Binance returned no symbols.";
+      console.warn(`[scan] ${lastError}`);
+    } else {
+      console.log(
+        `[scan] ${symbols.length} USDT-M perpetuals (min vol $${config.minQuoteVolumeUsdt.toLocaleString()}) on ${config.timeframe}`
+      );
+    }
 
     await mapPool(symbols, 4, async (symbol) => {
       try {
@@ -94,11 +102,16 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
       } catch (err) {
         errors += 1;
         const msg = err instanceof Error ? err.message : String(err);
+        lastError = `${symbol}: ${msg}`;
         if (!msg.includes("Invalid symbol")) {
           console.warn(`[warn] ${symbol}: ${msg}`);
         }
       }
     });
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+    errors += 1;
+    console.error("[scan] fatal:", lastError);
   } finally {
     const duration = Date.now() - started;
     await updateState((s) => {
@@ -107,6 +120,8 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
       s.stats.lastScanDurationMs = duration;
       s.stats.pairsScanned = pairsScanned;
       s.stats.errors += errors;
+      if (lastError) s.stats.lastError = lastError;
+      else if (errors === 0 && pairsScanned > 0) s.stats.lastError = null;
     });
     console.log(
       `[scan] done in ${(duration / 1000).toFixed(1)}s — ${found.length} signal(s), ${errors} error(s)`
@@ -138,9 +153,11 @@ export function startScanner(onSignal: SignalHandler): () => void {
     try {
       await runScan(onSignal);
     } catch (err) {
-      console.error("[scan] fatal:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[scan] unexpected:", msg);
       await updateState((s) => {
         s.stats.errors += 1;
+        s.stats.lastError = msg;
       });
     } finally {
       running = false;

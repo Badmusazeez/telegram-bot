@@ -95,6 +95,7 @@ export interface ScannerStats {
   alertsSent: number;
   errors: number;
   running: boolean;
+  lastError: string | null;
 }
 
 export interface BotState {

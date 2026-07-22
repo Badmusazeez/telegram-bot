@@ -14,6 +14,7 @@ const defaultState = (): BotState => ({
     alertsSent: 0,
     errors: 0,
     running: false,
+    lastError: null,
   },
   recentSignalIds: [],
   lastSignals: {},
