@@ -1,9 +1,9 @@
-import { config } from "../config";
 import {
   fetchFundingRate,
   fetchLongShortRatio,
   fetchOpenInterestHistory,
-} from "../binance/client";
+} from "../exchange";
+import { config } from "../config";
 import type { FundamentalSnapshot, Side } from "../types";
 
 function oiPeriodForTimeframe(tf: string): string {
@@ -72,7 +72,6 @@ export async function analyzeFundamental(
         const last = hist[hist.length - 1].sumOpenInterest;
         if (first > 0) {
           openInterestChangePct = ((last - first) / first) * 100;
-          // Rising OI with direction = conviction
           if (openInterestChangePct > 0.5) {
             score += 1;
             reasons.push(
@@ -88,6 +87,12 @@ export async function analyzeFundamental(
             );
           }
         }
+      } else if (hist.length === 1 && config.exchange === "mexc") {
+        reasons.push(
+          `Open interest snapshot ${hist[0].sumOpenInterest.toLocaleString()} (MEXC has no OI history)`
+        );
+      } else {
+        reasons.push("Open interest history unavailable");
       }
     } catch {
       reasons.push("Open interest history unavailable");
@@ -102,7 +107,6 @@ export async function analyzeFundamental(
       1
     );
     if (longShortRatio !== null) {
-      // Contrarian lean: extreme long crowding favors SELL, extreme short favors BUY
       if (side === "BUY" && longShortRatio < 1.2) {
         score += 1;
         reasons.push(`L/S ratio ${longShortRatio.toFixed(2)} not extreme long`);

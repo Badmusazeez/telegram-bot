@@ -40,7 +40,7 @@ export function createTelegramBot(): Bot {
   bot.command("start", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      "Connected. You will receive Binance Futures BUY/SELL alerts here.\n\n/help for commands."
+      "Connected. You will receive Futures BUY/SELL alerts here.\n\n/help for commands."
     );
   });
 

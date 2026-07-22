@@ -4,7 +4,8 @@ import {
   fetchKlines,
   fetchTickers24h,
   mapPool,
-} from "../binance/client";
+} from "../exchange";
+import { toMexcSymbol } from "../exchange/mexc";
 import { evaluateSymbol } from "../analysis/signalEngine";
 import {
   getState,
@@ -15,6 +16,10 @@ import {
 import type { TradeSignal } from "../types";
 
 export type SignalHandler = (signal: TradeSignal) => Promise<void>;
+
+function normalizeFilterSymbol(symbol: string): string {
+  return config.exchange === "mexc" ? toMexcSymbol(symbol) : symbol.toUpperCase();
+}
 
 async function selectSymbols(): Promise<string[]> {
   const [pairs, tickers] = await Promise.all([
@@ -29,12 +34,15 @@ async function selectSymbols(): Promise<string[]> {
   let symbols = pairs.map((p) => p.symbol);
 
   if (config.symbolWhitelist.length > 0) {
-    const allow = new Set(config.symbolWhitelist);
-    symbols = symbols.filter((s) => allow.has(s));
+    const allow = new Set(config.symbolWhitelist.map(normalizeFilterSymbol));
+    symbols = symbols.filter((s) => allow.has(normalizeFilterSymbol(s)));
   }
 
   if (config.symbolBlacklist.size > 0) {
-    symbols = symbols.filter((s) => !config.symbolBlacklist.has(s));
+    const deny = new Set(
+      [...config.symbolBlacklist].map((s) => normalizeFilterSymbol(s))
+    );
+    symbols = symbols.filter((s) => !deny.has(normalizeFilterSymbol(s)));
   }
 
   symbols = symbols.filter(
@@ -69,11 +77,11 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
     pairsScanned = symbols.length;
     if (pairsScanned === 0) {
       lastError =
-        "0 pairs matched filters. Lower MIN_QUOTE_VOLUME_USDT in .env, or Binance returned no symbols.";
+        `0 pairs matched filters on ${config.exchange}. Lower MIN_QUOTE_VOLUME_USDT in .env, or the exchange returned no symbols.`;
       console.warn(`[scan] ${lastError}`);
     } else {
       console.log(
-        `[scan] ${symbols.length} USDT-M perpetuals (min vol $${config.minQuoteVolumeUsdt.toLocaleString()}) on ${config.timeframe}`
+        `[scan] ${symbols.length} ${config.exchange.toUpperCase()} USDT-M perpetuals (min vol $${config.minQuoteVolumeUsdt.toLocaleString()}) on ${config.timeframe}`
       );
     }
 

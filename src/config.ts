@@ -20,6 +20,12 @@ const num = (defaultValue: string) =>
 const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
+  EXCHANGE: z
+    .string()
+    .optional()
+    .default("mexc")
+    .transform((v) => v.trim().toLowerCase())
+    .refine((v) => v === "mexc" || v === "binance", "EXCHANGE must be mexc or binance"),
   BINANCE_API_KEY: z.string().optional().default(""),
   BINANCE_API_SECRET: z.string().optional().default(""),
   BINANCE_FUTURES_BASE_URL: z
@@ -27,6 +33,11 @@ const schema = z.object({
     .url()
     .optional()
     .default("https://fapi.binance.com"),
+  MEXC_FUTURES_BASE_URL: z
+    .string()
+    .url()
+    .optional()
+    .default("https://contract.mexc.com"),
   TIMEFRAME: z
     .string()
     .optional()
@@ -103,6 +114,15 @@ if (env.EMA_FAST >= env.EMA_SLOW) {
   throw new Error("EMA_FAST must be less than EMA_SLOW");
 }
 
+if (
+  env.EXCHANGE === "mexc" &&
+  !["1m", "5m", "15m", "30m", "1h", "4h", "1d"].includes(env.TIMEFRAME)
+) {
+  throw new Error(
+    `TIMEFRAME=${env.TIMEFRAME} is not supported on MEXC. Use 1m, 5m, 15m, 30m, 1h, 4h, or 1d.`
+  );
+}
+
 export const config = {
   telegramToken: env.TELEGRAM_BOT_TOKEN,
   allowedChatIds: new Set(
@@ -110,9 +130,11 @@ export const config = {
       .map((s) => s.trim())
       .filter(Boolean)
   ),
+  exchange: env.EXCHANGE as "mexc" | "binance",
   binanceApiKey: env.BINANCE_API_KEY,
   binanceApiSecret: env.BINANCE_API_SECRET,
   binanceBaseUrl: env.BINANCE_FUTURES_BASE_URL.replace(/\/$/, ""),
+  mexcBaseUrl: env.MEXC_FUTURES_BASE_URL.replace(/\/$/, ""),
   timeframe: env.TIMEFRAME as Timeframe,
   scanIntervalMs: Math.max(15_000, env.SCAN_INTERVAL_MS),
   minQuoteVolumeUsdt: Math.max(0, env.MIN_QUOTE_VOLUME_USDT),

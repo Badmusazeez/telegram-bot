@@ -71,7 +71,7 @@ export function formatStatus(stats: ScannerStats, paused: boolean): string {
   if (stats.pairsScanned === 0) {
     lines.push(
       "",
-      "<i>0 pairs usually means Binance is blocked (HTTP 451) from this network, or MIN_QUOTE_VOLUME_USDT is too high.</i>"
+      "<i>0 pairs usually means the exchange is blocked from this network, or MIN_QUOTE_VOLUME_USDT is too high. Try EXCHANGE=mexc in .env if using Binance.</i>"
     );
   }
   return lines.join("\n");
@@ -86,6 +86,6 @@ export function helpText(): string {
     "/resume — resume scanning",
     "/help — this message",
     "",
-    "The bot scans Binance USDT-M Futures for EMA crossovers, then requires technical + fundamental confirmations before sending BUY/SELL with TP & SL.",
+    "The bot scans MEXC or Binance USDT-M Futures for EMA crossovers, then requires technical + fundamental confirmations before sending BUY/SELL with TP & SL.",
   ].join("\n");
 }

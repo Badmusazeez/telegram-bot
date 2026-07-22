@@ -48,7 +48,11 @@ function writeEnv(values) {
     `TELEGRAM_BOT_TOKEN=${escapeEnvValue(values.TELEGRAM_BOT_TOKEN || "")}`,
     `TELEGRAM_ALLOWED_CHAT_IDS=${escapeEnvValue(values.TELEGRAM_ALLOWED_CHAT_IDS || "")}`,
     "",
-    "# Binance Futures (public market data works without keys)",
+    "# Exchange: mexc (recommended if Binance is blocked) or binance",
+    `EXCHANGE=${escapeEnvValue(values.EXCHANGE || "mexc")}`,
+    `MEXC_FUTURES_BASE_URL=${escapeEnvValue(values.MEXC_FUTURES_BASE_URL || "https://contract.mexc.com")}`,
+    "",
+    "# Binance Futures (only used when EXCHANGE=binance)",
     `BINANCE_API_KEY=${escapeEnvValue(values.BINANCE_API_KEY || "")}`,
     `BINANCE_API_SECRET=${escapeEnvValue(values.BINANCE_API_SECRET || "")}`,
     `BINANCE_FUTURES_BASE_URL=${escapeEnvValue(values.BINANCE_FUTURES_BASE_URL || "https://fapi.binance.com")}`,
@@ -147,7 +151,10 @@ async function main() {
     );
 
     console.log("");
-    console.log("2) Scanner defaults (press Enter to keep)");
+    console.log("2) Exchange + scanner (press Enter to keep)");
+    const EXCHANGE = await ask(rl, "EXCHANGE (mexc or binance)", {
+      defaultValue: existing.EXCHANGE || "mexc",
+    });
     const TIMEFRAME = await ask(rl, "TIMEFRAME", {
       defaultValue: existing.TIMEFRAME || "15m",
     });
@@ -168,6 +175,7 @@ async function main() {
       ...existing,
       TELEGRAM_BOT_TOKEN,
       TELEGRAM_ALLOWED_CHAT_IDS,
+      EXCHANGE,
       TIMEFRAME,
       EMA_FAST,
       EMA_SLOW,

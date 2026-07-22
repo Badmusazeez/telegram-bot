@@ -4,16 +4,14 @@ import { loadState } from "./store/state";
 import { broadcastSignal, createTelegramBot } from "./telegram/bot";
 
 async function main(): Promise<void> {
-  console.log("Starting Binance Futures AI Trading Assistant…");
+  console.log("Starting Futures AI Trading Assistant…");
   console.log(
-    `Timeframe=${config.timeframe} EMA=${config.emaFast}/${config.emaSlow} scan=${config.scanIntervalMs}ms`
+    `Exchange=${config.exchange} Timeframe=${config.timeframe} EMA=${config.emaFast}/${config.emaSlow} scan=${config.scanIntervalMs}ms`
   );
   console.log(
     `Min volume=$${config.minQuoteVolumeUsdt.toLocaleString()} dryRun=${config.dryRun} alerts=${config.alertsEnabled}`
   );
-  console.log(
-    "Alerts only — this bot does not place orders on Binance."
-  );
+  console.log("Alerts only — this bot does not place orders.");
 
   await loadState();
 
@@ -33,7 +31,9 @@ async function main(): Promise<void> {
   await bot.start({
     onStart: (info) => {
       console.log(`Telegram bot @${info.username} is online`);
-      console.log("Scanning Binance USDT-M Futures 24/7…");
+      console.log(
+        `Scanning ${config.exchange.toUpperCase()} USDT-M Futures 24/7…`
+      );
     },
   });
 }
