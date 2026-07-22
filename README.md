@@ -65,6 +65,10 @@ npm run start:dev
 | `/resume` | Resume scanning |
 | `/help` | Command list |
 
+## Run on a VPS (24/7)
+
+To keep the bot online without your PC, follow **[`deploy/VPS.md`](deploy/VPS.md)** (Ubuntu + systemd).
+
 ## Configuration (`.env`)
 
 | Variable | Default | Meaning |
