@@ -41,14 +41,19 @@ class Result:
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd or ROOT),
-        text=True,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=str(cwd or ROOT),
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(
+            cmd, returncode=127, stdout="", stderr=str(exc)
+        )
 
 
 def check_project_layout(r: Result) -> None:
@@ -127,33 +132,39 @@ def check_rpc(r: Result) -> None:
         r.bad("GLSim/RPC reachable", str(exc))
 
 
+def _lint_ok(stdout: str) -> bool:
+    compact = stdout.replace(" ", "").replace("\n", "")
+    if '"ok":true' in compact:
+        return True
+    for line in stdout.strip().splitlines()[::-1]:
+        try:
+            data = json.loads(line)
+        except Exception:
+            continue
+        if data.get("ok") is True:
+            return True
+    return False
+
+
 def check_lint(r: Result) -> None:
-    # Prefer module invocation for Windows PATH issues
+    scripts_dir = Path(sys.executable).resolve().parent / "Scripts"
     candidates = [
         [sys.executable, "-m", "genvm_linter", "check", "contracts/fold_predict.py", "--json"],
         ["genvm-lint", "check", "contracts/fold_predict.py", "--json"],
+        [str(scripts_dir / "genvm-lint.exe"), "check", "contracts/fold_predict.py", "--json"],
+        [str(scripts_dir / "genvm-lint"), "check", "contracts/fold_predict.py", "--json"],
     ]
+    last_detail = "lint tool not found"
     for cmd in candidates:
         proc = run(cmd)
-        if proc.returncode == 0 and '"ok":true' in proc.stdout.replace(" ", ""):
+        if proc.returncode == 0 and _lint_ok(proc.stdout or ""):
             r.ok("Contract lint")
             return
         if proc.returncode == 0:
-            # some versions pretty-print differently
-            try:
-                data = json.loads(proc.stdout.strip().splitlines()[-1])
-                if data.get("ok") is True:
-                    r.ok("Contract lint")
-                    return
-            except Exception:
-                pass
-    # fallback: try genvm-lint.exe style via PATH scripts
-    proc = run(["genvm-lint", "check", "contracts/fold_predict.py", "--json"])
-    if proc.returncode == 0:
-        r.ok("Contract lint")
-    else:
-        detail = (proc.stderr or proc.stdout or "lint failed").strip()[:200]
-        r.bad("Contract lint", detail)
+            r.ok("Contract lint")
+            return
+        last_detail = (proc.stderr or proc.stdout or last_detail).strip()[:200]
+    r.bad("Contract lint", last_detail)
 
 
 def check_direct_tests(r: Result) -> None:
@@ -178,16 +189,19 @@ def check_direct_tests(r: Result) -> None:
 
 def check_frontend_build(r: Result) -> None:
     frontend = ROOT / "frontend"
-    if not (frontend / "node_modules").exists():
-        install = run(["npm", "install"], cwd=frontend)
-        if install.returncode != 0:
-            r.bad("Frontend npm install", (install.stderr or install.stdout)[:220])
-            return
-    proc = run(["npm", "run", "build"], cwd=frontend)
-    if proc.returncode == 0:
-        r.ok("Frontend build")
-    else:
-        r.bad("Frontend build", (proc.stderr or proc.stdout)[:220])
+    try:
+        if not (frontend / "node_modules").exists():
+            install = run(["npm", "install"], cwd=frontend)
+            if install.returncode != 0:
+                r.bad("Frontend npm install", (install.stderr or install.stdout)[:220])
+                return
+        proc = run(["npm", "run", "build"], cwd=frontend)
+        if proc.returncode == 0:
+            r.ok("Frontend build")
+        else:
+            r.bad("Frontend build", (proc.stderr or proc.stdout)[:220])
+    except Exception as exc:  # noqa: BLE001
+        r.bad("Frontend build", str(exc)[:220])
 
 
 def check_contract_read(r: Result, address: str | None) -> None:
@@ -224,13 +238,16 @@ def main() -> int:
     print("-" * 56)
 
     r = Result()
-    check_project_layout(r)
-    address = check_frontend_env(r)
-    check_rpc(r)
-    check_lint(r)
-    check_direct_tests(r)
-    check_frontend_build(r)
-    check_contract_read(r, address)
+    try:
+        check_project_layout(r)
+        address = check_frontend_env(r)
+        check_rpc(r)
+        check_lint(r)
+        check_direct_tests(r)
+        check_frontend_build(r)
+        check_contract_read(r, address)
+    except Exception as exc:  # noqa: BLE001
+        r.bad("Unexpected script error", str(exc)[:240])
 
     print("-" * 56)
     print(f"Done: {r.passed} passed, {r.failed} failed")
