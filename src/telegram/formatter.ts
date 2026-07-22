@@ -70,7 +70,6 @@ export function formatSignalAlert(signal: TradeSignal): string {
     `<b>TP1:</b> <code>${fmtPrice(signal.takeProfit1)}</code> (R:R ${signal.riskReward1.toFixed(2)})`,
     `<b>TP2:</b> <code>${fmtPrice(signal.takeProfit2)}</code> (R:R ${(signal.riskReward2 ?? 0).toFixed(2)})`,
     `<b>TP3:</b> <code>${fmtPrice(signal.takeProfit3 ?? signal.takeProfit2)}</code> (R:R ${(signal.riskReward3 ?? signal.riskReward2).toFixed(2)})`,
-    `<b>Position size:</b> <code>${(signal.positionSize ?? 0).toPrecision(4)}</code> (risk ${signal.riskPercent ?? 1}% of $${signal.accountBalance ?? 0})`,
     `<b>Est. hold:</b> ${esc(signal.estimatedHolding ?? "n/a")}`,
     "",
     `<b>Invalidation</b>`,

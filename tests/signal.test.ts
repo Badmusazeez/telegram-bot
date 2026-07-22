@@ -124,6 +124,6 @@ describe("formatter", () => {
     assert.match(text, /TP1/);
     assert.match(text, /TP3/);
     assert.match(text, /Final verdict/);
-    assert.match(text, /Position size/);
+    assert.doesNotMatch(text, /Position size/);
   });
 });
