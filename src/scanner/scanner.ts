@@ -85,14 +85,13 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
       );
     }
 
-    await mapPool(symbols, 3, async (symbol) => {
+    await mapPool(symbols, 1, async (symbol) => {
       try {
-        const [primary, h1, h4, d1] = await Promise.all([
-          fetchKlines(symbol, config.timeframe, 260),
-          fetchKlines(symbol, "1h", 260),
-          fetchKlines(symbol, "4h", 260),
-          fetchKlines(symbol, "1d", 260),
-        ]);
+        // Sequential TF fetches — parallel bursts trigger MEXC code 510
+        const primary = await fetchKlines(symbol, config.timeframe, 260);
+        const h1 = await fetchKlines(symbol, "1h", 260);
+        const h4 = await fetchKlines(symbol, "4h", 220);
+        const d1 = await fetchKlines(symbol, "1d", 220);
         const signal = await evaluateSymbol(symbol, primary, h1, { h4, d1 });
         if (!signal) return;
 
@@ -108,11 +107,15 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
 
         found.push(signal);
       } catch (err) {
-        errors += 1;
         const msg = err instanceof Error ? err.message : String(err);
         lastError = `${symbol}: ${msg}`;
-        if (!msg.includes("Invalid symbol")) {
+        const isRate = /510|rate limited|too frequent|429/i.test(msg);
+        if (!isRate) {
+          errors += 1;
           console.warn(`[warn] ${symbol}: ${msg}`);
+        } else {
+          console.warn(`[rate-limit] ${symbol}: backing off`);
+          await new Promise((r) => setTimeout(r, 2000));
         }
       }
     });

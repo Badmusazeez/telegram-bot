@@ -1,6 +1,6 @@
 import { config } from "../config";
 import type { Candle, FuturesPair, Ticker24h } from "../types";
-import { fetchJson } from "./http";
+import { fetchJson, RateLimitError, sleep } from "./http";
 
 function base(): string {
   return config.mexcBaseUrl;
@@ -45,19 +45,60 @@ function toMexcInterval(tf: string): string {
   return mapped;
 }
 
-type MexcOk<T> = { success: boolean; code: number; data: T };
+type MexcOk<T> = { success: boolean; code: number; data: T; message?: string };
+
+/** Global spacing so we stay under MEXC public rate limits (code 510). */
+let lastRequestAt = 0;
+const MIN_GAP_MS = 120; // ~8 req/s max across the process
+
+async function throttle(): Promise<void> {
+  const now = Date.now();
+  const wait = lastRequestAt + MIN_GAP_MS - now;
+  if (wait > 0) await sleep(wait);
+  lastRequestAt = Date.now();
+}
 
 async function mexc<T>(
   path: string,
-  params: Record<string, string | number | undefined> = {}
+  params: Record<string, string | number | undefined> = {},
+  retries = 5
 ): Promise<T> {
-  const json = await fetchJson<MexcOk<T>>(base(), path, params, {
-    label: "MEXC",
-  });
-  if (!json.success && json.code !== 0) {
-    throw new Error(`MEXC API error code=${json.code}`);
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      await throttle();
+      const json = await fetchJson<MexcOk<T>>(base(), path, params, {
+        label: "MEXC",
+        retries: 1,
+      });
+
+      // 510 = too frequent; 501 = system busy
+      if (json.code === 510 || json.code === 501) {
+        throw new RateLimitError(
+          `MEXC rate limited (code=${json.code}) ${json.message ?? ""}`.trim()
+        );
+      }
+      if (!json.success && json.code !== 0) {
+        throw new Error(`MEXC API error code=${json.code}`);
+      }
+      return json.data;
+    } catch (err) {
+      lastError = err;
+      const isRate =
+        err instanceof RateLimitError ||
+        (err instanceof Error && /code=510|rate limited|too frequent/i.test(err.message));
+      if (attempt < retries && isRate) {
+        await sleep(1000 * (attempt + 1) + Math.floor(Math.random() * 400));
+        continue;
+      }
+      if (attempt < retries && !(err instanceof Error && /blocked this IP/i.test(err.message))) {
+        await sleep(400 * (attempt + 1));
+        continue;
+      }
+      break;
+    }
   }
-  return json.data;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function fetchExchangePairs(): Promise<FuturesPair[]> {
@@ -78,7 +119,10 @@ export async function fetchExchangePairs(): Promise<FuturesPair[]> {
         s.state === 0 &&
         s.futureType === 1 &&
         String(s.quoteCoin).toUpperCase() === "USDT" &&
-        s.apiAllowed !== false
+        s.apiAllowed !== false &&
+        // Skip stock-index style contracts that often rate-limit / misbehave
+        !/_STOCK$/i.test(s.symbol) &&
+        !s.symbol.includes("STOCK")
     )
     .map((s) => ({
       symbol: s.symbol,
@@ -161,11 +205,6 @@ export async function fetchFundingRate(symbol: string): Promise<number> {
   return Number(data.fundingRate);
 }
 
-/**
- * MEXC has no public OI history series like Binance.
- * Use current holdVol from ticker as a single-point snapshot so callers
- * can still reason about availability (change % will be null upstream).
- */
 export async function fetchOpenInterestHistory(
   symbol: string,
   _period: string,
@@ -192,6 +231,5 @@ export async function fetchLongShortRatio(
   _period: string,
   _limit = 1
 ): Promise<number | null> {
-  // Not exposed on MEXC public contract API.
   return null;
 }

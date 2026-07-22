@@ -4,6 +4,7 @@ import {
   getState,
   markAlertSent,
   registerNotifyChat,
+  resetStats,
   setPaused,
 } from "../store/state";
 import type { TradeSignal } from "../types";
@@ -63,6 +64,11 @@ export function createTelegramBot(): Bot {
   bot.command("resume", async (ctx) => {
     await setPaused(false);
     await ctx.reply("Scanner resumed.");
+  });
+
+  bot.command("resetstats", async (ctx) => {
+    await resetStats();
+    await ctx.reply("Stats reset (errors/signals/alerts counters cleared).");
   });
 
   bot.catch((err) => {

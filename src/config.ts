@@ -59,9 +59,9 @@ const schema = z.object({
         ].includes(v),
       "invalid TIMEFRAME"
     ),
-  SCAN_INTERVAL_MS: num("60000"),
+  SCAN_INTERVAL_MS: num("120000"),
   MIN_QUOTE_VOLUME_USDT: num("8000000"),
-  MAX_PAIRS: num("0"),
+  MAX_PAIRS: num("40"),
   SYMBOL_WHITELIST: z.string().optional().default(""),
   SYMBOL_BLACKLIST: z.string().optional().default(""),
   EMA_FAST: num("9"),

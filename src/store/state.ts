@@ -99,3 +99,14 @@ export async function setPaused(paused: boolean): Promise<void> {
     s.paused = paused;
   });
 }
+
+export async function resetStats(): Promise<void> {
+  await updateState((s) => {
+    s.stats.errors = 0;
+    s.stats.lastError = null;
+    s.stats.signalsFound = 0;
+    s.stats.alertsSent = 0;
+    s.stats.pairsScanned = 0;
+    s.stats.lastScanDurationMs = 0;
+  });
+}

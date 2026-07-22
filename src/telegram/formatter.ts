@@ -110,7 +110,7 @@ export function helpText(): string {
     "<b>Commands</b>",
     "/start — register for alerts",
     "/status — scanner + institutional gates",
-    "/pause · /resume · /help",
+    "/pause · /resume · /resetstats · /help",
     "",
     "Only alerts with ≥85% multi-factor confidence (trend, momentum, volume, price action, SMC, futures, fundamentals). Incomplete setups = NO TRADE.",
   ].join("\n");
