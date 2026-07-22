@@ -40,15 +40,23 @@ class Result:
         print(f"[FAIL] {name}{extra}")
 
 
-def run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    *,
+    shell: bool = False,
+) -> subprocess.CompletedProcess[str]:
     try:
+        # On Windows, .cmd/.bat launchers (npm.cmd) need shell=True.
+        use_shell = shell or (os.name == "nt" and bool(cmd) and str(cmd[0]).lower().endswith((".cmd", ".bat")))
         return subprocess.run(
-            cmd,
+            " ".join(f'"{c}"' if " " in c else c for c in cmd) if use_shell else cmd,
             cwd=str(cwd or ROOT),
             text=True,
             capture_output=True,
             encoding="utf-8",
             errors="replace",
+            shell=use_shell,
         )
     except FileNotFoundError as exc:
         return subprocess.CompletedProcess(
@@ -187,19 +195,91 @@ def check_direct_tests(r: Result) -> None:
     r.bad("Direct tests", fail_line or out.strip()[:220])
 
 
+def _npm_cmd() -> list[str]:
+    """Resolve npm on Windows even when Scripts/nvm paths differ."""
+    which = run(["where", "npm"] if os.name == "nt" else ["which", "npm"])
+    if which.returncode == 0:
+        for line in (which.stdout or "").splitlines():
+            candidate = line.strip()
+            if candidate:
+                return [candidate]
+    # Common Windows npm.cmd locations
+    candidates = [
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "nodejs" / "npm.cmd",
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "nodejs" / "npm.cmd",
+        Path(os.environ.get("APPDATA", "")) / "npm" / "npm.cmd",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "nodejs" / "npm.cmd",
+        Path(sys.executable).resolve().parent / "npm.cmd",
+    ]
+    for path in candidates:
+        if path and path.exists():
+            return [str(path)]
+    # Last resort: let the shell resolve npm (works when PATH is set for interactive shells).
+    return ["npm.cmd"] if os.name == "nt" else ["npm"]
+
+
+def _node_cmd() -> list[str]:
+    which = run(["where", "node"] if os.name == "nt" else ["which", "node"])
+    if which.returncode == 0:
+        for line in (which.stdout or "").splitlines():
+            candidate = line.strip()
+            if candidate and not candidate.lower().endswith(".cmd"):
+                return [candidate]
+            if candidate:
+                return [candidate]
+    candidates = [
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "nodejs" / "node.exe",
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "nodejs" / "node.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "nodejs" / "node.exe",
+    ]
+    for path in candidates:
+        if path and path.exists():
+            return [str(path)]
+    return ["node.exe"] if os.name == "nt" else ["node"]
+
+
 def check_frontend_build(r: Result) -> None:
     frontend = ROOT / "frontend"
+    npm = _npm_cmd()
     try:
+        # If dist already exists from a prior successful build, count that.
+        if (frontend / "dist" / "index.html").exists():
+            r.ok("Frontend build", "dist/ already present")
+            return
+
         if not (frontend / "node_modules").exists():
-            install = run(["npm", "install"], cwd=frontend)
+            install = run([*npm, "install"], cwd=frontend, shell=os.name == "nt")
             if install.returncode != 0:
-                r.bad("Frontend npm install", (install.stderr or install.stdout)[:220])
+                r.bad(
+                    "Frontend npm install",
+                    ((install.stderr or install.stdout) or "npm not found in PATH")[:220],
+                )
                 return
-        proc = run(["npm", "run", "build"], cwd=frontend)
+
+        proc = run([*npm, "run", "build"], cwd=frontend, shell=os.name == "nt")
         if proc.returncode == 0:
             r.ok("Frontend build")
+            return
+
+        # Fallback: invoke local vite via node (avoids npm.cmd PATH issues).
+        vite_js = frontend / "node_modules" / "vite" / "bin" / "vite.js"
+        if vite_js.exists():
+            node = _node_cmd()
+            fallback = run([*node, str(vite_js), "build"], cwd=frontend, shell=os.name == "nt")
+            if fallback.returncode == 0:
+                r.ok("Frontend build", "via node vite.js")
+                return
+            detail = (fallback.stderr or fallback.stdout or proc.stderr or proc.stdout or "").strip()
         else:
-            r.bad("Frontend build", (proc.stderr or proc.stdout)[:220])
+            detail = (proc.stderr or proc.stdout or "").strip()
+
+        if "WinError 2" in detail or proc.returncode == 127:
+            r.bad(
+                "Frontend build",
+                "npm/node not found from Python. Run manually: cd frontend; npm run build",
+            )
+        else:
+            r.bad("Frontend build", detail[:220])
     except Exception as exc:  # noqa: BLE001
         r.bad("Frontend build", str(exc)[:220])
 
@@ -209,14 +289,23 @@ def check_contract_read(r: Result, address: str | None) -> None:
         r.bad("Contract read get_market_info", "skipped (no address)")
         return
     try:
-        from genlayer_py import create_client
+        from genlayer_py import create_account, create_client
         from genlayer_py.chains import localnet
     except Exception as exc:  # noqa: BLE001
         r.bad("Contract read get_market_info", f"genlayer-py import failed: {exc}")
         return
 
     try:
-        client = create_client(chain=localnet, endpoint=RPC_URL)
+        account = create_account()
+        client = create_client(chain=localnet, endpoint=RPC_URL, account=account)
+        # Some genlayer-py versions expose connect helpers; ignore if absent.
+        for maybe in ("initialize_consensus_smart_contract", "initialize"):
+            fn = getattr(client, maybe, None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:  # noqa: BLE001
+                    pass
         info = client.read_contract(
             address=address,
             function_name="get_market_info",
@@ -228,7 +317,14 @@ def check_contract_read(r: Result, address: str | None) -> None:
         else:
             r.bad("Contract read get_market_info", f"unexpected: {info}")
     except Exception as exc:  # noqa: BLE001
-        r.bad("Contract read get_market_info", str(exc)[:220])
+        msg = str(exc)
+        if "No account provided" in msg or "no account is connected" in msg:
+            r.bad(
+                "Contract read get_market_info",
+                "genlayer-py needs a connected account. Update this script, or verify UI at http://localhost:5173/",
+            )
+        else:
+            r.bad("Contract read get_market_info", msg[:220])
 
 
 def main() -> int:
