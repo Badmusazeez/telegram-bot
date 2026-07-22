@@ -80,8 +80,10 @@ export interface TradeSignal {
   stopLoss: number;
   takeProfit1: number;
   takeProfit2: number;
+  takeProfit3?: number;
   riskReward1: number;
   riskReward2: number;
+  riskReward3?: number;
   technical: TechnicalSnapshot;
   fundamental: FundamentalSnapshot;
   confidence: number;
@@ -89,6 +91,21 @@ export interface TradeSignal {
   tags: string[];
   summary: string;
   createdAt: number;
+  verdict?: string;
+  htfTrend?: string;
+  whyValid?: string[];
+  positionSize?: number;
+  accountBalance?: number;
+  riskPercent?: number;
+  estimatedHolding?: string;
+  invalidation?: string[];
+  majorRisks?: string[];
+  factorScores?: Array<{
+    name: string;
+    weight: number;
+    score: number;
+    aligned: boolean;
+  }>;
 }
 
 export interface ScannerStats {

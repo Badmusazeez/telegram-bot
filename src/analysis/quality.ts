@@ -76,7 +76,7 @@ export function atrPctOk(
 }
 
 export function qualityLabel(confidence: number): "HIGH" | "MED" | "LOW" {
-  if (confidence >= 80) return "HIGH";
+  if (confidence >= 92) return "HIGH";
   if (confidence >= config.minConfidence) return "MED";
   return "LOW";
 }

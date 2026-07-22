@@ -76,9 +76,10 @@ describe("formatter", () => {
       entry: 65000,
       stopLoss: 64000,
       takeProfit1: 67000,
-      takeProfit2: 69000,
-      riskReward1: 2,
-      riskReward2: 4,
+      takeProfit3: 71000,
+      riskReward1: 2.5,
+      riskReward2: 3,
+      riskReward3: 4,
       technical: {
         emaFast: 64900,
         emaSlow: 64800,
@@ -89,7 +90,7 @@ describe("formatter", () => {
         volumeSpike: true,
         atr: 400,
         score: 3,
-        reasons: ["EMA9/21 bullish crossover"],
+        reasons: ["EMA stack bullish"],
       },
       fundamental: {
         fundingRate: 0.0001,
@@ -98,18 +99,31 @@ describe("formatter", () => {
         score: 2,
         reasons: ["Funding ok"],
       },
-      confidence: 72,
+      confidence: 88,
       quality: "MED",
-      tags: ["MED", "trend:1h", "volume"],
+      tags: ["BUY", "trend", "momentum"],
       summary: "test",
       createdAt: Date.now(),
+      verdict: "BUY",
+      htfTrend: "1H BUY · 4H BUY · D BUY",
+      whyValid: ["EMA stack bullish", "ADX strong"],
+      positionSize: 0.15,
+      accountBalance: 1000,
+      riskPercent: 1,
+      estimatedHolding: "2h–12h",
+      invalidation: ["Close below SL"],
+      majorRisks: ["Volatility"],
+      factorScores: [
+        { name: "trend", weight: 0.25, score: 90, aligned: true },
+        { name: "momentum", weight: 0.2, score: 85, aligned: true },
+      ],
     };
     const text = formatSignalAlert(signal);
-    assert.match(text, /BUY BTCUSDT/);
+    assert.match(text, /LONG BTCUSDT/);
     assert.match(text, /Stop Loss/);
-    assert.match(text, /Take Profit 1/);
-    assert.match(text, /64000/);
-    assert.match(text, /MEXC/);
-    assert.match(text, /Open chart/);
+    assert.match(text, /TP1/);
+    assert.match(text, /TP3/);
+    assert.match(text, /Final verdict/);
+    assert.match(text, /Position size/);
   });
 });

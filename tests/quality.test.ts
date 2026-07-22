@@ -10,8 +10,8 @@ describe("quality gates", () => {
   });
 
   it("labels confidence bands", () => {
-    assert.equal(qualityLabel(85), "HIGH");
-    assert.equal(qualityLabel(70), "MED");
+    assert.equal(qualityLabel(95), "HIGH");
+    assert.equal(qualityLabel(90), "MED");
     assert.equal(qualityLabel(40), "LOW");
   });
 });

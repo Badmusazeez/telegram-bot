@@ -85,14 +85,15 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
       );
     }
 
-    await mapPool(symbols, 4, async (symbol) => {
+    await mapPool(symbols, 3, async (symbol) => {
       try {
-        const candles = await fetchKlines(symbol, config.timeframe, 180);
-        let trendCandles = undefined as Awaited<ReturnType<typeof fetchKlines>> | undefined;
-        if (config.requireTrendAlignment) {
-          trendCandles = await fetchKlines(symbol, config.trendTimeframe, 180);
-        }
-        const signal = await evaluateSymbol(symbol, candles, trendCandles);
+        const [primary, h1, h4, d1] = await Promise.all([
+          fetchKlines(symbol, config.timeframe, 260),
+          fetchKlines(symbol, "1h", 260),
+          fetchKlines(symbol, "4h", 260),
+          fetchKlines(symbol, "1d", 260),
+        ]);
+        const signal = await evaluateSymbol(symbol, primary, h1, { h4, d1 });
         if (!signal) return;
 
         if (isOnCooldown(signal.symbol, signal.side)) {

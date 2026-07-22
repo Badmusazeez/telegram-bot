@@ -147,3 +147,176 @@ export function lastDefined(values: number[]): number | undefined {
   }
   return undefined;
 }
+
+export function highest(values: number[], period: number, endIndex: number): number {
+  let h = -Infinity;
+  for (let i = endIndex - period + 1; i <= endIndex; i++) {
+    if (i >= 0 && values[i] > h) h = values[i];
+  }
+  return h;
+}
+
+export function lowest(values: number[], period: number, endIndex: number): number {
+  let l = Infinity;
+  for (let i = endIndex - period + 1; i <= endIndex; i++) {
+    if (i >= 0 && values[i] < l) l = values[i];
+  }
+  return l;
+}
+
+/** Wilder ADX(period). Returns adx, plusDI, minusDI sparse arrays. */
+export function adx(
+  candles: Candle[],
+  period = 14
+): { adx: number[]; plusDI: number[]; minusDI: number[] } {
+  const adxOut: number[] = [];
+  const plusDI: number[] = [];
+  const minusDI: number[] = [];
+  if (candles.length < period * 2) return { adx: adxOut, plusDI, minusDI };
+
+  const plusDM: number[] = [];
+  const minusDM: number[] = [];
+  const tr: number[] = [];
+  for (let i = 0; i < candles.length; i++) {
+    if (i === 0) {
+      plusDM[i] = 0;
+      minusDM[i] = 0;
+      tr[i] = candles[i].high - candles[i].low;
+      continue;
+    }
+    const up = candles[i].high - candles[i - 1].high;
+    const down = candles[i - 1].low - candles[i].low;
+    plusDM[i] = up > down && up > 0 ? up : 0;
+    minusDM[i] = down > up && down > 0 ? down : 0;
+    const prevClose = candles[i - 1].close;
+    tr[i] = Math.max(
+      candles[i].high - candles[i].low,
+      Math.abs(candles[i].high - prevClose),
+      Math.abs(candles[i].low - prevClose)
+    );
+  }
+
+  let atrW = 0;
+  let plusW = 0;
+  let minusW = 0;
+  for (let i = 1; i <= period; i++) {
+    atrW += tr[i];
+    plusW += plusDM[i];
+    minusW += minusDM[i];
+  }
+
+  const dx: number[] = [];
+  for (let i = period; i < candles.length; i++) {
+    if (i > period) {
+      atrW = atrW - atrW / period + tr[i];
+      plusW = plusW - plusW / period + plusDM[i];
+      minusW = minusW - minusW / period + minusDM[i];
+    }
+    const pdi = atrW === 0 ? 0 : (100 * plusW) / atrW;
+    const mdi = atrW === 0 ? 0 : (100 * minusW) / atrW;
+    plusDI[i] = pdi;
+    minusDI[i] = mdi;
+    const sum = pdi + mdi;
+    dx[i] = sum === 0 ? 0 : (100 * Math.abs(pdi - mdi)) / sum;
+  }
+
+  // First ADX = SMA of DX
+  let adxPrev = 0;
+  let count = 0;
+  for (let i = period; i < candles.length; i++) {
+    if (dx[i] === undefined) continue;
+    if (count < period) {
+      adxPrev += dx[i];
+      count++;
+      if (count === period) {
+        adxPrev /= period;
+        adxOut[i] = adxPrev;
+      }
+      continue;
+    }
+    adxPrev = (adxPrev * (period - 1) + dx[i]) / period;
+    adxOut[i] = adxPrev;
+  }
+  return { adx: adxOut, plusDI, minusDI };
+}
+
+/** Stochastic RSI (0-100). */
+export function stochRsi(
+  closes: number[],
+  rsiPeriod = 14,
+  stochPeriod = 14,
+  kSmooth = 3,
+  dSmooth = 3
+): { k: number[]; d: number[] } {
+  const rsiSeries = rsi(closes, rsiPeriod);
+  const stoch: number[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (rsiSeries[i] === undefined) continue;
+    const window: number[] = [];
+    for (let j = i - stochPeriod + 1; j <= i; j++) {
+      if (j >= 0 && rsiSeries[j] !== undefined) window.push(rsiSeries[j]);
+    }
+    if (window.length < stochPeriod) continue;
+    const hi = Math.max(...window);
+    const lo = Math.min(...window);
+    stoch[i] = hi === lo ? 0 : ((rsiSeries[i] - lo) / (hi - lo)) * 100;
+  }
+  const k = smaSparse(stoch, kSmooth);
+  const d = smaSparse(k, dSmooth);
+  return { k, d };
+}
+
+function smaSparse(values: number[], period: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] === undefined) continue;
+    let sum = 0;
+    let n = 0;
+    for (let j = i; j >= 0 && n < period; j--) {
+      if (values[j] === undefined) continue;
+      sum += values[j];
+      n++;
+    }
+    if (n === period) out[i] = sum / period;
+  }
+  return out;
+}
+
+export function obv(candles: Candle[]): number[] {
+  const out: number[] = [];
+  let prev = 0;
+  for (let i = 0; i < candles.length; i++) {
+    if (i === 0) {
+      out[i] = candles[i].volume;
+      prev = candles[i].close;
+      continue;
+    }
+    if (candles[i].close > prev) out[i] = out[i - 1] + candles[i].volume;
+    else if (candles[i].close < prev) out[i] = out[i - 1] - candles[i].volume;
+    else out[i] = out[i - 1];
+    prev = candles[i].close;
+  }
+  return out;
+}
+
+/** Chaikin Money Flow over period. */
+export function cmf(candles: Candle[], period = 20): number[] {
+  const out: number[] = [];
+  const mfv: number[] = [];
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    const hl = c.high - c.low;
+    const mfm = hl === 0 ? 0 : ((c.close - c.low) - (c.high - c.close)) / hl;
+    mfv[i] = mfm * c.volume;
+  }
+  for (let i = period - 1; i < candles.length; i++) {
+    let sumMfv = 0;
+    let sumVol = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sumMfv += mfv[j];
+      sumVol += candles[j].volume;
+    }
+    out[i] = sumVol === 0 ? 0 : sumMfv / sumVol;
+  }
+  return out;
+}

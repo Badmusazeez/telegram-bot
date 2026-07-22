@@ -16,10 +16,6 @@ function fmtPrice(n: number): string {
   return n.toPrecision(4);
 }
 
-function fmtPct(n: number): string {
-  return `${(n * 100).toFixed(4)}%`;
-}
-
 function chartUrl(signal: TradeSignal): string {
   if (signal.exchange === "mexc") {
     return `https://www.mexc.com/futures/${encodeURIComponent(signal.symbol)}`;
@@ -28,38 +24,64 @@ function chartUrl(signal: TradeSignal): string {
 }
 
 export function formatSignalAlert(signal: TradeSignal): string {
-  const emoji = signal.side === "BUY" ? "🟢" : "🔴";
-  const tech = signal.technical.reasons.map((r) => `• ${esc(r)}`).join("\n");
-  const fund = signal.fundamental.reasons.map((r) => `• ${esc(r)}`).join("\n");
-  const qEmoji =
-    signal.quality === "HIGH" ? "🔥" : signal.quality === "MED" ? "✨" : "▫️";
+  const emoji =
+    signal.side === "BUY"
+      ? signal.verdict?.includes("STRONG")
+        ? "🟢🔥"
+        : "🟢"
+      : signal.verdict?.includes("STRONG")
+        ? "🔴🔥"
+        : "🔴";
+
+  const direction = signal.side === "BUY" ? "LONG" : "SHORT";
+  const factors = (signal.factorScores ?? [])
+    .map(
+      (f) =>
+        `• ${esc(f.name)}: ${f.score}% (w${Math.round(f.weight * 100)}%)${f.aligned ? " ✓" : ""}`
+    )
+    .join("\n");
+
+  const why = (signal.whyValid ?? signal.technical.reasons)
+    .slice(0, 8)
+    .map((r) => `• ${esc(r)}`)
+    .join("\n");
+
+  const invalid = (signal.invalidation ?? [])
+    .map((r) => `• ${esc(r)}`)
+    .join("\n");
+  const risks = (signal.majorRisks ?? [])
+    .slice(0, 5)
+    .map((r) => `• ${esc(r)}`)
+    .join("\n");
 
   return [
-    `${emoji} <b>${signal.side} ${esc(signal.symbol)}</b> · ${esc(signal.timeframe)}`,
-    `${qEmoji} <b>${signal.quality}</b> · Confidence <b>${signal.confidence}%</b> · ${esc(signal.exchange.toUpperCase())}`,
-    `Tags: ${esc(signal.tags.join(", "))}`,
+    `${emoji} <b>${esc(signal.verdict ?? signal.side)}</b> · ${esc(direction)} ${esc(signal.symbol)}`,
+    `<b>Confidence:</b> ${signal.confidence}% · ${esc(signal.exchange.toUpperCase())} · ${esc(signal.timeframe)}`,
+    `<b>HTF trend:</b> ${esc(signal.htfTrend ?? signal.trendTimeframe)}`,
+    "",
+    `<b>Why valid</b>`,
+    why || "• Multi-factor alignment",
+    "",
+    `<b>Factor scores</b>`,
+    factors || "• n/a",
     "",
     `<b>Entry:</b> <code>${fmtPrice(signal.entry)}</code>`,
     `<b>Stop Loss:</b> <code>${fmtPrice(signal.stopLoss)}</code>`,
-    `<b>Take Profit 1:</b> <code>${fmtPrice(signal.takeProfit1)}</code> (R:R ${signal.riskReward1.toFixed(2)})`,
-    `<b>Take Profit 2:</b> <code>${fmtPrice(signal.takeProfit2)}</code> (R:R ${signal.riskReward2.toFixed(2)})`,
+    `<b>TP1:</b> <code>${fmtPrice(signal.takeProfit1)}</code> (R:R ${signal.riskReward1.toFixed(2)})`,
+    `<b>TP2:</b> <code>${fmtPrice(signal.takeProfit2)}</code> (R:R ${(signal.riskReward2 ?? 0).toFixed(2)})`,
+    `<b>TP3:</b> <code>${fmtPrice(signal.takeProfit3 ?? signal.takeProfit2)}</code> (R:R ${(signal.riskReward3 ?? signal.riskReward2).toFixed(2)})`,
+    `<b>Position size:</b> <code>${(signal.positionSize ?? 0).toPrecision(4)}</code> (risk ${signal.riskPercent ?? 1}% of $${signal.accountBalance ?? 0})`,
+    `<b>Est. hold:</b> ${esc(signal.estimatedHolding ?? "n/a")}`,
     "",
-    `<b>Technical</b> (score ${signal.technical.score}) · trend TF ${esc(signal.trendTimeframe)}`,
-    `EMA ${fmtPrice(signal.technical.emaFast)} / ${fmtPrice(signal.technical.emaSlow)} · RSI ${signal.technical.rsi.toFixed(1)} · ATR ${fmtPrice(signal.technical.atr)}`,
-    tech,
+    `<b>Invalidation</b>`,
+    invalid || "• Structure SL break",
     "",
-    `<b>Fundamental</b> (score ${signal.fundamental.score})`,
-    `Funding ${fmtPct(signal.fundamental.fundingRate)}` +
-      (signal.fundamental.openInterestChangePct !== null
-        ? ` · OI Δ ${signal.fundamental.openInterestChangePct.toFixed(2)}%`
-        : "") +
-      (signal.fundamental.longShortRatio !== null
-        ? ` · L/S ${signal.fundamental.longShortRatio.toFixed(2)}`
-        : ""),
-    fund,
+    `<b>Major risks</b>`,
+    risks || "• Volatility",
     "",
-    `<a href="${chartUrl(signal)}">Open chart on ${esc(signal.exchange.toUpperCase())}</a>`,
-    `<i>Alert only — not financial advice. Manage your own risk.</i>`,
+    `<b>Final verdict:</b> ${esc(signal.verdict ?? "NO TRADE")}`,
+    `<a href="${chartUrl(signal)}">Open chart</a>`,
+    `<i>Alert only — not financial advice.</i>`,
   ].join("\n");
 }
 
@@ -67,44 +89,30 @@ export function formatStatus(stats: ScannerStats, paused: boolean): string {
   const last = stats.lastScanAt
     ? new Date(stats.lastScanAt).toISOString()
     : "never";
-  const lines = [
-    `<b>AI Futures Assistant</b>`,
-    `Exchange: <b>${esc(config.exchange.toUpperCase())}</b> · TF ${esc(config.timeframe)}` +
-      (config.requireTrendAlignment
-        ? ` · trend ${esc(config.trendTimeframe)}`
-        : ""),
-    `Quality gates: conf≥${config.minConfidence}% · tech≥${config.minTechnicalScore}` +
-      (config.requireVolumeSpike ? " · volume spike" : "") +
-      (config.requireTrendAlignment ? " · HTF trend" : ""),
+  return [
+    `<b>Institutional Futures Assistant</b>`,
+    `Exchange: <b>${esc(config.exchange.toUpperCase())}</b> · TF ${esc(config.timeframe)} + 1H/4H/D`,
+    `Gate: confidence ≥ ${config.minConfidence}% · RR ≥ ${config.minRiskReward} · vol ≥ 1.5×`,
     `Status: ${paused ? "⏸ paused" : stats.running ? "🔎 scanning" : "✅ idle"}`,
     `Last scan: <code>${last}</code>`,
     `Duration: ${(stats.lastScanDurationMs / 1000).toFixed(1)}s`,
-    `Pairs last pass: ${stats.pairsScanned}`,
-    `Signals found: ${stats.signalsFound}`,
-    `Alerts sent: ${stats.alertsSent}`,
+    `Pairs: ${stats.pairsScanned} · Signals: ${stats.signalsFound} · Alerts: ${stats.alertsSent}`,
     `Errors: ${stats.errors}`,
-  ];
-  if (stats.lastError) {
-    lines.push(`Last error: <code>${esc(stats.lastError.slice(0, 350))}</code>`);
-  }
-  if (stats.pairsScanned === 0) {
-    lines.push(
-      "",
-      "<i>0 pairs usually means the exchange is blocked from this network, or MIN_QUOTE_VOLUME_USDT is too high.</i>"
-    );
-  }
-  return lines.join("\n");
+    stats.lastError
+      ? `Last error: <code>${esc(stats.lastError.slice(0, 300))}</code>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function helpText(): string {
   return [
     "<b>Commands</b>",
-    "/start — register this chat for alerts",
-    "/status — scanner stats + quality gates",
-    "/pause — pause scanning",
-    "/resume — resume scanning",
-    "/help — this message",
+    "/start — register for alerts",
+    "/status — scanner + institutional gates",
+    "/pause · /resume · /help",
     "",
-    "Scans MEXC/Binance USDT-M Futures for EMA crossovers, then requires volume, higher-timeframe trend, RSI/MACD, and funding before alerting with TP/SL.",
+    "Only alerts with ≥85% multi-factor confidence (trend, momentum, volume, price action, SMC, futures, fundamentals). Incomplete setups = NO TRADE.",
   ].join("\n");
 }
