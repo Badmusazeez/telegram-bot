@@ -60,7 +60,7 @@ const schema = z.object({
       "invalid TIMEFRAME"
     ),
   SCAN_INTERVAL_MS: num("60000"),
-  MIN_QUOTE_VOLUME_USDT: num("5000000"),
+  MIN_QUOTE_VOLUME_USDT: num("8000000"),
   MAX_PAIRS: num("0"),
   SYMBOL_WHITELIST: z.string().optional().default(""),
   SYMBOL_BLACKLIST: z.string().optional().default(""),
@@ -76,7 +76,14 @@ const schema = z.object({
   REQUIRE_VOLUME: bool(true),
   VOLUME_MA_PERIOD: num("20"),
   VOLUME_SPIKE_MULT: num("1.2"),
-  MIN_TECHNICAL_SCORE: num("2"),
+  MIN_TECHNICAL_SCORE: num("3"),
+  REQUIRE_VOLUME_SPIKE: bool(true),
+  REQUIRE_TREND_ALIGNMENT: bool(true),
+  TREND_TIMEFRAME: z.string().optional().default("1h"),
+  MIN_CONFIDENCE: num("65"),
+  MIN_ATR_PCT: num("0.2"),
+  MAX_ATR_PCT: num("6"),
+  MAX_ALERTS_PER_SCAN: num("3"),
   REQUIRE_FUNDING: bool(true),
   FUNDING_LONG_MAX: num("0.0005"),
   FUNDING_SHORT_MIN: num("-0.0005"),
@@ -123,6 +130,33 @@ if (
   );
 }
 
+const trendTfRaw = (env.TREND_TIMEFRAME || "1h").trim().toLowerCase();
+const autoTrend: Record<string, string> = {
+  "1m": "15m",
+  "3m": "15m",
+  "5m": "15m",
+  "15m": "1h",
+  "30m": "1h",
+  "1h": "4h",
+  "2h": "4h",
+  "4h": "1d",
+  "6h": "1d",
+  "12h": "1d",
+  "1d": "1d",
+};
+const trendTimeframe =
+  trendTfRaw === "auto" ? autoTrend[env.TIMEFRAME] ?? "1h" : trendTfRaw;
+
+if (
+  env.EXCHANGE === "mexc" &&
+  env.REQUIRE_TREND_ALIGNMENT &&
+  !["1m", "5m", "15m", "30m", "1h", "4h", "1d"].includes(trendTimeframe)
+) {
+  throw new Error(
+    `TREND_TIMEFRAME=${trendTimeframe} is not supported on MEXC.`
+  );
+}
+
 export const config = {
   telegramToken: env.TELEGRAM_BOT_TOKEN,
   allowedChatIds: new Set(
@@ -136,6 +170,13 @@ export const config = {
   binanceBaseUrl: env.BINANCE_FUTURES_BASE_URL.replace(/\/$/, ""),
   mexcBaseUrl: env.MEXC_FUTURES_BASE_URL.replace(/\/$/, ""),
   timeframe: env.TIMEFRAME as Timeframe,
+  trendTimeframe: trendTimeframe as Timeframe,
+  requireTrendAlignment: env.REQUIRE_TREND_ALIGNMENT,
+  requireVolumeSpike: env.REQUIRE_VOLUME_SPIKE,
+  minConfidence: Math.max(0, Math.min(100, Math.floor(env.MIN_CONFIDENCE))),
+  minAtrPct: Math.max(0, env.MIN_ATR_PCT),
+  maxAtrPct: Math.max(0.1, env.MAX_ATR_PCT),
+  maxAlertsPerScan: Math.max(0, Math.floor(env.MAX_ALERTS_PER_SCAN)),
   scanIntervalMs: Math.max(15_000, env.SCAN_INTERVAL_MS),
   minQuoteVolumeUsdt: Math.max(0, env.MIN_QUOTE_VOLUME_USDT),
   maxPairs: Math.max(0, Math.floor(env.MAX_PAIRS)),

@@ -73,7 +73,9 @@ export interface TradeSignal {
   id: string;
   symbol: string;
   side: Side;
+  exchange: string;
   timeframe: string;
+  trendTimeframe: string;
   entry: number;
   stopLoss: number;
   takeProfit1: number;
@@ -83,6 +85,8 @@ export interface TradeSignal {
   technical: TechnicalSnapshot;
   fundamental: FundamentalSnapshot;
   confidence: number;
+  quality: "HIGH" | "MED" | "LOW";
+  tags: string[];
   summary: string;
   createdAt: number;
 }

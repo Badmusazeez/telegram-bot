@@ -75,14 +75,13 @@ See **[`deploy/VPS.md`](deploy/VPS.md)**.
 | Variable | Default | Meaning |
 |---|---|---|
 | `EXCHANGE` | `mexc` | `mexc` or `binance` |
-| `TIMEFRAME` | `15m` | MEXC supports 1m,5m,15m,30m,1h,4h,1d |
-| `EMA_FAST` / `EMA_SLOW` | `9` / `21` | Crossover lengths |
-| `MIN_QUOTE_VOLUME_USDT` | `5000000` | Min 24h quote volume |
-| `MIN_TECHNICAL_SCORE` | `2` | Min technical confirmations |
-| `MIN_FUNDAMENTAL_SCORE` | `1` | Min fundamental confirmations |
-| `STOP_LOSS_ATR_MULT` | `1.5` | SL in ATRs |
-| `TAKE_PROFIT_ATR_MULT` | `3` | TP1 in ATRs |
-| `TAKE_PROFIT_2_ATR_MULT` | `5` | TP2 in ATRs |
+| `REQUIRE_TREND_ALIGNMENT` | `true` | Require higher-TF EMA trend match |
+| `TREND_TIMEFRAME` | `1h` | Higher timeframe (or `auto`) |
+| `REQUIRE_VOLUME_SPIKE` | `true` | Hard-require volume confirmation |
+| `MIN_CONFIDENCE` | `65` | Drop alerts below this score |
+| `MIN_TECHNICAL_SCORE` | `3` | Min technical points |
+| `MAX_ALERTS_PER_SCAN` | `3` | Keep only top-N by confidence |
+| `MIN_QUOTE_VOLUME_USDT` | `8000000` | Liquidity filter |
 
 ## Disclaimer
 

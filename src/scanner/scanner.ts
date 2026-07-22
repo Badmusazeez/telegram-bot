@@ -88,7 +88,11 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
     await mapPool(symbols, 4, async (symbol) => {
       try {
         const candles = await fetchKlines(symbol, config.timeframe, 180);
-        const signal = await evaluateSymbol(symbol, candles);
+        let trendCandles = undefined as Awaited<ReturnType<typeof fetchKlines>> | undefined;
+        if (config.requireTrendAlignment) {
+          trendCandles = await fetchKlines(symbol, config.trendTimeframe, 180);
+        }
+        const signal = await evaluateSymbol(symbol, candles, trendCandles);
         if (!signal) return;
 
         if (isOnCooldown(signal.symbol, signal.side)) {
@@ -101,12 +105,7 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
           return;
         }
 
-        await rememberSignal(signal);
         found.push(signal);
-        console.log(
-          `[signal] ${signal.side} ${signal.symbol} @ ${signal.entry} conf=${signal.confidence}%`
-        );
-        await onSignal(signal);
       } catch (err) {
         errors += 1;
         const msg = err instanceof Error ? err.message : String(err);
@@ -116,6 +115,27 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
         }
       }
     });
+
+    // Rank by confidence; only alert the best N per scan
+    found.sort((a, b) => b.confidence - a.confidence);
+    const toSend =
+      config.maxAlertsPerScan > 0
+        ? found.slice(0, config.maxAlertsPerScan)
+        : found;
+
+    for (const signal of toSend) {
+      await rememberSignal(signal);
+      console.log(
+        `[signal] ${signal.side} ${signal.symbol} @ ${signal.entry} conf=${signal.confidence}% ${signal.quality}`
+      );
+      await onSignal(signal);
+    }
+
+    if (found.length > toSend.length) {
+      console.log(
+        `[scan] suppressed ${found.length - toSend.length} lower-confidence signal(s) (MAX_ALERTS_PER_SCAN=${config.maxAlertsPerScan})`
+      );
+    }
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
     errors += 1;
@@ -174,7 +194,7 @@ export function startScanner(onSignal: SignalHandler): () => void {
   };
 
   console.log(
-    `[scanner] 24/7 loop every ${config.scanIntervalMs / 1000}s (EMA ${config.emaFast}/${config.emaSlow})`
+    `[scanner] 24/7 ${config.exchange.toUpperCase()} every ${config.scanIntervalMs / 1000}s · EMA ${config.emaFast}/${config.emaSlow} · conf≥${config.minConfidence}%`
   );
   void tick();
 

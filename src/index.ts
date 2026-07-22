@@ -9,7 +9,7 @@ async function main(): Promise<void> {
     `Exchange=${config.exchange} Timeframe=${config.timeframe} EMA=${config.emaFast}/${config.emaSlow} scan=${config.scanIntervalMs}ms`
   );
   console.log(
-    `Min volume=$${config.minQuoteVolumeUsdt.toLocaleString()} dryRun=${config.dryRun} alerts=${config.alertsEnabled}`
+    `Min volume=$${config.minQuoteVolumeUsdt.toLocaleString()} dryRun=${config.dryRun} alerts=${config.alertsEnabled} conf≥${config.minConfidence}%`
   );
   console.log("Alerts only — this bot does not place orders.");
 

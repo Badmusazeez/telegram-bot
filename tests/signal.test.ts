@@ -70,7 +70,9 @@ describe("formatter", () => {
       id: "abc",
       symbol: "BTCUSDT",
       side: "BUY",
+      exchange: "mexc",
       timeframe: "15m",
+      trendTimeframe: "1h",
       entry: 65000,
       stopLoss: 64000,
       takeProfit1: 67000,
@@ -97,6 +99,8 @@ describe("formatter", () => {
         reasons: ["Funding ok"],
       },
       confidence: 72,
+      quality: "MED",
+      tags: ["MED", "trend:1h", "volume"],
       summary: "test",
       createdAt: Date.now(),
     };
@@ -105,5 +109,7 @@ describe("formatter", () => {
     assert.match(text, /Stop Loss/);
     assert.match(text, /Take Profit 1/);
     assert.match(text, /64000/);
+    assert.match(text, /MEXC/);
+    assert.match(text, /Open chart/);
   });
 });
