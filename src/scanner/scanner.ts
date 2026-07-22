@@ -157,6 +157,7 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
   let errors = 0;
   let pairsScanned = 0;
   const funnel = emptyFunnel();
+  const nearMissCandidates: Array<{ line: string; distance: number }> = [];
 
   await updateState((s) => {
     s.stats.running = true;
@@ -190,6 +191,12 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
         const d1 = await fetchKlines(symbol, "1d", 220);
         const result = await evaluateSymbol(symbol, primary, h1, { h4, d1 });
         recordEval(funnel, result.stage);
+        if (result.nearMissLine && result.stage !== "passed") {
+          nearMissCandidates.push({
+            line: result.nearMissLine,
+            distance: result.nearMissDistance,
+          });
+        }
 
         if (!result.signal) return;
 
@@ -245,6 +252,8 @@ export async function runScan(onSignal: SignalHandler): Promise<TradeSignal[]> {
     console.error("[scan] fatal:", lastError);
   } finally {
     finalizeFunnel(funnel);
+    nearMissCandidates.sort((a, b) => a.distance - b.distance);
+    funnel.nearMisses = nearMissCandidates.slice(0, 8).map((n) => n.line);
     const duration = Date.now() - started;
     await updateState((s) => {
       s.stats.running = false;

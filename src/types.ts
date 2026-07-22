@@ -135,6 +135,8 @@ export interface ScanFunnel {
   rejectCounts: Partial<Record<string, number>>;
   topRejectStage: string | null;
   topRejectCount: number;
+  /** Closest rejected candidates with actual metric values. */
+  nearMisses: string[];
 }
 
 export interface BotState {

@@ -29,6 +29,7 @@ export function emptyFunnel(): ScanFunnel {
     rejectCounts: {},
     topRejectStage: null,
     topRejectCount: 0,
+    nearMisses: [],
   };
 }
 
@@ -68,6 +69,10 @@ export function formatFunnelLog(funnel: ScanFunnel): string {
       `Top reject: ${funnel.topRejectStage} (${funnel.topRejectCount} pairs)`
     );
   }
+  if (funnel.nearMisses.length) {
+    lines.push("Closest rejects:");
+    for (const m of funnel.nearMisses) lines.push(`  ${m}`);
+  }
   return lines.join("\n");
 }
 
@@ -90,6 +95,12 @@ export function formatFunnelTelegram(funnel: ScanFunnel): string {
     lines.push(
       `Top reject: <b>${funnel.topRejectStage}</b> (${funnel.topRejectCount})`
     );
+  }
+  if (funnel.nearMisses.length) {
+    lines.push("", `<b>Closest rejects</b>`);
+    for (const m of funnel.nearMisses.slice(0, 8)) {
+      lines.push(`• ${m.replace(/&/g, "&amp;").replace(/</g, "&lt;")}`);
+    }
   }
   return lines.join("\n");
 }

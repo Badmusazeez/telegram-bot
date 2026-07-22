@@ -37,6 +37,87 @@ function estimateHolding(timeframe: string): string {
   return map[timeframe] ?? "several hours to 1–2 days";
 }
 
+function mark(ok: boolean): string {
+  return ok ? "✓" : "✗";
+}
+
+function buildNearMissLine(
+  symbol: string,
+  rejectStage: InstitutionalAnalysis["rejectStage"],
+  factors: FactorResult[],
+  confidence: number,
+  extras?: { stopPct?: number }
+): { line: string; distance: number } {
+  const byName = Object.fromEntries(factors.map((f) => [f.name, f]));
+  const trend = byName.trend;
+  const momentum = byName.momentum;
+  const volume = byName.volume;
+  const priceAction = byName.priceAction;
+  const smc = byName.smc;
+
+  const parts: string[] = [
+    `Trend ${mark(!!trend?.aligned)}`,
+    `Momentum ${mark(!!momentum?.aligned)}`,
+    `Volume ${mark(!!volume?.aligned)}`,
+    `PA ${mark(!!priceAction?.aligned)}`,
+    `SMC ${mark(!!smc?.aligned)}`,
+  ];
+
+  let distance = 100;
+  let detail = "";
+
+  if (rejectStage === "volume") {
+    const mult = volume?.metrics?.volumeMult ?? 0;
+    const need = volume?.metrics?.volumeNeed ?? config.volumeSpikeMult;
+    detail = `Volume = ${mult.toFixed(2)}x (needs ${need.toFixed(2)}x)`;
+    distance = Math.max(0, need - mult) * 10 + 1; // closer vol => smaller distance
+  } else if (rejectStage === "confidence") {
+    detail = `Confidence = ${confidence}% (needs ${config.minConfidence}%)`;
+    distance = Math.max(0, config.minConfidence - confidence);
+  } else if (rejectStage === "momentum") {
+    const adx = momentum?.metrics?.adx ?? 0;
+    const rsi = momentum?.metrics?.rsi ?? 0;
+    detail = `ADX = ${adx.toFixed(1)} (needs >25), RSI = ${rsi.toFixed(1)}`;
+    distance = Math.max(0, 25 - adx) + 5;
+  } else if (rejectStage === "trend") {
+    detail = "Trend stack / HTF not aligned";
+    distance = 40;
+  } else if (rejectStage === "priceAction") {
+    detail = "Breakout/retest/candle confirmation missing";
+    distance = 30;
+  } else if (rejectStage === "smc") {
+    detail = "BOS/CHoCH/OB/FVG/zone incomplete";
+    distance = 30;
+  } else if (rejectStage === "riskReward") {
+    const stopPct = extras?.stopPct ?? 0;
+    detail = `Stop = ${(stopPct * 100).toFixed(2)}% (max ${(config.maxStopPct * 100).toFixed(2)}%) or RR invalid`;
+    distance = Math.max(0, stopPct - config.maxStopPct) * 100 + 2;
+  } else if (rejectStage === "conflict") {
+    detail = "Conflicting factor directions";
+    distance = 50;
+  } else if (rejectStage === "verdict") {
+    detail = `Verdict not actionable (confidence ${confidence}%)`;
+    distance = Math.max(0, config.minConfidence - confidence) + 3;
+  } else {
+    detail = "Passed";
+    distance = 0;
+  }
+
+  // Prefer candidates that already passed earlier stages
+  const passedCount = [trend, momentum, volume, priceAction, smc].filter(
+    (f) => f?.aligned
+  ).length;
+  distance += Math.max(0, 5 - passedCount) * 0.1;
+
+  const checks = parts.join(", ");
+  const line =
+    rejectStage === "passed"
+      ? `${symbol}: PASSED`
+      : `${symbol} rejected: ${checks} · ${detail}`;
+
+  return { line, distance };
+}
+
 export async function runInstitutionalAnalysis(
   symbol: string,
   bundle: MultiTfBundle
@@ -85,39 +166,50 @@ export async function runInstitutionalAnalysis(
 
   const empty = (
     reason: string,
-    rejectStage: RejectStage
-  ): InstitutionalAnalysis => ({
-    side: null,
-    confidence,
-    verdict: "NO TRADE",
-    noTrade: true,
-    noTradeReason: reason,
-    rejectStage,
-    factors,
-    htfTrend: summarizeHtf(bundle),
-    whyValid: [],
-    entry,
-    stopLoss: 0,
-    takeProfit1: 0,
-    takeProfit2: 0,
-    takeProfit3: 0,
-    riskReward: 0,
-    positionSize: 0,
-    accountBalance: config.accountBalanceUsdt,
-    riskPercent: config.riskPercent,
-    estimatedHolding: estimateHolding(config.timeframe),
-    invalidation: [],
-    majorRisks: factors
-      .flatMap((f) =>
-        f.reasons.filter((r) =>
-          /miss|conflict|caution|unavailable|choppy/i.test(r)
+    rejectStage: RejectStage,
+    extras?: { stopPct?: number }
+  ): InstitutionalAnalysis => {
+    const near = buildNearMissLine(
+      symbol,
+      rejectStage,
+      factors,
+      confidence,
+      extras
+    );
+    return {
+      side: null,
+      confidence,
+      verdict: "NO TRADE",
+      noTrade: true,
+      noTradeReason: reason,
+      rejectStage,
+      factors,
+      htfTrend: summarizeHtf(bundle),
+      whyValid: [],
+      entry,
+      stopLoss: 0,
+      takeProfit1: 0,
+      takeProfit2: 0,
+      takeProfit3: 0,
+      riskReward: 0,
+      positionSize: 0,
+      accountBalance: config.accountBalanceUsdt,
+      riskPercent: config.riskPercent,
+      estimatedHolding: estimateHolding(config.timeframe),
+      invalidation: [],
+      majorRisks: factors
+        .flatMap((f) =>
+          f.reasons.filter((r) =>
+            /miss|conflict|caution|unavailable|choppy/i.test(r)
+          )
         )
-      )
-      .slice(0, 6),
-    missing,
-  });
+        .slice(0, 6),
+      missing,
+      nearMissLine: near.line,
+      nearMissDistance: near.distance,
+    };
+  };
 
-  // Waterfall: first failing key stage wins for funnel attribution
   if (!trend.aligned || preferred === "NEUTRAL") {
     return empty(`${NO_TRADE} (trend incomplete)`, "trend");
   }
@@ -146,10 +238,12 @@ export async function runInstitutionalAnalysis(
   const side = preferred;
   const stopLoss = structureStop(bundle.primary, side, entry, atrVal);
   const risk = Math.abs(entry - stopLoss);
-  if (risk <= 0 || risk / entry > config.maxStopPct) {
+  const stopPct = entry > 0 ? risk / entry : 1;
+  if (risk <= 0 || stopPct > config.maxStopPct) {
     return empty(
-      `${NO_TRADE} (stop distance ${(100 * risk) / Math.max(entry, 1e-9)}% exceeds max ${config.maxStopPct * 100}% or invalid)`,
-      "riskReward"
+      `${NO_TRADE} (stop distance ${(stopPct * 100).toFixed(2)}% exceeds max ${config.maxStopPct * 100}% or invalid)`,
+      "riskReward",
+      { stopPct }
     );
   }
 
@@ -160,30 +254,11 @@ export async function runInstitutionalAnalysis(
     side === "BUY" ? entry + risk * (rrMult1 + 0.5) : entry - risk * (rrMult1 + 0.5);
   const takeProfit3 =
     side === "BUY" ? entry + risk * (rrMult1 + 1.5) : entry - risk * (rrMult1 + 1.5);
-  const riskReward = rrMult1;
-
-  const riskAmount = config.accountBalanceUsdt * (config.riskPercent / 100);
-  const positionSize = risk > 0 ? riskAmount / risk : 0;
 
   const whyValid = factors
     .filter((f) => f.aligned || f.score >= 0.6)
     .flatMap((f) => f.reasons.slice(0, 2))
     .slice(0, 10);
-
-  const invalidation = [
-    side === "BUY"
-      ? `Close below structure SL ${stopLoss}`
-      : `Close above structure SL ${stopLoss}`,
-    "HTF (4H/D) flip against position",
-    "Volume dries up and price re-enters prior range",
-  ];
-
-  const majorRisks = [
-    ...missing.map((m) => `Incomplete: ${m}`),
-    "Crypto volatility / wick stop-outs",
-    "Funding or OI can flip quickly on MEXC/Binance",
-    "News/macro not fully monitored without calendar API",
-  ].slice(0, 6);
 
   const verdict = verdictFor(side, confidence);
   if (
@@ -210,13 +285,28 @@ export async function runInstitutionalAnalysis(
     takeProfit1,
     takeProfit2,
     takeProfit3,
-    riskReward,
-    positionSize,
+    riskReward: rrMult1,
+    positionSize:
+      risk > 0
+        ? (config.accountBalanceUsdt * (config.riskPercent / 100)) / risk
+        : 0,
     accountBalance: config.accountBalanceUsdt,
     riskPercent: config.riskPercent,
     estimatedHolding: estimateHolding(config.timeframe),
-    invalidation,
-    majorRisks,
+    invalidation: [
+      side === "BUY"
+        ? `Close below structure SL ${stopLoss}`
+        : `Close above structure SL ${stopLoss}`,
+      "HTF (4H/D) flip against position",
+      "Volume dries up and price re-enters prior range",
+    ],
+    majorRisks: [
+      "Crypto volatility / wick stop-outs",
+      "Funding or OI can flip quickly",
+      "News/macro not fully monitored without calendar API",
+    ],
     missing,
+    nearMissLine: null,
+    nearMissDistance: 0,
   };
 }

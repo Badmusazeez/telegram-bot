@@ -1,4 +1,5 @@
 import { cmf, obv, sma } from "../indicators";
+import { config } from "../../config";
 import type { Side } from "../../types";
 import type { FactorResult, MultiTfBundle } from "./types";
 import { closed } from "./types";
@@ -20,10 +21,8 @@ function volumeProfileBias(
     bucket[idx] += vols[i];
   }
   let maxI = 0;
-  let minI = 0;
   for (let i = 0; i < bins; i++) {
     if (bucket[i] > bucket[maxI]) maxI = i;
-    if (bucket[i] < bucket[minI]) minI = i;
   }
   const poc = lo + (maxI + 0.5) * step;
   const price = prices[prices.length - 1];
@@ -41,6 +40,7 @@ export function analyzeVolume(
 ): FactorResult {
   const weight = 0.15;
   const reasons: string[] = [];
+  const need = config.volumeSpikeMult;
   const c = closed(bundle.primary);
   if (c.length < 40) {
     return {
@@ -51,6 +51,7 @@ export function analyzeVolume(
       missingKey: true,
       reasons: ["Insufficient volume history"],
       directionBias: "NEUTRAL",
+      metrics: { volumeMult: 0, volumeNeed: need },
     };
   }
 
@@ -59,7 +60,7 @@ export function analyzeVolume(
   const volMa = sma(vols, 20);
   const avg = volMa[i];
   const spikeMult = avg && avg > 0 ? vols[i] / avg : 0;
-  const spikeOk = spikeMult >= 1.5;
+  const spikeOk = spikeMult >= need;
 
   const obvSeries = obv(c);
   const obvNow = obvSeries[i];
@@ -69,16 +70,15 @@ export function analyzeVolume(
 
   const cmfSeries = cmf(c, 20);
   const cmfNow = cmfSeries[i] ?? 0;
-
   const vp = volumeProfileBias(c.slice(-80));
 
   reasons.push(
-    `Volume ${spikeMult.toFixed(2)}× 20-SMA ${spikeOk ? "(≥1.5× OK)" : "(BELOW 1.5× — key miss)"}`
+    `Volume ${spikeMult.toFixed(2)}× 20-SMA ${spikeOk ? `(≥${need}× OK)` : `(needs ${need.toFixed(2)}×)`}`
   );
   reasons.push(`OBV ${obvUp ? "rising" : obvDown ? "falling" : "flat"}`);
   reasons.push(`CMF(20)=${cmfNow.toFixed(3)}`);
   reasons.push(
-    `Volume profile POC≈${vp.poc.toPrecision(6)}${vp.nearHvn ? " (near HVN)" : ""}${vp.inLvn ? " (in LVN — breakout prone)" : ""}`
+    `Volume profile POC≈${vp.poc.toPrecision(6)}${vp.nearHvn ? " (near HVN)" : ""}${vp.inLvn ? " (in LVN)" : ""}`
   );
 
   let side: Side | "NEUTRAL" = "NEUTRAL";
@@ -107,5 +107,11 @@ export function analyzeVolume(
     missingKey: !spikeOk || !aligned,
     reasons,
     directionBias: side,
+    metrics: {
+      volumeMult: Number(spikeMult.toFixed(3)),
+      volumeNeed: need,
+      cmf: Number(cmfNow.toFixed(4)),
+      obvUp: obvUp ? 1 : 0,
+    },
   };
 }

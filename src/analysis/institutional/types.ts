@@ -17,6 +17,8 @@ export interface FactorResult {
   missingKey: boolean;
   reasons: string[];
   directionBias: Side | "NEUTRAL";
+  /** Numeric diagnostics for near-miss reporting. */
+  metrics?: Record<string, number>;
 }
 
 export type Verdict =
@@ -61,6 +63,10 @@ export interface InstitutionalAnalysis {
   invalidation: string[];
   majorRisks: string[];
   missing: string[];
+  /** Human-readable near-miss line for rejects. */
+  nearMissLine: string | null;
+  /** Lower = closer to passing (for ranking near misses). */
+  nearMissDistance: number;
 }
 
 export interface MultiTfBundle {

@@ -143,5 +143,11 @@ export function analyzeMomentum(
     missingKey: !aligned,
     reasons,
     directionBias: side,
+    metrics: {
+      rsi: Number(rsiNow.toFixed(2)),
+      adx: Number(adxNow.toFixed(2)),
+      adxNeed: 25,
+      macdHist: Number((histogram[i] ?? 0).toFixed(8)),
+    },
   };
 }

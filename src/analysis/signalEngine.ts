@@ -20,6 +20,8 @@ export interface EvalResult {
   stage: FunnelStage | "verdict";
   confidence: number;
   noTradeReason: string | null;
+  nearMissLine: string | null;
+  nearMissDistance: number;
 }
 
 /**
@@ -52,6 +54,8 @@ export async function evaluateSymbol(
       stage,
       confidence: analysis.confidence,
       noTradeReason: analysis.noTradeReason,
+      nearMissLine: analysis.nearMissLine,
+      nearMissDistance: analysis.nearMissDistance,
     };
   }
 
@@ -129,5 +133,7 @@ export async function evaluateSymbol(
     stage: "passed",
     confidence: analysis.confidence,
     noTradeReason: null,
+    nearMissLine: null,
+    nearMissDistance: 0,
   };
 }
