@@ -1,0 +1,10 @@
+{
+  "nameservice_init_root": {
+    "status": "success",
+    "registrar_account": "taYB-gjnnFWCAKgj2L-5WtnbRpddQAa6CUbQ2pQQu0x-9v",
+    "root_name": "myroot0474",
+    "signature": "tsHQAt8N3gi0cMNnBK_FxWWqQ_bqP6wJhyNGTYF0sQ7xd8k7NXHBBAbd78lFnhlxbTm29Pd7WHjuUR13fJw-k-CR8h",
+    "slot": 3499579,
+    "compute_units_consumed": 11847
+  }
+}
