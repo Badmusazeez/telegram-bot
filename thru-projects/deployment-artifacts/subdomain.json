@@ -1,0 +1,11 @@
+{
+  "nameservice_register_subdomain": {
+    "status": "success",
+    "domain_account": "ta3MkcNXqt7fqHFXMEe4j_kX-wX1fDDjnuhaMKPjFV2QFX",
+    "domain_name": "alice",
+    "parent_account": "taYB-gjnnFWCAKgj2L-5WtnbRpddQAa6CUbQ2pQQu0x-9v",
+    "signature": "tsJsrLuh8KoTqr8k4SEjB3JvPLuxYp_amVPDGiT_mNMN2R_ikCzvF87qJO-Y9mWLvrjhKlJmzW-bAPX72xhk0PCyAX",
+    "slot": 3499581,
+    "compute_units_consumed": 28569
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "token_initialize_mint": {
+    "status": "success",
+    "mint_account": "tawoRb4-Q2nisrnOyaDtRGUKWEK1Yp9PIg-6dKMFkEUCn3",
+    "ticker": "CAT",
+    "decimals": 6,
+    "creator": "tavA0jId5JGEmRH7WF7yBumlpmuSkJn8GpGMSYXFAtD-yS",
+    "mint_authority": "tavA0jId5JGEmRH7WF7yBumlpmuSkJn8GpGMSYXFAtD-yS",
+    "freeze_authority": null,
+    "seed": "d62bde2a0095b2b0fba8027691692484ab37bfe9e999cddc2a192acc9ca3e715",
+    "signature": "tsRtocKCrzxWEQe8XnTUormHNCQLCa_BREJfsy4m5h_3O9VHkRe578EXpfI3dLKmxTtMFONfy2jMhF5IibClhUBR2t",
+    "slot": 3499405,
+    "compute_units_consumed": 52299
+  }
+}

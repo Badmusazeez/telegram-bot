@@ -1,0 +1,12 @@
+{
+  "token_mint_to": {
+    "status": "success",
+    "to": "takh3bWdbKhrIh8lupnjpx0k5HN8201n1IFBvZ8YfD1VdE",
+    "amount": 1000000000,
+    "mint": "tawoRb4-Q2nisrnOyaDtRGUKWEK1Yp9PIg-6dKMFkEUCn3",
+    "authority": "tavA0jId5JGEmRH7WF7yBumlpmuSkJn8GpGMSYXFAtD-yS",
+    "signature": "tsoB3WhHDnhGMoKl4mnX2zOx6w7SFmCkBCyjRsbtD12zcMHfT0wZ9_TEEpCEFj66YT8PZGDJEY6damXe7ZKZsSDR3z",
+    "slot": 3499539,
+    "compute_units_consumed": 21920
+  }
+}
