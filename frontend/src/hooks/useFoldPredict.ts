@@ -45,7 +45,9 @@ export function useFoldPredict() {
 
   const ensureAddress = useCallback(async () => {
     if (!contractAddress) {
-      throw new Error('VITE_CONTRACT_ADDRESS is not set')
+      throw new Error(
+        'VITE_CONTRACT_ADDRESS is not set. In PowerShell from project root run: powershell -ExecutionPolicy Bypass -File scripts\\setup_frontend_env.ps1  then restart npm run dev',
+      )
     }
     return contractAddress
   }, [])

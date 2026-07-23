@@ -11,11 +11,17 @@ const CHAINS = {
 
 export type ChainName = keyof typeof CHAINS
 
-export const contractAddress = (import.meta.env.VITE_CONTRACT_ADDRESS ||
-  '') as Address
+function viteEnv(key: string, fallback = ''): string {
+  const raw = (import.meta.env as Record<string, string | undefined>)[key]
+  if (typeof raw !== 'string') return fallback
+  return raw.replace(/^\uFEFF/, '').trim()
+}
 
-export const chainName = (import.meta.env.VITE_CHAIN || 'localnet') as ChainName
-export const rpcUrl = import.meta.env.VITE_RPC_URL || undefined
+export const contractAddress = viteEnv('VITE_CONTRACT_ADDRESS') as Address
+
+export const chainName = (viteEnv('VITE_CHAIN', 'localnet') ||
+  'localnet') as ChainName
+export const rpcUrl = viteEnv('VITE_RPC_URL') || undefined
 
 export function getChain(name: ChainName = chainName) {
   return CHAINS[name]
