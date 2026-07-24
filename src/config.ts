@@ -157,6 +157,7 @@ const gatePreset: Record<
     momentumMinScore: number;
     maxPairs: number;
     scanIntervalMs: number;
+    minQuoteVolumeUsdt: number;
   }
 > = {
   strict: {
@@ -173,6 +174,7 @@ const gatePreset: Record<
     momentumMinScore: 0.65,
     maxPairs: 40,
     scanIntervalMs: 120_000,
+    minQuoteVolumeUsdt: 8_000_000,
   },
   balanced: {
     minConfidence: 75,
@@ -189,6 +191,7 @@ const gatePreset: Record<
     momentumMinScore: 0.55,
     maxPairs: 80,
     scanIntervalMs: 180_000,
+    minQuoteVolumeUsdt: 5_000_000,
   },
   relaxed: {
     minConfidence: 70,
@@ -204,6 +207,7 @@ const gatePreset: Record<
     momentumMinScore: 0.5,
     maxPairs: 100,
     scanIntervalMs: 180_000,
+    minQuoteVolumeUsdt: 3_000_000,
   },
 };
 
