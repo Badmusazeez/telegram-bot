@@ -155,6 +155,8 @@ const gatePreset: Record<
     paMinScore: number;
     volumeMinScore: number;
     momentumMinScore: number;
+    maxPairs: number;
+    scanIntervalMs: number;
   }
 > = {
   strict: {
@@ -169,6 +171,8 @@ const gatePreset: Record<
     paMinScore: 0.6,
     volumeMinScore: 0.7,
     momentumMinScore: 0.65,
+    maxPairs: 40,
+    scanIntervalMs: 120_000,
   },
   balanced: {
     minConfidence: 75,
@@ -178,10 +182,13 @@ const gatePreset: Record<
     requirePaHard: true,
     requireVolumeHard: true,
     requireMomentumHard: true,
-    smcMinScore: 0.35,
+    // Historical near-misses clustered at SMC ≈ 30%
+    smcMinScore: 0.3,
     paMinScore: 0.55,
     volumeMinScore: 0.55,
     momentumMinScore: 0.55,
+    maxPairs: 80,
+    scanIntervalMs: 180_000,
   },
   relaxed: {
     minConfidence: 70,
@@ -195,6 +202,8 @@ const gatePreset: Record<
     paMinScore: 0.45,
     volumeMinScore: 0.45,
     momentumMinScore: 0.5,
+    maxPairs: 100,
+    scanIntervalMs: 180_000,
   },
 };
 
@@ -276,9 +285,20 @@ export const config = {
   minAtrPct: Math.max(0, env.MIN_ATR_PCT),
   maxAtrPct: Math.max(0.1, env.MAX_ATR_PCT),
   maxAlertsPerScan: Math.max(0, Math.floor(env.MAX_ALERTS_PER_SCAN)),
-  scanIntervalMs: Math.max(15_000, env.SCAN_INTERVAL_MS),
-  minQuoteVolumeUsdt: Math.max(0, env.MIN_QUOTE_VOLUME_USDT),
-  maxPairs: Math.max(0, Math.floor(env.MAX_PAIRS)),
+  scanIntervalMs: Math.max(
+    15_000,
+    hasEnv("SCAN_INTERVAL_MS") ? env.SCAN_INTERVAL_MS : preset.scanIntervalMs
+  ),
+  minQuoteVolumeUsdt: Math.max(
+    0,
+    hasEnv("MIN_QUOTE_VOLUME_USDT")
+      ? env.MIN_QUOTE_VOLUME_USDT
+      : preset.minQuoteVolumeUsdt
+  ),
+  maxPairs: Math.max(
+    0,
+    Math.floor(hasEnv("MAX_PAIRS") ? env.MAX_PAIRS : preset.maxPairs)
+  ),
   symbolWhitelist: splitCsv(env.SYMBOL_WHITELIST),
   symbolBlacklist: new Set(splitCsv(env.SYMBOL_BLACKLIST)),
   emaFast: Math.max(2, Math.floor(env.EMA_FAST)),
