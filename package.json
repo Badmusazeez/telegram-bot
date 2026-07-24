@@ -12,7 +12,8 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "audit:history": "tsx scripts/historical-confluence.ts"
   },
   "engines": {
     "node": ">=20"
