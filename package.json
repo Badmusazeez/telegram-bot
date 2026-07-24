@@ -1,0 +1,40 @@
+{
+  "name": "binance-futures-ai-trading-assistant",
+  "version": "1.0.0",
+  "description": "24/7 Binance Futures scanner — EMA crossover + technical/fundamental confirmations with Telegram BUY/SELL, TP, and SL alerts",
+  "main": "dist/index.js",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "check": "node scripts/check-env.mjs",
+    "bot": "node scripts/run.mjs",
+    "start:dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/**/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "binance",
+    "futures",
+    "trading",
+    "ema",
+    "telegram",
+    "alerts",
+    "technical-analysis"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "grammy": "^1.35.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
