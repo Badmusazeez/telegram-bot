@@ -1,0 +1,1698 @@
+{
+  "generatedAt": "2026-07-24T01:04:15.391Z",
+  "lookbackDays": 365,
+  "maxSymbols": 40,
+  "minConfidence": 85,
+  "rejectCounts": {
+    "trend": 248869,
+    "volumePrefilter": 964914,
+    "momentum": 47694,
+    "volume": 2879,
+    "priceAction": 3700,
+    "smc": 171,
+    "warmup": 8034
+  },
+  "fullPasses": [],
+  "lateNearMisses": [
+    {
+      "symbol": "INJUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-07-27T04:30:00.000Z",
+      "openTime": 1753590600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SOLUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-07-28T03:30:00.000Z",
+      "openTime": 1753673400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "AVAXUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-07-28T06:45:00.000Z",
+      "openTime": 1753685100000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "LINKUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-06T04:00:00.000Z",
+      "openTime": 1754452800000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "NEARUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-06T04:00:00.000Z",
+      "openTime": 1754452800000,
+      "scores": {
+        "trend": 75,
+        "momentum": 67,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "TIAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-06T04:00:00.000Z",
+      "openTime": 1754452800000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "UNIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-07T10:00:00.000Z",
+      "openTime": 1754560800000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DOTUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-13T09:45:00.000Z",
+      "openTime": 1755078300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ADAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-17T09:45:00.000Z",
+      "openTime": 1755423900000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "UNIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-19T14:15:00.000Z",
+      "openTime": 1755612900000,
+      "scores": {
+        "trend": 75,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "WIFUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-19T14:15:00.000Z",
+      "openTime": 1755612900000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "SUIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-21T12:15:00.000Z",
+      "openTime": 1755778500000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "AAVEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-22T14:00:00.000Z",
+      "openTime": 1755871200000,
+      "scores": {
+        "trend": 75,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ARBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-23T23:30:00.000Z",
+      "openTime": 1755991800000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "APTUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-08-25T19:00:00.000Z",
+      "openTime": 1756148400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "UNIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-04T15:00:00.000Z",
+      "openTime": 1756998000000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 50
+      }
+    },
+    {
+      "symbol": "ADAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-08T13:00:00.000Z",
+      "openTime": 1757336400000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "AVAXUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-08T15:00:00.000Z",
+      "openTime": 1757343600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "XRPUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-09T06:45:00.000Z",
+      "openTime": 1757400300000,
+      "scores": {
+        "trend": 75,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "INJUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-11T03:15:00.000Z",
+      "openTime": 1757560500000,
+      "scores": {
+        "trend": 85,
+        "momentum": 67,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-17T10:15:00.000Z",
+      "openTime": 1758104100000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DOTUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-25T01:30:00.000Z",
+      "openTime": 1758763800000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ARBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-25T01:30:00.000Z",
+      "openTime": 1758763800000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "WIFUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-25T01:30:00.000Z",
+      "openTime": 1758763800000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ATOMUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-25T12:15:00.000Z",
+      "openTime": 1758802500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "ZECUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-09-28T19:45:00.000Z",
+      "openTime": 1759088700000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 45
+      }
+    },
+    {
+      "symbol": "DOTUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-10-02T05:15:00.000Z",
+      "openTime": 1759382100000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BNBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-10-03T20:45:00.000Z",
+      "openTime": 1759524300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ADAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-10-06T15:15:00.000Z",
+      "openTime": 1759763700000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "AVAXUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-10-09T10:15:00.000Z",
+      "openTime": 1760004900000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 50
+      }
+    },
+    {
+      "symbol": "AAVEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-10-09T16:45:00.000Z",
+      "openTime": 1760028300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BCHUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-10-15T17:00:00.000Z",
+      "openTime": 1760547600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ZECUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-10-19T17:30:00.000Z",
+      "openTime": 1760895000000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "UNIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-10-31T13:30:00.000Z",
+      "openTime": 1761917400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "XRPUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-11-03T06:30:00.000Z",
+      "openTime": 1762151400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SUIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-11-03T06:30:00.000Z",
+      "openTime": 1762151400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-11-11T21:30:00.000Z",
+      "openTime": 1762896600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "XRPUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-11-16T01:30:00.000Z",
+      "openTime": 1763256600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DOGEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-11-21T07:15:00.000Z",
+      "openTime": 1763709300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "LINKUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-11-21T07:15:00.000Z",
+      "openTime": 1763709300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-11-26T15:30:00.000Z",
+      "openTime": 1764171000000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "WLFIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-11-27T15:30:00.000Z",
+      "openTime": 1764257400000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SUIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-12-01T15:00:00.000Z",
+      "openTime": 1764601200000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SEIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-12-05T13:30:00.000Z",
+      "openTime": 1764941400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "AAVEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-12-08T14:30:00.000Z",
+      "openTime": 1765204200000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ADAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-12-19T01:15:00.000Z",
+      "openTime": 1766106900000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 20
+      }
+    },
+    {
+      "symbol": "NEARUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-12-24T07:45:00.000Z",
+      "openTime": 1766562300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "RENDERUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2025-12-24T07:45:00.000Z",
+      "openTime": 1766562300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "WLFIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-03T00:45:00.000Z",
+      "openTime": 1767401100000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ARBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-03T03:30:00.000Z",
+      "openTime": 1767411000000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ARBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-04T03:00:00.000Z",
+      "openTime": 1767495600000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BANKUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-16T06:15:00.000Z",
+      "openTime": 1768544100000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "APTUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-16T15:15:00.000Z",
+      "openTime": 1768576500000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "UNIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-16T15:15:00.000Z",
+      "openTime": 1768576500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "TIAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-17T07:15:00.000Z",
+      "openTime": 1768634100000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "INJUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-17T08:00:00.000Z",
+      "openTime": 1768636800000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 50
+      }
+    },
+    {
+      "symbol": "ARBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-22T13:30:00.000Z",
+      "openTime": 1769088600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BNBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-25T18:30:00.000Z",
+      "openTime": 1769365800000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BCHUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-25T18:30:00.000Z",
+      "openTime": 1769365800000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "UNIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-29T18:15:00.000Z",
+      "openTime": 1769710500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "WLFIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-31T06:15:00.000Z",
+      "openTime": 1769840100000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DOTUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-01-31T08:00:00.000Z",
+      "openTime": 1769846400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-10T06:15:00.000Z",
+      "openTime": 1770704100000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DOGEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-11T09:00:00.000Z",
+      "openTime": 1770800400000,
+      "scores": {
+        "trend": 85,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DOGEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-22T02:15:00.000Z",
+      "openTime": 1771726500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BCHUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-23T19:45:00.000Z",
+      "openTime": 1771875900000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ATOMUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-24T02:45:00.000Z",
+      "openTime": 1771901100000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "WLFIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-24T03:45:00.000Z",
+      "openTime": 1771904700000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BNBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-24T06:45:00.000Z",
+      "openTime": 1771915500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DEXEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-24T15:15:00.000Z",
+      "openTime": 1771946100000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-02-27T19:30:00.000Z",
+      "openTime": 1772220600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-01T19:30:00.000Z",
+      "openTime": 1772393400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ADAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-01T20:00:00.000Z",
+      "openTime": 1772395200000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BANKUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-03T00:00:00.000Z",
+      "openTime": 1772496000000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-06T12:30:00.000Z",
+      "openTime": 1772800200000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "INJUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-07T22:00:00.000Z",
+      "openTime": 1772920800000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "TIAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-12T22:45:00.000Z",
+      "openTime": 1773355500000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-13T12:45:00.000Z",
+      "openTime": 1773405900000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DOTUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-17T22:45:00.000Z",
+      "openTime": 1773787500000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SOLUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-25T00:30:00.000Z",
+      "openTime": 1774398600000,
+      "scores": {
+        "trend": 75,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "RENDERUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-25T10:45:00.000Z",
+      "openTime": 1774435500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "TIAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-26T16:45:00.000Z",
+      "openTime": 1774543500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "AAVEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-26T19:45:00.000Z",
+      "openTime": 1774554300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SEIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-03-29T20:15:00.000Z",
+      "openTime": 1774815300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "KITEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-04-02T14:15:00.000Z",
+      "openTime": 1775139300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ZAMAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-04-13T11:30:00.000Z",
+      "openTime": 1776079800000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-04-13T22:00:00.000Z",
+      "openTime": 1776117600000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-04-18T11:30:00.000Z",
+      "openTime": 1776511800000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "DEXEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-04-28T07:15:00.000Z",
+      "openTime": 1777360500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "TRXUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-03T05:15:00.000Z",
+      "openTime": 1777785300000,
+      "scores": {
+        "trend": 75,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "PEPEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-05T07:15:00.000Z",
+      "openTime": 1777965300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BNBUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-06T11:45:00.000Z",
+      "openTime": 1778067900000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "OPUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-06T12:30:00.000Z",
+      "openTime": 1778070600000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "AVAXUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-07T07:30:00.000Z",
+      "openTime": 1778139000000,
+      "scores": {
+        "trend": 75,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "LINKUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-07T07:30:00.000Z",
+      "openTime": 1778139000000,
+      "scores": {
+        "trend": 85,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "SUIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-10T15:00:00.000Z",
+      "openTime": 1778425200000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-10T19:00:00.000Z",
+      "openTime": 1778439600000,
+      "scores": {
+        "trend": 85,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "WLFIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-15T15:15:00.000Z",
+      "openTime": 1778858100000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "WLFIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-17T14:00:00.000Z",
+      "openTime": 1779026400000,
+      "scores": {
+        "trend": 85,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 0
+      }
+    },
+    {
+      "symbol": "WIFUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-18T15:15:00.000Z",
+      "openTime": 1779117300000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "RENDERUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-25T14:00:00.000Z",
+      "openTime": 1779717600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "RENDERUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-05-26T07:30:00.000Z",
+      "openTime": 1779780600000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "XRPUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-03T19:15:00.000Z",
+      "openTime": 1780514100000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SOLUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-04T01:00:00.000Z",
+      "openTime": 1780534800000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SEIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-05T13:45:00.000Z",
+      "openTime": 1780667100000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "WIFUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-10T04:30:00.000Z",
+      "openTime": 1781065800000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SUIUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-18T04:00:00.000Z",
+      "openTime": 1781755200000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "BCHUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-18T13:30:00.000Z",
+      "openTime": 1781789400000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FETUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-22T22:15:00.000Z",
+      "openTime": 1782166500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "FILUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-24T15:30:00.000Z",
+      "openTime": 1782315000000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "SOLUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-25T13:30:00.000Z",
+      "openTime": 1782394200000,
+      "scores": {
+        "trend": 85,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "LINKUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-25T13:30:00.000Z",
+      "openTime": 1782394200000,
+      "scores": {
+        "trend": 85,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "LTCUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-25T13:30:00.000Z",
+      "openTime": 1782394200000,
+      "scores": {
+        "trend": 75,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "KITEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-27T00:30:00.000Z",
+      "openTime": 1782520200000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "OPNUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-06-30T12:45:00.000Z",
+      "openTime": 1782823500000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-07-03T10:30:00.000Z",
+      "openTime": 1783074600000,
+      "scores": {
+        "trend": 90,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ADAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-07-03T10:30:00.000Z",
+      "openTime": 1783074600000,
+      "scores": {
+        "trend": 90,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ZAMAUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-07-11T04:15:00.000Z",
+      "openTime": 1783743300000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "KITEUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-07-12T03:45:00.000Z",
+      "openTime": 1783827900000,
+      "scores": {
+        "trend": 100,
+        "momentum": 67,
+        "volume": 100,
+        "priceAction": 100,
+        "smc": 30
+      }
+    },
+    {
+      "symbol": "ATOMUSDT",
+      "stage": "smc",
+      "confidence": 0,
+      "when": "2026-07-13T01:45:00.000Z",
+      "openTime": 1783907100000,
+      "scores": {
+        "trend": 100,
+        "momentum": 83,
+        "volume": 90,
+        "priceAction": 100,
+        "smc": 30
+      }
+    }
+  ]
+}
