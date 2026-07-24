@@ -89,6 +89,24 @@ const schema = z.object({
   RISK_PERCENT: num("1"),
   MAX_STOP_PCT: num("0.05"),
   LOG_NO_TRADE: bool(false),
+  /** strict = current hard gates; balanced/relaxed soften SMC/PA/volume kills */
+  GATE_MODE: z
+    .string()
+    .optional()
+    .default("strict")
+    .transform((v) => v.trim().toLowerCase())
+    .refine(
+      (v) => v === "strict" || v === "balanced" || v === "relaxed",
+      "GATE_MODE must be strict, balanced, or relaxed"
+    ),
+  REQUIRE_SMC_HARD: bool(true),
+  REQUIRE_PA_HARD: bool(true),
+  REQUIRE_VOLUME_HARD: bool(true),
+  REQUIRE_MOMENTUM_HARD: bool(true),
+  SMC_MIN_SCORE: num("0.35"),
+  PA_MIN_SCORE: num("0.5"),
+  VOLUME_MIN_SCORE: num("0.55"),
+  MOMENTUM_MIN_SCORE: num("0.55"),
   REQUIRE_FUNDING: bool(true),
   FUNDING_LONG_MAX: num("0.0005"),
   FUNDING_SHORT_MIN: num("-0.0005"),
@@ -114,6 +132,73 @@ if (!parsed.success) {
 }
 
 const env = parsed.data;
+
+type GateMode = "strict" | "balanced" | "relaxed";
+const gateMode = env.GATE_MODE as GateMode;
+
+function hasEnv(key: string): boolean {
+  return process.env[key] !== undefined && String(process.env[key]).trim() !== "";
+}
+
+/** Mode presets from the historical confluence audit (SMC was the hard blocker). */
+const gatePreset: Record<
+  GateMode,
+  {
+    minConfidence: number;
+    volumeSpikeMult: number;
+    minRiskReward: number;
+    requireSmcHard: boolean;
+    requirePaHard: boolean;
+    requireVolumeHard: boolean;
+    requireMomentumHard: boolean;
+    smcMinScore: number;
+    paMinScore: number;
+    volumeMinScore: number;
+    momentumMinScore: number;
+  }
+> = {
+  strict: {
+    minConfidence: 85,
+    volumeSpikeMult: 1.5,
+    minRiskReward: 2.5,
+    requireSmcHard: true,
+    requirePaHard: true,
+    requireVolumeHard: true,
+    requireMomentumHard: true,
+    smcMinScore: 0.5,
+    paMinScore: 0.6,
+    volumeMinScore: 0.7,
+    momentumMinScore: 0.65,
+  },
+  balanced: {
+    minConfidence: 75,
+    volumeSpikeMult: 1.3,
+    minRiskReward: 2.0,
+    requireSmcHard: false,
+    requirePaHard: true,
+    requireVolumeHard: true,
+    requireMomentumHard: true,
+    smcMinScore: 0.35,
+    paMinScore: 0.55,
+    volumeMinScore: 0.55,
+    momentumMinScore: 0.55,
+  },
+  relaxed: {
+    minConfidence: 70,
+    volumeSpikeMult: 1.2,
+    minRiskReward: 1.8,
+    requireSmcHard: false,
+    requirePaHard: false,
+    requireVolumeHard: false,
+    requireMomentumHard: false,
+    smcMinScore: 0.25,
+    paMinScore: 0.45,
+    volumeMinScore: 0.45,
+    momentumMinScore: 0.5,
+  },
+};
+
+const preset = gatePreset[gateMode];
 
 function splitCsv(value: string): string[] {
   return value
@@ -178,7 +263,16 @@ export const config = {
   trendTimeframe: trendTimeframe as Timeframe,
   requireTrendAlignment: env.REQUIRE_TREND_ALIGNMENT,
   requireVolumeSpike: env.REQUIRE_VOLUME_SPIKE,
-  minConfidence: Math.max(0, Math.min(100, Math.floor(env.MIN_CONFIDENCE))),
+  gateMode,
+  minConfidence: Math.max(
+    0,
+    Math.min(
+      100,
+      Math.floor(
+        hasEnv("MIN_CONFIDENCE") ? env.MIN_CONFIDENCE : preset.minConfidence
+      )
+    )
+  ),
   minAtrPct: Math.max(0, env.MIN_ATR_PCT),
   maxAtrPct: Math.max(0.1, env.MAX_ATR_PCT),
   maxAlertsPerScan: Math.max(0, Math.floor(env.MAX_ALERTS_PER_SCAN)),
@@ -198,7 +292,12 @@ export const config = {
   requireMacd: env.REQUIRE_MACD,
   requireVolume: env.REQUIRE_VOLUME,
   volumeMaPeriod: Math.max(2, Math.floor(env.VOLUME_MA_PERIOD)),
-  volumeSpikeMult: Math.max(1, env.VOLUME_SPIKE_MULT),
+  volumeSpikeMult: Math.max(
+    1,
+    hasEnv("VOLUME_SPIKE_MULT")
+      ? env.VOLUME_SPIKE_MULT
+      : preset.volumeSpikeMult
+  ),
   minTechnicalScore: Math.max(1, Math.floor(env.MIN_TECHNICAL_SCORE)),
   requireFunding: env.REQUIRE_FUNDING,
   fundingLongMax: env.FUNDING_LONG_MAX,
@@ -213,10 +312,52 @@ export const config = {
   signalCooldownMs: Math.max(60_000, env.SIGNAL_COOLDOWN_MS),
   dryRun: env.DRY_RUN,
   alertsEnabled: env.ALERTS_ENABLED,
-  minRiskReward: Math.max(1, env.MIN_RISK_REWARD),
+  minRiskReward: Math.max(
+    1,
+    hasEnv("MIN_RISK_REWARD") ? env.MIN_RISK_REWARD : preset.minRiskReward
+  ),
   accountBalanceUsdt: Math.max(1, env.ACCOUNT_BALANCE_USDT),
   riskPercent: Math.max(0.1, env.RISK_PERCENT),
   maxStopPct: Math.max(0.005, env.MAX_STOP_PCT),
   logNoTrade: env.LOG_NO_TRADE,
+  requireSmcHard: hasEnv("REQUIRE_SMC_HARD")
+    ? env.REQUIRE_SMC_HARD
+    : preset.requireSmcHard,
+  requirePaHard: hasEnv("REQUIRE_PA_HARD")
+    ? env.REQUIRE_PA_HARD
+    : preset.requirePaHard,
+  requireVolumeHard: hasEnv("REQUIRE_VOLUME_HARD")
+    ? env.REQUIRE_VOLUME_HARD
+    : preset.requireVolumeHard,
+  requireMomentumHard: hasEnv("REQUIRE_MOMENTUM_HARD")
+    ? env.REQUIRE_MOMENTUM_HARD
+    : preset.requireMomentumHard,
+  smcMinScore: Math.max(
+    0,
+    Math.min(
+      1,
+      hasEnv("SMC_MIN_SCORE") ? env.SMC_MIN_SCORE : preset.smcMinScore
+    )
+  ),
+  paMinScore: Math.max(
+    0,
+    Math.min(1, hasEnv("PA_MIN_SCORE") ? env.PA_MIN_SCORE : preset.paMinScore)
+  ),
+  volumeMinScore: Math.max(
+    0,
+    Math.min(
+      1,
+      hasEnv("VOLUME_MIN_SCORE") ? env.VOLUME_MIN_SCORE : preset.volumeMinScore
+    )
+  ),
+  momentumMinScore: Math.max(
+    0,
+    Math.min(
+      1,
+      hasEnv("MOMENTUM_MIN_SCORE")
+        ? env.MOMENTUM_MIN_SCORE
+        : preset.momentumMinScore
+    )
+  ),
   statePath: "data/state.json",
 };

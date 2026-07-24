@@ -92,7 +92,8 @@ export function formatStatus(stats: ScannerStats, paused: boolean): string {
   const lines = [
     `<b>Institutional Futures Assistant</b>`,
     `Exchange: <b>${esc(config.exchange.toUpperCase())}</b> · TF ${esc(config.timeframe)} + 1H/4H/D`,
-    `Gate: confidence ≥ ${config.minConfidence}% · RR ≥ ${config.minRiskReward} · vol ≥ 1.5×`,
+    `Gate: <b>${esc(config.gateMode)}</b> · conf ≥ ${config.minConfidence}% · RR ≥ ${config.minRiskReward} · vol ≥ ${config.volumeSpikeMult}×`,
+    `Hard gates: SMC ${config.requireSmcHard ? "on" : "soft"} · PA ${config.requirePaHard ? "on" : "soft"} · Vol ${config.requireVolumeHard ? "on" : "soft"} · Mom ${config.requireMomentumHard ? "on" : "soft"}`,
     `Status: ${paused ? "⏸ paused" : stats.running ? "🔎 scanning" : "✅ idle"}`,
     `Last scan: <code>${last}</code>`,
     `Duration: ${(stats.lastScanDurationMs / 1000).toFixed(1)}s`,
@@ -115,6 +116,6 @@ export function helpText(): string {
     "/status — scanner + institutional gates",
     "/pause · /resume · /resetstats · /help",
     "",
-    "Only alerts with ≥85% multi-factor confidence (trend, momentum, volume, price action, SMC, futures, fundamentals). Incomplete setups = NO TRADE.",
+    "Only actionable BUY/SELL when institutional gates pass for the configured GATE_MODE (strict/balanced/relaxed). Incomplete setups = NO TRADE.",
   ].join("\n");
 }

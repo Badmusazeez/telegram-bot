@@ -268,16 +268,32 @@ export async function runInstitutionalAnalysis(
   if (!trend.aligned || preferred === "NEUTRAL") {
     return empty(`${NO_TRADE} (trend incomplete)`, "trend");
   }
-  if (!momentum.aligned) {
+
+  const momentumOk = config.requireMomentumHard
+    ? momentum.aligned
+    : momentum.score >= config.momentumMinScore;
+  if (!momentumOk) {
     return empty(`${NO_TRADE} (momentum incomplete)`, "momentum");
   }
-  if (!volume.aligned) {
+
+  const volumeOk = config.requireVolumeHard
+    ? volume.aligned
+    : volume.score >= config.volumeMinScore;
+  if (!volumeOk) {
     return empty(`${NO_TRADE} (volume incomplete)`, "volume");
   }
-  if (!priceAction.aligned) {
+
+  const priceActionOk = config.requirePaHard
+    ? priceAction.aligned
+    : priceAction.score >= config.paMinScore;
+  if (!priceActionOk) {
     return empty(`${NO_TRADE} (price action incomplete)`, "priceAction");
   }
-  if (!smc.aligned) {
+
+  const smcOk = config.requireSmcHard
+    ? smc.aligned
+    : smc.score >= config.smcMinScore;
+  if (!smcOk) {
     return empty(`${NO_TRADE} (SMC incomplete)`, "smc");
   }
   if (conflict) {
@@ -302,7 +318,7 @@ export async function runInstitutionalAnalysis(
     );
   }
 
-  const rrMult1 = Math.max(config.minRiskReward, 2.5);
+  const rrMult1 = Math.max(1, config.minRiskReward);
   const takeProfit1 =
     side === "BUY" ? entry + risk * rrMult1 : entry - risk * rrMult1;
   const takeProfit2 =
