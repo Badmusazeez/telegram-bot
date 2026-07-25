@@ -25,6 +25,13 @@ class RiskLevel(str, Enum):
     HIGH = "High"
 
 
+class ConfidenceLevel(str, Enum):
+    BELOW_THRESHOLD = "Below Threshold"
+    STANDARD = "Standard Setup"
+    HIGH_QUALITY = "High-Quality Setup"
+    ELITE = "Elite Institutional Setup"
+
+
 class StructureEvent(str, Enum):
     HH = "Higher High"
     HL = "Higher Low"
@@ -32,6 +39,16 @@ class StructureEvent(str, Enum):
     LL = "Lower Low"
     BOS = "Break of Structure"
     CHOCH = "Change of Character"
+
+
+def confidence_level(score: float) -> ConfidenceLevel:
+    if score < 66:
+        return ConfidenceLevel.BELOW_THRESHOLD
+    if score <= 70:
+        return ConfidenceLevel.STANDARD
+    if score <= 84:
+        return ConfidenceLevel.HIGH_QUALITY
+    return ConfidenceLevel.ELITE
 
 
 @dataclass(slots=True)
@@ -168,6 +185,55 @@ class VolatilityState:
 
 
 @dataclass(slots=True)
+class LiquidationHeatmapState:
+    long_pools: list[float] = field(default_factory=list)
+    short_pools: list[float] = field(default_factory=list)
+    recent_long_liqs: float = 0.0
+    recent_short_liqs: float = 0.0
+    sweep_aligned: bool = False
+    score_hint: float = 50.0
+
+
+@dataclass(slots=True)
+class CrossExchangeState:
+    okx_price: float = 0.0
+    mexc_price: float = 0.0
+    premium_pct: float = 0.0
+    okx_funding: float = 0.0
+    mexc_funding: float = 0.0
+    funding_delta: float = 0.0
+    okx_oi: float = 0.0
+    mexc_oi: float = 0.0
+    oi_agree: bool = True
+    trend_agree: bool = True
+    volume_anomaly: bool = False
+    conflicting: bool = False
+    penalty: float = 0.0
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class MarketMetaState:
+    market_cap: float = 0.0
+    rank: int = 0
+    volume_24h: float = 0.0
+    dominance: float = 0.0
+    circulating_supply: float = 0.0
+    available: bool = False
+
+
+@dataclass(slots=True)
+class NewsIntelligenceState:
+    headlines: list[str] = field(default_factory=list)
+    high_impact: bool = False
+    volatility_risk: bool = False
+    suppress_alerts: bool = False
+    confidence_penalty: float = 0.0
+    categories: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class RiskPlan:
     entry: float
     stop_loss: float
@@ -182,10 +248,26 @@ class RiskPlan:
 
 
 @dataclass(slots=True)
+class FactorContribution:
+    key: str
+    label: str
+    score: float
+    weight: float
+    weighted: float
+    polarity: str  # positive | neutral | negative
+    explanation: str
+
+
+@dataclass(slots=True)
 class ConfidenceBreakdown:
     scores: dict[str, float]
     total: float
     weights: dict[str, float]
+    level: ConfidenceLevel = ConfidenceLevel.BELOW_THRESHOLD
+    factors: list[FactorContribution] = field(default_factory=list)
+    positive: list[str] = field(default_factory=list)
+    negative: list[str] = field(default_factory=list)
+    summary: str = ""
 
 
 @dataclass(slots=True)
@@ -195,6 +277,7 @@ class Signal:
     trend: Trend
     confidence: float
     confidence_breakdown: ConfidenceBreakdown
+    confidence_level: ConfidenceLevel
     entry: float
     stop_loss: float
     tp1: float
@@ -228,6 +311,10 @@ class AnalysisBundle:
     volatility: VolatilityState
     price: float
     candles_exec: list[Candle]
+    liquidation: LiquidationHeatmapState = field(default_factory=LiquidationHeatmapState)
+    cross_exchange: CrossExchangeState = field(default_factory=CrossExchangeState)
+    market_meta: MarketMetaState = field(default_factory=MarketMetaState)
+    news: NewsIntelligenceState = field(default_factory=NewsIntelligenceState)
     rejects: list[str] = field(default_factory=list)
 
 

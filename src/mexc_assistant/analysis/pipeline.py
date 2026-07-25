@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from mexc_assistant.analysis.cross_exchange import validate_cross_exchange
 from mexc_assistant.analysis.ema import analyze_ema
 from mexc_assistant.analysis.funding import analyze_funding
+from mexc_assistant.analysis.liquidations import build_liquidation_state
 from mexc_assistant.analysis.liquidity import analyze_liquidity
+from mexc_assistant.analysis.news_intelligence import NewsIntelligence
 from mexc_assistant.analysis.open_interest import OpenInterestTracker
 from mexc_assistant.analysis.order_flow import analyze_order_flow
 from mexc_assistant.analysis.smc import analyze_smc, premium_discount, price_in_zone
@@ -18,13 +21,25 @@ from mexc_assistant.core.models import (
     TradeTick,
     Trend,
 )
+from mexc_assistant.exchange.cmc_client import CoinMarketCapClient
 from mexc_assistant.exchange.mexc_rest import MexcRestClient
+from mexc_assistant.exchange.okx_rest import OkxRestClient
 
 
 class AnalysisPipeline:
-    def __init__(self, settings: Settings, rest: MexcRestClient) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        rest: MexcRestClient,
+        okx: OkxRestClient | None = None,
+        cmc: CoinMarketCapClient | None = None,
+        news: NewsIntelligence | None = None,
+    ) -> None:
         self.settings = settings
         self.rest = rest
+        self.okx = okx
+        self.cmc = cmc
+        self.news = news
         self.oi_tracker = OpenInterestTracker()
         self._price_cache: dict[str, float] = {}
 
@@ -36,8 +51,6 @@ class AnalysisPipeline:
         s = self.settings
         rejects: list[str] = []
 
-        # Fetch multi-timeframe candles concurrently via sequential awaits
-        # (aiohttp session is shared; keep it simple and robust)
         daily = await self.rest.get_klines(symbol, "Day1", limit=120)
         h4 = await self.rest.get_klines(symbol, "Hour4", limit=200)
         h1 = await self.rest.get_klines(symbol, "Min60", limit=250)
@@ -45,10 +58,15 @@ class AnalysisPipeline:
         m5 = await self.rest.get_klines(symbol, "Min5", limit=300)
         ticker = await self.rest.get_ticker(symbol)
         funding_rate = ticker.funding_rate
+        depth: dict = {}
+        try:
+            depth = await self.rest.get_depth(symbol, limit=20)
+        except Exception:  # noqa: BLE001
+            depth = {}
+
         if trades is None:
             trades = await self.rest.get_recent_deals(symbol, limit=s.order_flow.trade_window)
 
-        # Higher-timeframe bias: require majority agreement
         ht_structs = [
             analyze_structure(daily, s.structure),
             analyze_structure(h4, s.structure),
@@ -64,13 +82,11 @@ class AnalysisPipeline:
             higher_trend = Trend.NEUTRAL
             rejects.append("Higher-timeframe bias is mixed/neutral")
 
-        # EMA on 1H for bias + 15m for execution context
         ema_h1 = analyze_ema(h1, s.ema)
         ema_m15 = analyze_ema(m15, s.ema)
         if ema_h1.flat_or_intertwined:
             rejects.append("HTF EMAs flat or intertwined")
 
-        # Choose execution TF: prefer 15m, refine with 5m structure
         exec_tf = "Min15"
         exec_candles = m15
         structure = analyze_structure(m15, s.structure)
@@ -92,13 +108,70 @@ class AnalysisPipeline:
         oi = self.oi_tracker.update(symbol, ticker.hold_vol, price_up, s.open_interest)
         funding = analyze_funding(funding_rate, s.funding)
 
-        eq, _, zone_label = premium_discount(exec_candles)
+        okx_liqs: list[dict] = []
+        if self.okx is not None:
+            try:
+                okx_liqs = await self.okx.get_liquidations(symbol, limit=20)
+            except Exception:  # noqa: BLE001
+                okx_liqs = []
+
+        liquidation = build_liquidation_state(
+            depth=depth,
+            liquidity=liquidity,
+            mid=ticker.last_price,
+            okx_liqs=okx_liqs,
+            side=None,
+        )
+
+        cross = (
+            await validate_cross_exchange(
+                symbol=symbol,
+                mexc_ticker=ticker,
+                mexc_oi=oi,
+                mexc_trend=higher_trend,
+                okx=self.okx,
+                config=s.cross_exchange,
+            )
+            if self.okx is not None
+            else None
+        )
+        if cross is None:
+            from mexc_assistant.core.models import CrossExchangeState
+
+            cross = CrossExchangeState(notes=["OKX client not configured"])
+        if cross.conflicting and s.cross_exchange.reject_on_conflict:
+            rejects.append("Cross-exchange conflict: " + "; ".join(cross.notes[:2]))
+
+        market_meta = (
+            await self.cmc.get_market_meta(symbol)
+            if self.cmc is not None
+            else None
+        )
+        if market_meta is None:
+            from mexc_assistant.core.models import MarketMetaState
+
+            market_meta = MarketMetaState()
+
+        news_state = (
+            await self.news.assess(symbol)
+            if self.news is not None
+            else None
+        )
+        if news_state is None:
+            from mexc_assistant.core.models import NewsIntelligenceState
+
+            news_state = NewsIntelligenceState()
+        if news_state.suppress_alerts:
+            rejects.append("News volatility suppression active")
+        elif news_state.high_impact:
+            rejects.append("High-impact news elevates risk")
+
+        _, _, zone_label = premium_discount(exec_candles)
         if higher_trend == Trend.BULLISH and zone_label == "premium":
             rejects.append("Bullish bias but price in premium zone")
         if higher_trend == Trend.BEARISH and zone_label == "discount":
             rejects.append("Bearish bias but price in discount zone")
 
-        # Require institutional zone revisit for potential entries
         in_bullish_zone = any(
             z.side == Side.BUY and price_in_zone(ticker.last_price, z, s.smc.zone_touch_tolerance_pct)
             for z in smc_zones
@@ -119,7 +192,6 @@ class AnalysisPipeline:
         if oi.sharp_decline:
             rejects.append("Open interest declining sharply")
 
-        # Merge EMA: prefer HTF alignment, require execution agreement on side
         ema = ema_h1
         if ema_h1.aligned_long and not ema_m15.price_above_ema20:
             rejects.append("Price not holding above EMA20 on execution TF")
@@ -142,5 +214,9 @@ class AnalysisPipeline:
             volatility=volatility,
             price=ticker.last_price,
             candles_exec=exec_candles,
+            liquidation=liquidation,
+            cross_exchange=cross,
+            market_meta=market_meta,
+            news=news_state,
             rejects=rejects,
         )

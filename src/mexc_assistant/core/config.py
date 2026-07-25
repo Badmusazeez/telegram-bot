@@ -88,21 +88,44 @@ class RiskConfig(BaseModel):
 class ConfidenceConfig(BaseModel):
     min_score: float = 66
     preferred_score: float = 90
+    positive_threshold: float = 65
+    negative_threshold: float = 40
+    min_positive_categories: int = 6
     weights: dict[str, float] = Field(
         default_factory=lambda: {
-            "ema_alignment": 15,
-            "market_structure": 15,
-            "order_block_fvg": 10,
-            "liquidity_sweep": 10,
-            "order_flow": 15,
-            "open_interest": 10,
+            "ema_alignment": 12,
+            "higher_timeframe": 10,
+            "market_structure": 10,
+            "smart_money": 10,
+            "liquidity_sweep": 8,
+            "order_flow": 12,
+            "open_interest": 8,
             "funding_rate": 5,
-            "volume_confirmation": 10,
+            "liquidation_heatmap": 8,
+            "volume_confirmation": 7,
             "volatility_filter": 5,
             "risk_reward": 5,
-            "higher_timeframe": 10,
         }
     )
+
+
+class CrossExchangeConfig(BaseModel):
+    enabled: bool = True
+    max_premium_pct: float = 0.0025
+    max_funding_delta: float = 0.0004
+    volume_anomaly_ratio: float = 3.0
+    reject_on_conflict: bool = True
+    soft_penalty: float = 8.0
+
+
+class DataSourcesConfig(BaseModel):
+    okx_base_url: str = "https://www.okx.com"
+    cmc_pro_base_url: str = "https://pro-api.coinmarketcap.com"
+    cmc_public_base_url: str = "https://api.coinmarketcap.com"
+    news_enabled: bool = True
+    news_lookback_hours: int = 12
+    news_suppress_minutes: int = 45
+    high_impact_penalty: float = 12.0
 
 
 class AlertsConfig(BaseModel):
@@ -151,6 +174,8 @@ class Settings(BaseModel):
     volatility: VolatilityConfig = Field(default_factory=VolatilityConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     confidence: ConfidenceConfig = Field(default_factory=ConfidenceConfig)
+    cross_exchange: CrossExchangeConfig = Field(default_factory=CrossExchangeConfig)
+    data_sources: DataSourcesConfig = Field(default_factory=DataSourcesConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
@@ -163,6 +188,7 @@ class EnvSettings(BaseSettings):
     telegram_chat_id: str = ""
     mexc_api_key: str = ""
     mexc_api_secret: str = ""
+    cmc_api_key: str = ""
     config_path: str = "config/settings.yaml"
     log_level: str = ""
     account_equity: float | None = None

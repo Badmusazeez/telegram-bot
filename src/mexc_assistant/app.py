@@ -7,13 +7,16 @@ import contextlib
 from datetime import datetime, timezone
 
 from mexc_assistant.alerts.telegram import TelegramAlerter
+from mexc_assistant.analysis.news_intelligence import NewsIntelligence
 from mexc_assistant.analysis.pipeline import AnalysisPipeline
 from mexc_assistant.core.config import Settings, get_env
 from mexc_assistant.core.decision_log import DecisionLogger
 from mexc_assistant.core.health import HealthServer, HealthState
 from mexc_assistant.core.logging import get_logger
+from mexc_assistant.exchange.cmc_client import CoinMarketCapClient
 from mexc_assistant.exchange.mexc_rest import MexcRestClient
 from mexc_assistant.exchange.mexc_ws import MexcWebSocketClient, TradeBuffer
+from mexc_assistant.exchange.okx_rest import OkxRestClient
 from mexc_assistant.plugins.base import PluginRegistry
 from mexc_assistant.plugins.stubs import PLUGIN_TYPES
 from mexc_assistant.risk.manager import RiskManager
@@ -27,9 +30,18 @@ class TradingAssistant:
         self.settings = settings
         self.env = get_env(settings)
         self.rest = MexcRestClient(settings.exchange)
+        self.okx = OkxRestClient(settings.data_sources)
+        self.cmc = CoinMarketCapClient(settings.data_sources, api_key=self.env.cmc_api_key)
+        self.news = NewsIntelligence(self.cmc, settings.data_sources)
         self.ws = MexcWebSocketClient(settings.exchange)
         self.trades = TradeBuffer(maxlen=settings.order_flow.trade_window * 3)
-        self.pipeline = AnalysisPipeline(settings, self.rest)
+        self.pipeline = AnalysisPipeline(
+            settings,
+            self.rest,
+            okx=self.okx,
+            cmc=self.cmc,
+            news=self.news,
+        )
         self.risk = RiskManager(settings)
         self.engine = SignalEngine(settings, self.risk)
         self.decisions = DecisionLogger(settings.logging.decision_log_path)
@@ -157,6 +169,8 @@ class TradingAssistant:
                 await task
         await self.ws.close()
         await self.rest.close()
+        await self.okx.close()
+        await self.cmc.close()
         await self.plugins.teardown_all()
         self.health.stop()
         log.info("assistant_stopped")

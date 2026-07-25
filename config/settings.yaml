@@ -80,18 +80,39 @@ risk:
 confidence:
   min_score: 66
   preferred_score: 90
+  positive_threshold: 65
+  negative_threshold: 40
+  min_positive_categories: 6
   weights:
-    ema_alignment: 15
-    market_structure: 15
-    order_block_fvg: 10
-    liquidity_sweep: 10
-    order_flow: 15
-    open_interest: 10
+    ema_alignment: 12
+    higher_timeframe: 10
+    market_structure: 10
+    smart_money: 10
+    liquidity_sweep: 8
+    order_flow: 12
+    open_interest: 8
     funding_rate: 5
-    volume_confirmation: 10
+    liquidation_heatmap: 8
+    volume_confirmation: 7
     volatility_filter: 5
     risk_reward: 5
-    higher_timeframe: 10
+
+cross_exchange:
+  enabled: true
+  max_premium_pct: 0.0025
+  max_funding_delta: 0.0004
+  volume_anomaly_ratio: 3.0
+  reject_on_conflict: true
+  soft_penalty: 8.0
+
+data_sources:
+  okx_base_url: https://www.okx.com
+  cmc_pro_base_url: https://pro-api.coinmarketcap.com
+  cmc_public_base_url: https://api.coinmarketcap.com
+  news_enabled: true
+  news_lookback_hours: 12
+  news_suppress_minutes: 45
+  high_impact_penalty: 12.0
 
 alerts:
   dedupe_window_minutes: 90

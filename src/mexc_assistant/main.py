@@ -44,6 +44,8 @@ async def _run(args: argparse.Namespace) -> int:
             await assistant._scan_once()
         finally:
             await assistant.rest.close()
+            await assistant.okx.close()
+            await assistant.cmc.close()
             assistant.health.stop()
             await assistant.plugins.teardown_all()
         return 0
