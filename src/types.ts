@@ -35,6 +35,34 @@ export interface WatchedPriceItem {
   addedAt: string;
 }
 
+export type ScheduledMintStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+export interface ScheduledMint {
+  id: string;
+  label: string;
+  to: string;
+  data: string;
+  executeAt: string;
+  createdAt: string;
+  status: ScheduledMintStatus;
+  sourceTxHash?: string;
+  resultTxHash?: string;
+  resultReason?: string;
+  finishedAt?: string;
+}
+
+export interface ScheduledMintResult {
+  success: boolean;
+  dryRun: boolean;
+  reason: string;
+  txHash?: string;
+}
+
 export interface BotState {
   trackedWallets: TrackedWallet[];
   copyEnabled: boolean;
@@ -48,6 +76,7 @@ export interface BotState {
   notifyChatIds: string[];
   recentTxHashes: string[];
   watchedPrices: WatchedPriceItem[];
+  scheduledMints: ScheduledMint[];
 }
 
 export interface CopyResult {

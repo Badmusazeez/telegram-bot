@@ -66,6 +66,23 @@ When dry-run looks good:
 - Malicious mint contracts can still waste gas — allowlist with `/allow` when possible
 - Delete `data/state.json` if you reset the bot
 
+## Scheduled mints
+
+Schedule a free mint for a future time (bot must stay running / on VPS):
+
+```text
+/schedulemint +5m 0xContract mint1
+/schedulemint 2026-07-25T18:00:00Z 0xContract 0x1249c58b
+/schedulemintfromtx 0xWhaleTxHash +2m
+/schedules
+/cancelschedule sch_...
+```
+
+Presets: `mint` = `mint()`, `mint1` = `mint(uint256)` qty 1.  
+Or paste full calldata hex from a whale mint tx.
+
+Keep `DRY_RUN=false` and `PRIVATE_KEY` set for live scheduled mints.
+
 ## Commands
 
-`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow`
+`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow` `/prices` `/watchprice` `/schedulemint` `/schedules`

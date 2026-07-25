@@ -1,10 +1,16 @@
 import { Bot, Context } from "grammy";
 import { isAddress } from "ethers";
 import { config } from "../config";
-import { getNativeBalance, getWallet } from "../robinhood/provider";
 import {
+  parseScheduleTime,
+  resolveCalldata,
+} from "../robinhood/mintScheduler";
+import { getNativeBalance, getProvider, getWallet } from "../robinhood/provider";
+import {
+  addScheduledMint,
   addTrackedWallet,
   addWatchedPrice,
+  cancelScheduledMint,
   getState,
   registerNotifyChat,
   removeTrackedWallet,
@@ -15,10 +21,18 @@ import {
 import {
   formatPriceAlert,
   formatPurchaseAlert,
+  formatScheduleCreated,
+  formatScheduleResult,
   formatStatus,
   helpText,
 } from "./formatter";
-import type { CopyResult, NftPurchase, PriceChangeAlert } from "../types";
+import type {
+  CopyResult,
+  NftPurchase,
+  PriceChangeAlert,
+  ScheduledMint,
+  ScheduledMintResult,
+} from "../types";
 
 function chatId(ctx: Context): string {
   return String(ctx.chat?.id ?? "");
@@ -74,10 +88,14 @@ export function createTelegramBot(): Bot {
         balanceRobinhood = "?";
       }
     }
+    const pendingSchedules = state.scheduledMints.filter(
+      (j) => j.status === "pending"
+    ).length;
     await ctx.reply(
       formatStatus({
         trackedCount: state.trackedWallets.length,
         watchedPrices: state.watchedPrices.length,
+        pendingSchedules,
         copyEnabled: state.copyEnabled,
         dryRun: state.dryRun,
         freeMintsOnly: state.freeMintsOnly,
@@ -312,6 +330,110 @@ export function createTelegramBot(): Bot {
     await ctx.reply(`Price alert threshold set to ${value}%`);
   });
 
+  bot.command("schedulemint", async (ctx) => {
+    const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    if (parts.length < 3) {
+      await ctx.reply(
+        "Usage:\n/schedulemint <when> <contract> <calldata|mint|mint1>\n\nExamples:\n/schedulemint +5m 0xContract mint1\n/schedulemint 2026-07-25T18:00:00Z 0xContract 0x1249c58b"
+      );
+      return;
+    }
+    const when = parseScheduleTime(parts[0]);
+    const contract = parts[1];
+    const dataRaw = parts[2];
+    if (!when || when.getTime() <= Date.now()) {
+      await ctx.reply("Invalid/past time. Use +5m, +2h, or ISO like 2026-07-25T18:00:00Z");
+      return;
+    }
+    if (!isAddress(contract)) {
+      await ctx.reply("Invalid contract address.");
+      return;
+    }
+    const wallet = getWallet();
+    const data = resolveCalldata(dataRaw, wallet?.address || contract);
+    if (!data) {
+      await ctx.reply("Invalid calldata. Use hex 0x... or presets: mint / mint1");
+      return;
+    }
+    const job = await addScheduledMint({
+      label: `mint ${shortAddress(contract.toLowerCase())}`,
+      to: contract,
+      data,
+      executeAt: when,
+    });
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });
+  });
+
+  bot.command("schedulemintfromtx", async (ctx) => {
+    const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      await ctx.reply(
+        "Usage:\n/schedulemintfromtx <txHash> <when>\n\nExample:\n/schedulemintfromtx 0xabc... +2m"
+      );
+      return;
+    }
+    const txHash = parts[0];
+    const when = parseScheduleTime(parts[1]);
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      await ctx.reply("Invalid tx hash.");
+      return;
+    }
+    if (!when || when.getTime() <= Date.now()) {
+      await ctx.reply("Invalid/past time. Use +5m, +2h, or ISO time.");
+      return;
+    }
+
+    try {
+      const tx = await getProvider().getTransaction(txHash);
+      if (!tx?.to || !tx.data || tx.data === "0x") {
+        await ctx.reply("Source tx has no mint calldata.");
+        return;
+      }
+      if (tx.value > 0n) {
+        await ctx.reply("Source tx is paid (value > 0). Free-mint scheduler skipped it.");
+        return;
+      }
+      const job = await addScheduledMint({
+        label: `fromtx ${txHash.slice(0, 10)}…`,
+        to: tx.to,
+        data: tx.data,
+        executeAt: when,
+        sourceTxHash: txHash,
+      });
+      await registerNotifyChat(chatId(ctx));
+      await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });
+    } catch (err) {
+      await ctx.reply(
+        `Failed to load tx: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  });
+
+  bot.command("schedules", async (ctx) => {
+    const list = getState().scheduledMints.slice(-20).reverse();
+    if (list.length === 0) {
+      await ctx.reply("No scheduled mints.");
+      return;
+    }
+    const lines = list.map((j) => {
+      return `• <code>${j.id}</code> [${j.status}]\n  ${escape(j.label)}\n  when: <code>${j.executeAt}</code>\n  to: <code>${j.to}</code>`;
+    });
+    await ctx.reply(`<b>Scheduled mints</b>\n\n${lines.join("\n\n")}`, {
+      parse_mode: "HTML",
+    });
+  });
+
+  bot.command("cancelschedule", async (ctx) => {
+    const id = (ctx.match || "").trim();
+    if (!id) {
+      await ctx.reply("Usage: /cancelschedule sch_...");
+      return;
+    }
+    const ok = await cancelScheduledMint(id);
+    await ctx.reply(ok ? `Cancelled ${id}` : "Not found or not pending.");
+  });
+
   bot.catch((err) => {
     console.error("[telegram] bot error:", err);
   });
@@ -369,6 +491,30 @@ export async function broadcastPriceAlert(
       });
     } catch (err) {
       console.error(`[telegram] failed price alert to ${id}:`, err);
+    }
+  }
+}
+
+export async function broadcastScheduleResult(
+  bot: Bot,
+  job: ScheduledMint,
+  result: ScheduledMintResult
+): Promise<void> {
+  const state = getState();
+  const text = formatScheduleResult(job, result);
+  const targets =
+    state.notifyChatIds.length > 0
+      ? state.notifyChatIds
+      : [...config.allowedChatIds];
+
+  for (const id of targets) {
+    try {
+      await bot.api.sendMessage(id, text, {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
+    } catch (err) {
+      console.error(`[telegram] failed schedule notify to ${id}:`, err);
     }
   }
 }

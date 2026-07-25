@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { maybeCopyPurchase } from "./robinhood/copyExecutor";
+import { startMintScheduler } from "./robinhood/mintScheduler";
 import { startMonitor } from "./robinhood/monitor";
 import { startPriceWatcher } from "./robinhood/priceWatcher";
 import { getProvider, getWallet } from "./robinhood/provider";
@@ -7,6 +8,7 @@ import { addWatchedPrice, loadState } from "./store/state";
 import {
   broadcastPriceAlert,
   broadcastPurchase,
+  broadcastScheduleResult,
   createTelegramBot,
 } from "./telegram/bot";
 
@@ -47,7 +49,6 @@ async function main(): Promise<void> {
     const copy = await maybeCopyPurchase(purchase);
     await broadcastPurchase(bot, purchase, copy);
 
-    // Auto-watch successful free mints (ours or dry-run candidates).
     if (purchase.isFreeMint && (copy.success || copy.dryRun)) {
       await addWatchedPrice({
         contract: purchase.contract,
@@ -73,10 +74,16 @@ async function main(): Promise<void> {
     await broadcastPriceAlert(bot, alert);
   });
 
+  const stopSchedules = await startMintScheduler(async (job, result) => {
+    console.log(`[schedule] ${job.id} ${result.success ? "ok" : "fail"}: ${result.reason}`);
+    await broadcastScheduleResult(bot, job, result);
+  });
+
   const shutdown = (signal: string) => {
     console.log(`Received ${signal}, shutting down…`);
     stopMonitor();
     stopPrices();
+    stopSchedules();
     bot.stop();
   };
   process.once("SIGINT", () => shutdown("SIGINT"));

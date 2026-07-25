@@ -1,7 +1,13 @@
 import { config } from "../config";
 import { describeWallet } from "../robinhood/monitor";
 import { shortAddress } from "../store/state";
-import type { CopyResult, NftPurchase, PriceChangeAlert } from "../types";
+import type {
+  CopyResult,
+  NftPurchase,
+  PriceChangeAlert,
+  ScheduledMint,
+  ScheduledMintResult,
+} from "../types";
 
 function escHtml(text: string): string {
   return text
@@ -71,6 +77,7 @@ export function formatPriceAlert(alert: PriceChangeAlert): string {
 export function formatStatus(params: {
   trackedCount: number;
   watchedPrices: number;
+  pendingSchedules: number;
   copyEnabled: boolean;
   dryRun: boolean;
   freeMintsOnly: boolean;
@@ -88,6 +95,7 @@ export function formatStatus(params: {
     `Mode: <b>${params.freeMintsOnly ? "FREE MINTS ONLY" : "ALL ACTIVITY"}</b>`,
     `Tracked wallets: <b>${params.trackedCount}</b>`,
     `Price watches: <b>${params.watchedPrices}</b>`,
+    `Scheduled mints: <b>${params.pendingSchedules}</b> pending`,
     `Price alerts: <b>${params.priceAlertsEnabled ? "ON" : "OFF"}</b> (≥${params.priceAlertPct}%)`,
     `Auto-mint: <b>${params.copyEnabled ? "ON" : "OFF"}</b>`,
     `Dry run: <b>${params.dryRun ? "ON" : "OFF"}</b>`,
@@ -124,5 +132,41 @@ export function helpText(): string {
     `/unwatchprice &lt;contract&gt; [tokenId] — stop watching`,
     `/pricealerts on|off — toggle price alerts`,
     `/pricepct &lt;percent&gt; — alert when price moves by this %`,
+    `/schedulemint &lt;when&gt; &lt;contract&gt; &lt;calldata|mint|mint1&gt;`,
+    `/schedulemintfromtx &lt;txHash&gt; &lt;when&gt; — copy whale mint calldata`,
+    `/schedules — list scheduled mints`,
+    `/cancelschedule &lt;id&gt; — cancel a pending schedule`,
+  ].join("\n");
+}
+
+export function formatScheduleCreated(job: ScheduledMint): string {
+  return [
+    `<b>Mint scheduled</b>`,
+    `<b>ID:</b> <code>${escHtml(job.id)}</code>`,
+    `<b>Label:</b> ${escHtml(job.label)}`,
+    `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
+    `<b>To:</b> <code>${escHtml(job.to)}</code>`,
+    `<b>Data:</b> <code>${escHtml(job.data.slice(0, 66))}${job.data.length > 66 ? "…" : ""}</code>`,
+    job.sourceTxHash
+      ? `<b>Source tx:</b> <a href="${config.chain.explorerTxUrl(job.sourceTxHash)}">explorer</a>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function formatScheduleResult(
+  job: ScheduledMint,
+  result: ScheduledMintResult
+): string {
+  const tx = result.txHash
+    ? `\n<b>Tx:</b> <a href="${config.chain.explorerTxUrl(result.txHash)}">explorer</a>`
+    : "";
+  return [
+    `<b>Scheduled mint ${result.success ? "DONE" : "FAILED"}</b>`,
+    `<b>ID:</b> <code>${escHtml(job.id)}</code>`,
+    `<b>Label:</b> ${escHtml(job.label)}`,
+    `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
+    `<b>Result:</b> ${escHtml(result.reason)}${tx}`,
   ].join("\n");
 }

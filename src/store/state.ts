@@ -1,7 +1,13 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { config } from "../config";
-import type { BotState, TrackedWallet, WatchedPriceItem } from "../types";
+import type {
+  BotState,
+  ScheduledMint,
+  ScheduledMintStatus,
+  TrackedWallet,
+  WatchedPriceItem,
+} from "../types";
 
 const DEFAULT_STATE: BotState = {
   trackedWallets: [],
@@ -16,6 +22,7 @@ const DEFAULT_STATE: BotState = {
   notifyChatIds: [...config.allowedChatIds],
   recentTxHashes: [],
   watchedPrices: [],
+  scheduledMints: [],
 };
 
 let state: BotState = structuredClone(DEFAULT_STATE);
@@ -43,6 +50,7 @@ export async function loadState(): Promise<BotState> {
           : [...config.allowedChatIds],
       recentTxHashes: parsed.recentTxHashes ?? [],
       watchedPrices: parsed.watchedPrices ?? [],
+      scheduledMints: parsed.scheduledMints ?? [],
     };
   } catch {
     state = structuredClone(DEFAULT_STATE);
@@ -197,5 +205,69 @@ export async function updateWatchedPrice(
   }
   item.lastPrice = price;
   item.lastCheckedAt = new Date().toISOString();
+  await persistState();
+}
+
+function newScheduleId(): string {
+  return `sch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export async function addScheduledMint(params: {
+  label: string;
+  to: string;
+  data: string;
+  executeAt: Date;
+  sourceTxHash?: string;
+}): Promise<ScheduledMint> {
+  const job: ScheduledMint = {
+    id: newScheduleId(),
+    label: params.label,
+    to: normalizeAddress(params.to),
+    data: params.data.toLowerCase(),
+    executeAt: params.executeAt.toISOString(),
+    createdAt: new Date().toISOString(),
+    status: "pending",
+    sourceTxHash: params.sourceTxHash?.toLowerCase(),
+  };
+  state.scheduledMints.push(job);
+  await persistState();
+  return job;
+}
+
+export async function cancelScheduledMint(id: string): Promise<boolean> {
+  const job = state.scheduledMints.find((j) => j.id === id);
+  if (!job || job.status !== "pending") {
+    return false;
+  }
+  job.status = "cancelled";
+  job.finishedAt = new Date().toISOString();
+  job.resultReason = "Cancelled by user.";
+  await persistState();
+  return true;
+}
+
+export async function markScheduledMint(
+  id: string,
+  patch: {
+    status: ScheduledMintStatus;
+    resultReason?: string;
+    resultTxHash?: string;
+    finishedAt?: string;
+  }
+): Promise<void> {
+  const job = state.scheduledMints.find((j) => j.id === id);
+  if (!job) {
+    return;
+  }
+  job.status = patch.status;
+  if (patch.resultReason !== undefined) {
+    job.resultReason = patch.resultReason;
+  }
+  if (patch.resultTxHash !== undefined) {
+    job.resultTxHash = patch.resultTxHash;
+  }
+  if (patch.finishedAt !== undefined) {
+    job.finishedAt = patch.finishedAt;
+  }
   await persistState();
 }
