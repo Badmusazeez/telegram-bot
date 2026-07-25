@@ -1,0 +1,132 @@
+app:
+  name: mexc-ai-trading-assistant
+  scan_interval_seconds: 30
+  health_port: 8080
+  dry_run: false
+  timezone: UTC
+
+exchange:
+  name: mexc
+  rest_base_url: https://contract.mexc.com
+  ws_url: wss://contract.mexc.com/edge
+  request_timeout_seconds: 15
+  max_retries: 5
+  retry_backoff_seconds: 1.5
+
+symbols:
+  - BTC_USDT
+  - ETH_USDT
+  - SOL_USDT
+  - XRP_USDT
+  - BNB_USDT
+  - DOGE_USDT
+
+timeframes:
+  higher:
+    - Day1
+    - Hour4
+    - Min60
+  execution:
+    - Min15
+    - Min5
+
+ema:
+  periods: [20, 50, 100, 200]
+  min_slope_pct: 0.00005
+  max_intertwine_pct: 0.0015
+
+structure:
+  swing_lookback: 5
+  equal_level_tolerance_pct: 0.0008
+
+smc:
+  fvg_min_gap_pct: 0.0005
+  order_block_lookback: 30
+  zone_touch_tolerance_pct: 0.0015
+
+order_flow:
+  trade_window: 200
+  imbalance_threshold: 1.35
+  absorption_volume_mult: 1.8
+
+open_interest:
+  rising_threshold_pct: 0.002
+  sharp_decline_pct: -0.01
+
+funding:
+  extreme_positive: 0.0005
+  extreme_negative: -0.0005
+
+volume:
+  avg_lookback: 20
+  breakout_multiplier: 1.4
+  spike_multiplier: 1.8
+
+volatility:
+  atr_period: 14
+  min_atr_pct: 0.0015
+  stop_atr_multiplier: 1.5
+
+risk:
+  account_equity: 10000
+  risk_per_trade_pct: 0.01
+  min_rr: 2.5
+  preferred_rr: 3.0
+  max_simultaneous_positions: 3
+  daily_loss_limit_pct: 0.03
+  weekly_loss_limit_pct: 0.08
+  trailing_after_tp1: true
+
+confidence:
+  min_score: 66
+  preferred_score: 90
+  positive_threshold: 65
+  negative_threshold: 40
+  min_positive_categories: 6
+  weights:
+    ema_alignment: 12
+    higher_timeframe: 10
+    market_structure: 10
+    smart_money: 10
+    liquidity_sweep: 8
+    order_flow: 12
+    open_interest: 8
+    funding_rate: 5
+    liquidation_heatmap: 8
+    volume_confirmation: 7
+    volatility_filter: 5
+    risk_reward: 5
+
+cross_exchange:
+  enabled: true
+  max_premium_pct: 0.0025
+  max_funding_delta: 0.0004
+  volume_anomaly_ratio: 3.0
+  reject_on_conflict: true
+  soft_penalty: 8.0
+
+data_sources:
+  okx_base_url: https://www.okx.com
+  cmc_pro_base_url: https://pro-api.coinmarketcap.com
+  cmc_public_base_url: https://api.coinmarketcap.com
+  news_enabled: true
+  news_lookback_hours: 12
+  news_suppress_minutes: 45
+  high_impact_penalty: 12.0
+
+alerts:
+  dedupe_window_minutes: 90
+  require_confirmation_candle: true
+  telegram_parse_mode: HTML
+
+logging:
+  level: INFO
+  json_logs: true
+  decision_log_path: logs/decisions.jsonl
+  app_log_path: logs/app.log
+
+plugins:
+  enabled: []
+  # Future: whale_wallets, token_unlocks, economic_calendar,
+  # news_sentiment, stablecoin_flows, exchange_reserves,
+  # portfolio_dashboard, backtesting, web_dashboard
