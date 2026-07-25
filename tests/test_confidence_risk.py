@@ -179,7 +179,7 @@ def test_signal_engine_idle_without_zone():
     assert decision.accepted is False
 
 
-def test_formatter_contains_confidence_factors():
+def test_formatter_signal_only():
     signal = Signal(
         symbol="BTC_USDT",
         side=Side.BUY,
@@ -203,13 +203,17 @@ def test_formatter_contains_confidence_factors():
         final_target=122000,
         risk_reward=3.4,
         risk_level=RiskLevel.LOW,
-        reason="test",
-        commentary="test commentary",
+        reason="Higher-timeframe uptrend with bullish EMA alignment.",
+        commentary="internal only",
         invalidation="sl",
         status="Await confirmation candle close.",
     )
     text = format_signal_message(signal)
     assert "BUY BTCUSDT" in text
-    assert "Elite Institutional Setup" in text
-    assert "Positive Factors" in text
-    assert "Negative Factors" in text
+    assert "Confidence" in text
+    assert "Take Profit 1" in text
+    assert "Positive Factors" not in text
+    assert "Negative Factors" not in text
+    assert "Commentary" not in text
+    assert "Invalidation" not in text
+    assert "internal only" not in text

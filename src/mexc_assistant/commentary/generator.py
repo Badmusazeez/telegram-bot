@@ -57,18 +57,13 @@ def generate_reason(side: Side, bundle: AnalysisBundle) -> str:
         )
     )
     zone = "bullish Order Block / FVG" if side == Side.BUY else "bearish Order Block / FVG"
-    xex = (
-        " MEXC/OKX validation aligned."
-        if not bundle.cross_exchange.conflicting
-        else " Cross-exchange caution noted."
-    )
     parts = [
         f"Higher-timeframe {trend} with {'bullish' if side == Side.BUY else 'bearish'} EMA alignment.",
         f"{sweep}.",
         f"Price returned to a {zone} with {_flow_text(bundle).lower()}.",
         f"{_oi_text(bundle, side)}, {_funding_text(bundle, side).lower()}, and volume "
         f"{'confirms' if bundle.volume.breakout or bundle.volume.spike else 'is only moderately supportive of'} "
-        f"institutional participation.{xex}",
+        "institutional participation.",
     ]
     return " ".join(parts)
 
@@ -79,53 +74,18 @@ def generate_commentary(
     plan: RiskPlan,
     breakdown: ConfidenceBreakdown | None = None,
 ) -> str:
-    inst = (
-        "Institutions appear to be accumulating into discount liquidity after the sweep."
-        if side == Side.BUY
-        else "Institutions appear to be distributing into premium liquidity after the sweep."
-    )
-    risks = []
-    if bundle.funding.crowded_longs and side == Side.BUY:
-        risks.append("crowded longs via funding")
-    if bundle.funding.crowded_shorts and side == Side.SELL:
-        risks.append("crowded shorts via funding")
-    if not bundle.volume.spike:
-        risks.append("volume not yet climactic")
-    if bundle.open_interest.sharp_decline:
-        risks.append("OI contraction")
-    if bundle.cross_exchange.conflicting:
-        risks.append("cross-exchange divergence")
-    if bundle.news.volatility_risk:
-        risks.append("news-driven volatility")
-    risk_txt = ", ".join(risks) if risks else "mainly failed continuation / level invalidation"
-
+    """Kept for internal decision logs; Telegram alerts use reason only."""
+    _ = breakdown
     invalidation = (
         f"Close below {plan.stop_loss:,.4g} invalidates the bullish OB/structure thesis."
         if side == Side.BUY
         else f"Close above {plan.stop_loss:,.4g} invalidates the bearish OB/structure thesis."
     )
-
-    conf_txt = ""
-    if breakdown is not None:
-        conf_txt = f" {breakdown.summary}"
-        if breakdown.positive:
-            conf_txt += " Positive: " + " | ".join(breakdown.positive[:3]) + "."
-        if breakdown.negative:
-            conf_txt += " Negative: " + " | ".join(breakdown.negative[:3]) + "."
-
-    xex = "; ".join(bundle.cross_exchange.notes[:2])
-    news = "; ".join(bundle.news.notes[:2]) if bundle.news.notes else "No material news impact"
-
     return (
-        f"{inst} Trend: {bundle.higher_tf_trend.value}. "
+        f"Trend: {bundle.higher_tf_trend.value}. "
         f"Structure: {bundle.structure.trend.value}"
-        f"{' with BOS' if bundle.structure.bos else ''}"
-        f"{' / CHoCH' if bundle.structure.choch else ''}. "
-        f"Liquidity: PDH {bundle.liquidity.previous_day_high:,.4g} / PDL "
-        f"{bundle.liquidity.previous_day_low:,.4g}. "
-        f"{_flow_text(bundle)}. {_funding_text(bundle, side)}. {_oi_text(bundle, side)}. "
-        f"Cross-exchange: {xex}. News: {news}. "
-        f"Key risks: {risk_txt}.{conf_txt} {invalidation}"
+        f"{' with BOS' if bundle.structure.bos else ''}. "
+        f"{_flow_text(bundle)}. {_oi_text(bundle, side)}. {invalidation}"
     )
 
 
