@@ -3,7 +3,8 @@ import { maybeCopyPurchase } from "./robinhood/copyExecutor";
 import { startMintScheduler } from "./robinhood/mintScheduler";
 import { startMonitor } from "./robinhood/monitor";
 import { startPriceWatcher } from "./robinhood/priceWatcher";
-import { getProvider, getWallet } from "./robinhood/provider";
+import { getAllMintWallets, getProvider, getWallet } from "./robinhood/provider";
+import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, loadState } from "./store/state";
 import {
   broadcastPriceAlert,
@@ -15,6 +16,7 @@ import {
 async function main(): Promise<void> {
   console.log(`Starting robinhood-nft-copy-bot on ${config.chain.name}…`);
   await loadState();
+  await loadMintWallets();
 
   const provider = getProvider();
   const network = await provider.getNetwork();
@@ -25,7 +27,8 @@ async function main(): Promise<void> {
   }
 
   const bot = createTelegramBot();
-  const wallet = getWallet();
+  const wallets = getAllMintWallets();
+  const wallet = wallets[0] ?? getWallet();
 
   console.log(
     `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
@@ -36,11 +39,18 @@ async function main(): Promise<void> {
   console.log(
     `priceAlerts=${config.priceAlertsEnabled ? "on" : "off"} threshold=${config.priceAlertPct}% poll=${config.pricePollIntervalMs}ms`
   );
-  console.log(
-    wallet
-      ? `Signer wallet: ${wallet.address}`
-      : "Signer wallet: not configured (alerts-only / dry-run)"
-  );
+  if (wallets.length > 0) {
+    console.log(`Mint wallets (${wallets.length}):`);
+    for (const w of wallets) {
+      console.log(`  - ${w.address}`);
+    }
+  } else {
+    console.log(
+      wallet
+        ? `Signer wallet: ${wallet.address}`
+        : "Signer wallet: not configured (alerts-only / dry-run)"
+    );
+  }
 
   const stopMonitor = await startMonitor(async (purchase) => {
     console.log(

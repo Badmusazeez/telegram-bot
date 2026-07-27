@@ -4,7 +4,12 @@ import {
   markScheduledMint,
 } from "../store/state";
 import type { ScheduledMint, ScheduledMintResult } from "../types";
-import { gasIsAffordable, getProvider, getWallet } from "./provider";
+import {
+  gasIsAffordable,
+  getAllMintWallets,
+  getProvider,
+} from "./provider";
+import type { Wallet } from "ethers";
 
 export type ScheduleHandler = (
   job: ScheduledMint,
@@ -73,34 +78,11 @@ export function resolveCalldata(raw: string, buyer: string): string | null {
   return null;
 }
 
-async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
-  const state = getState();
-
-  if (state.dryRun) {
-    return {
-      success: true,
-      dryRun: true,
-      reason: `DRY RUN — would mint at ${job.executeAt} to ${job.to}`,
-    };
-  }
-
-  const wallet = getWallet();
-  if (!wallet) {
-    return {
-      success: false,
-      dryRun: false,
-      reason: "PRIVATE_KEY missing — cannot run scheduled mint.",
-    };
-  }
-
-  if (!(await gasIsAffordable())) {
-    return {
-      success: false,
-      dryRun: false,
-      reason: `Gas above MAX_GAS_GWEI (${config.maxGasGwei}).`,
-    };
-  }
-
+async function sendOnWallet(
+  wallet: Wallet,
+  job: ScheduledMint
+): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
+  const address = wallet.address.toLowerCase();
   const provider = getProvider();
   try {
     const gasEstimate = await provider.estimateGas({
@@ -112,9 +94,9 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
 
     if (gasEstimate > BigInt(config.maxMintGasLimit)) {
       return {
-        success: false,
-        dryRun: false,
-        reason: `Gas estimate ${gasEstimate} exceeds MAX_MINT_GAS_LIMIT.`,
+        address,
+        ok: false,
+        error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
       };
     }
 
@@ -127,26 +109,69 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     const receipt = await sent.wait();
     if (!receipt || receipt.status !== 1) {
       return {
-        success: false,
-        dryRun: false,
-        reason: `Scheduled mint reverted: ${sent.hash}`,
+        address,
+        ok: false,
         txHash: sent.hash,
+        error: `reverted ${sent.hash}`,
       };
     }
 
+    return { address, ok: true, txHash: sent.hash };
+  } catch (err) {
+    return {
+      address,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
+  const state = getState();
+  const wallets = getAllMintWallets();
+
+  if (state.dryRun) {
     return {
       success: true,
-      dryRun: false,
-      reason: "Scheduled mint succeeded.",
-      txHash: sent.hash,
+      dryRun: true,
+      reason: `DRY RUN — would mint on ${wallets.length || 0} wallet(s) at ${job.executeAt} to ${job.to}`,
     };
-  } catch (err) {
+  }
+
+  if (wallets.length === 0) {
     return {
       success: false,
       dryRun: false,
-      reason: `Scheduled mint failed: ${err instanceof Error ? err.message : String(err)}`,
+      reason: "No mint wallets configured. Use /addkey or PRIVATE_KEY(S).",
     };
   }
+
+  if (!(await gasIsAffordable())) {
+    return {
+      success: false,
+      dryRun: false,
+      reason: `Gas above MAX_GAS_GWEI (${config.maxGasGwei}).`,
+    };
+  }
+
+  const results = await Promise.all(wallets.map((w) => sendOnWallet(w, job)));
+  const ok = results.filter((r) => r.ok);
+  const summary = results
+    .map(
+      (r) =>
+        `${r.address.slice(0, 6)}…${r.ok ? ` OK ${r.txHash?.slice(0, 10)}…` : ` FAIL (${r.error})`}`
+    )
+    .join(" | ");
+
+  return {
+    success: ok.length > 0,
+    dryRun: false,
+    reason:
+      ok.length > 0
+        ? `Scheduled mint on ${ok.length}/${wallets.length} wallet(s): ${summary}`
+        : `Scheduled mint failed on all ${wallets.length} wallet(s): ${summary}`,
+    txHash: ok[0]?.txHash,
+  };
 }
 
 export async function startMintScheduler(

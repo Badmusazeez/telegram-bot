@@ -26,6 +26,8 @@ const schema = z.object({
     .default("true")
     .transform((v) => v.toLowerCase() !== "false"),
   PRIVATE_KEY: z.string().optional().default(""),
+  /** Comma-separated extra mint wallet private keys */
+  PRIVATE_KEYS: z.string().optional().default(""),
   MAX_BUY_ROBINHOOD: z
     .string()
     .optional()
@@ -108,6 +110,7 @@ export const config = {
   dryRun: env.DRY_RUN,
   freeMintsOnly: env.FREE_MINTS_ONLY,
   privateKey: env.PRIVATE_KEY,
+  privateKeys: splitCsv(env.PRIVATE_KEYS),
   maxBuyRobinhood,
   maxGasGwei: env.MAX_GAS_GWEI,
   maxMintGasLimit: env.MAX_MINT_GAS_LIMIT,
@@ -127,4 +130,5 @@ export const config = {
       ? env.PRICE_POLL_INTERVAL_MS
       : 120_000,
   statePath: "data/state.json",
+  mintWalletsPath: "data/mint-wallets.json",
 };

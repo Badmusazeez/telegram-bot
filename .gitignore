@@ -2,5 +2,6 @@ node_modules/
 dist/
 .env
 data/state.json
+data/mint-wallets.json
 *.log
 .DS_Store

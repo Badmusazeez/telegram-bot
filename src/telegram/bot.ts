@@ -5,7 +5,18 @@ import {
   parseScheduleTime,
   resolveCalldata,
 } from "../robinhood/mintScheduler";
-import { getNativeBalance, getProvider, getWallet } from "../robinhood/provider";
+import {
+  getAllMintWallets,
+  getNativeBalance,
+  getProvider,
+  getWallet,
+  mintWalletCount,
+} from "../robinhood/provider";
+import {
+  addMintWallet,
+  listMintWalletPublic,
+  removeMintWallet,
+} from "../store/mintWallets";
 import {
   addScheduledMint,
   addTrackedWallet,
@@ -77,9 +88,24 @@ export function createTelegramBot(): Bot {
 
   bot.command("status", async (ctx) => {
     const state = getState();
-    const wallet = getWallet();
+    const wallets = getAllMintWallets();
+    const wallet = wallets[0] ?? getWallet();
     let balanceRobinhood: string | undefined;
-    if (wallet) {
+    let walletAddress = wallet?.address;
+    if (wallets.length > 1) {
+      walletAddress = `${wallets.length} wallets (see /listkeys)`;
+      try {
+        const bals = await Promise.all(
+          wallets.map(async (w) => {
+            const bal = await getNativeBalance(w.address);
+            return `${shortAddress(w.address.toLowerCase())}:${Number(bal).toFixed(4)}`;
+          })
+        );
+        balanceRobinhood = bals.join(" ");
+      } catch {
+        balanceRobinhood = "?";
+      }
+    } else if (wallet) {
       try {
         balanceRobinhood = Number(
           await getNativeBalance(wallet.address)
@@ -103,9 +129,79 @@ export function createTelegramBot(): Bot {
         priceAlertPct: state.priceAlertPct,
         maxBuyRobinhood: state.maxBuyRobinhood,
         lastBlock: state.lastProcessedBlock,
-        walletAddress: wallet?.address,
+        walletAddress,
         balanceRobinhood,
       }),
+      { parse_mode: "HTML" }
+    );
+  });
+
+  bot.command("addkey", async (ctx) => {
+    const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
+    const key = parts[0];
+    const label = parts.slice(1).join(" ") || undefined;
+    if (!key) {
+      await ctx.reply(
+        "Usage: /addkey &lt;private_key&gt; [label]\n\n⚠️ Prefer setting PRIVATE_KEYS in VPS .env — Telegram is not fully private. Bot will try to delete your message.",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    try {
+      // Best-effort: remove the private key from chat history
+      if (ctx.message?.message_id) {
+        await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => undefined);
+      }
+      const wallet = await addMintWallet(key, label);
+      await ctx.reply(
+        [
+          "✅ Mint wallet added.",
+          `Address: <code>${wallet.address}</code>`,
+          `Label: ${escape(wallet.label)}`,
+          `Total mint wallets: <b>${mintWalletCount()}</b>`,
+          "",
+          "Free-mint copies + scheduled mints fire on <b>all</b> wallets at once.",
+          "⚠️ Delete chat history if the key was still visible.",
+        ].join("\n"),
+        { parse_mode: "HTML" }
+      );
+    } catch (error) {
+      await ctx.reply(
+        `❌ ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  });
+
+  bot.command("listkeys", async (ctx) => {
+    const wallets = listMintWalletPublic();
+    if (wallets.length === 0) {
+      await ctx.reply(
+        "No mint wallets yet.\nUse /addkey &lt;private_key&gt; or set PRIVATE_KEY / PRIVATE_KEYS in .env",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    const lines = wallets.map(
+      (w, i) =>
+        `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
+    );
+    await ctx.reply(
+      `<b>Mint wallets</b> (addresses only — keys never shown)\n\n${lines.join("\n\n")}`,
+      { parse_mode: "HTML" }
+    );
+  });
+
+  bot.command("removekey", async (ctx) => {
+    const address = (ctx.match || "").trim();
+    if (!address || !isAddress(address)) {
+      await ctx.reply("Usage: /removekey 0xWalletAddress");
+      return;
+    }
+    const removed = await removeMintWallet(address);
+    await ctx.reply(
+      removed
+        ? `🗑️ Removed mint wallet <code>${address.toLowerCase()}</code>\nRemaining: <b>${mintWalletCount()}</b>`
+        : "That address was not in the mint wallet list.",
       { parse_mode: "HTML" }
     );
   });
