@@ -4,10 +4,13 @@
   "description": "Ethereum free + private mint NFT copy bot with Telegram tracking",
   "main": "dist/index.js",
   "scripts": {
+    "check": "node scripts/check-env.mjs",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:dev": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "vps:install": "bash scripts/vps-install.sh"
   },
   "engines": {
     "node": ">=20"

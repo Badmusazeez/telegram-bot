@@ -29,27 +29,35 @@ Track whale wallets. When they do a **free mint** (0 ETH) or a **private/paid mi
 
 > Allowlist/merkle private mints that embed proofs bound to the whale address may still revert on your wallet. Calldata address rewrite helps when the recipient is embedded, but not for single-use merkle proofs.
 
-## Quick start
+## Run on a VPS (recommended)
+
+Use a **new** Telegram bot token (separate from the Robinhood bot). Keep the VPS running 24/7.
+
+### 1) SSH into the VPS and clone this branch
 
 ```bash
-# copy env template
-cp env.example .env
+ssh root@YOUR_VPS_IP   # or your user
 
-# fill:
-#   TELEGRAM_BOT_TOKEN
-#   TELEGRAM_ALLOWED_CHAT_IDS
-#   ETH_RPC_URL (Alchemy recommended)
-#   PRIVATE_KEY          ← your mint wallet
-#   TRACKED_WALLETS      ← whales to follow (optional; or /track in Telegram)
+# Ubuntu example
+sudo apt-get update -y
+sudo apt-get install -y git curl
 
-npm install
-npm run dev
+git clone -b cursor/eth-free-private-mint-bot-f9dc https://github.com/Badmusazeez/telegram-bot.git
+cd telegram-bot
 ```
 
-### Minimal `.env` you care about
+### 2) Install + create `.env`
+
+```bash
+chmod +x scripts/vps-install.sh run.sh
+./scripts/vps-install.sh
+nano .env
+```
+
+Fill at least:
 
 ```env
-TELEGRAM_BOT_TOKEN=123:ABC
+TELEGRAM_BOT_TOKEN=123:ABC          # new bot from @BotFather
 TELEGRAM_ALLOWED_CHAT_IDS=YOUR_CHAT_ID
 ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
 PRIVATE_KEY=0xyour_mint_wallet_key
@@ -61,7 +69,45 @@ DRY_RUN=true
 COPY_ENABLED=false
 ```
 
-Telegram:
+```bash
+npm run check
+```
+
+### 3) Quick test (foreground)
+
+```bash
+./run.sh
+# or: npm run start:dev
+```
+
+Message the bot in Telegram: `/start` → `/status`. Stop with `Ctrl+C`.
+
+### 4) Keep it running with systemd
+
+Edit the service file paths if your user/folder differ (`User=` and `WorkingDirectory=`):
+
+```bash
+nano deploy/eth-mint-bot.service
+# set WorkingDirectory to your real path, e.g. /home/ubuntu/telegram-bot
+# set User= to your Linux user
+
+sudo cp deploy/eth-mint-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now eth-mint-bot
+sudo journalctl -u eth-mint-bot -f
+```
+
+Useful commands:
+
+```bash
+sudo systemctl status eth-mint-bot
+sudo systemctl restart eth-mint-bot
+sudo systemctl stop eth-mint-bot
+```
+
+After editing `.env`, always `sudo systemctl restart eth-mint-bot`.
+
+### Telegram after it’s online
 
 ```text
 /start
@@ -74,12 +120,17 @@ Telegram:
 /status
 ```
 
-When dry-run looks good:
+When dry-run looks good: `/dryrun off`
 
-```text
-/dryrun off
+## Local quick start (laptop)
+
+```bash
+cp env.example .env
+# fill TELEGRAM_*, ETH_RPC_URL, PRIVATE_KEY, TRACKED_WALLETS
+npm install
+npm run check
+npm run start:dev
 ```
-
 ## Network (MetaMask)
 
 - Name: Ethereum Mainnet  
