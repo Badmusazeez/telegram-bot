@@ -51,6 +51,6 @@ export async function gasIsAffordable(): Promise<boolean> {
   return gwei <= config.maxGasGwei;
 }
 
-export function currentMaxBuyRobinhood(): number {
-  return getState().maxBuyRobinhood;
+export function currentMaxBuyEth(): number {
+  return getState().maxBuyEth;
 }

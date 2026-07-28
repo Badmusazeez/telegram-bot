@@ -10,7 +10,7 @@ export interface NftPurchase {
   seller: string;
   contract: string;
   tokenId: string;
-  valueRobinhood: number;
+  valueEth: number;
   blockNumber: number;
   timestamp: number;
   collectionName?: string;
@@ -19,6 +19,8 @@ export interface NftPurchase {
   marketplace?: string;
   /** True when Transfer is from the zero address (mint). */
   isFreeMint: boolean;
+  /** True when mint has native value > 0 (private / paid mint). */
+  isPrivateMint: boolean;
   /** True when the mint/buy tx carried native value > 0. */
   isPaid: boolean;
 }
@@ -47,6 +49,8 @@ export interface ScheduledMint {
   label: string;
   to: string;
   data: string;
+  /** Native ETH value to send with the mint (wei as decimal string). */
+  valueWei: string;
   executeAt: string;
   createdAt: string;
   status: ScheduledMintStatus;
@@ -67,10 +71,13 @@ export interface BotState {
   trackedWallets: TrackedWallet[];
   copyEnabled: boolean;
   dryRun: boolean;
+  /** When true, only 0-ETH free mints. When false, also private/paid mints under maxBuyEth. */
   freeMintsOnly: boolean;
+  /** Allow copying private/paid mints (from 0x0 with value > 0) under maxBuyEth. */
+  privateMintsEnabled: boolean;
   priceAlertsEnabled: boolean;
   priceAlertPct: number;
-  maxBuyRobinhood: number;
+  maxBuyEth: number;
   allowedCollections: string[];
   lastProcessedBlock: number;
   notifyChatIds: string[];

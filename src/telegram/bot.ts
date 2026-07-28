@@ -1,17 +1,17 @@
 import { Bot, Context } from "grammy";
-import { isAddress } from "ethers";
+import { formatEther, isAddress } from "ethers";
 import { config } from "../config";
 import {
   parseScheduleTime,
   resolveCalldata,
-} from "../robinhood/mintScheduler";
+} from "../eth/mintScheduler";
 import {
   getAllMintWallets,
   getNativeBalance,
   getProvider,
   getWallet,
   mintWalletCount,
-} from "../robinhood/provider";
+} from "../eth/provider";
 import {
   addMintWallet,
   listMintWalletPublic,
@@ -78,7 +78,7 @@ export function createTelegramBot(): Bot {
   bot.command("start", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      "robinhood-nft-copy-bot connected.\n\nTip: /track 0xWallet Label\n/help for all commands."
+      "eth-free-private-mint-bot connected.\n\nTip: /track 0xWallet Label\nOr set TRACKED_WALLETS + PRIVATE_KEY in .env\n/help for all commands."
     );
   });
 
@@ -90,7 +90,7 @@ export function createTelegramBot(): Bot {
     const state = getState();
     const wallets = getAllMintWallets();
     const wallet = wallets[0] ?? getWallet();
-    let balanceRobinhood: string | undefined;
+    let balanceEth: string | undefined;
     let walletAddress = wallet?.address;
     if (wallets.length > 1) {
       walletAddress = `${wallets.length} wallets (see /listkeys)`;
@@ -101,17 +101,15 @@ export function createTelegramBot(): Bot {
             return `${shortAddress(w.address.toLowerCase())}:${Number(bal).toFixed(4)}`;
           })
         );
-        balanceRobinhood = bals.join(" ");
+        balanceEth = bals.join(" ");
       } catch {
-        balanceRobinhood = "?";
+        balanceEth = "?";
       }
     } else if (wallet) {
       try {
-        balanceRobinhood = Number(
-          await getNativeBalance(wallet.address)
-        ).toFixed(4);
+        balanceEth = Number(await getNativeBalance(wallet.address)).toFixed(4);
       } catch {
-        balanceRobinhood = "?";
+        balanceEth = "?";
       }
     }
     const pendingSchedules = state.scheduledMints.filter(
@@ -125,12 +123,13 @@ export function createTelegramBot(): Bot {
         copyEnabled: state.copyEnabled,
         dryRun: state.dryRun,
         freeMintsOnly: state.freeMintsOnly,
+        privateMintsEnabled: state.privateMintsEnabled,
         priceAlertsEnabled: state.priceAlertsEnabled,
         priceAlertPct: state.priceAlertPct,
-        maxBuyRobinhood: state.maxBuyRobinhood,
+        maxBuyEth: state.maxBuyEth,
         lastBlock: state.lastProcessedBlock,
         walletAddress,
-        balanceRobinhood,
+        balanceEth,
       }),
       { parse_mode: "HTML" }
     );
@@ -142,13 +141,12 @@ export function createTelegramBot(): Bot {
     const label = parts.slice(1).join(" ") || undefined;
     if (!key) {
       await ctx.reply(
-        "Usage: /addkey &lt;private_key&gt; [label]\n\n⚠️ Prefer setting PRIVATE_KEYS in VPS .env — Telegram is not fully private. Bot will try to delete your message.",
+        "Usage: /addkey &lt;private_key&gt; [label]\n\n⚠️ Prefer setting PRIVATE_KEY in VPS .env — Telegram is not fully private. Bot will try to delete your message.",
         { parse_mode: "HTML" }
       );
       return;
     }
     try {
-      // Best-effort: remove the private key from chat history
       if (ctx.message?.message_id) {
         await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => undefined);
       }
@@ -160,7 +158,7 @@ export function createTelegramBot(): Bot {
           `Label: ${escape(wallet.label)}`,
           `Total mint wallets: <b>${mintWalletCount()}</b>`,
           "",
-          "Free-mint copies + scheduled mints fire on <b>all</b> wallets at once.",
+          "Free + private mint copies fire on <b>all</b> wallets at once.",
           "⚠️ Delete chat history if the key was still visible.",
         ].join("\n"),
         { parse_mode: "HTML" }
@@ -209,7 +207,10 @@ export function createTelegramBot(): Bot {
   bot.command("wallets", async (ctx) => {
     const { trackedWallets } = getState();
     if (trackedWallets.length === 0) {
-      await ctx.reply("No wallets tracked yet. Use /track <address> [label]");
+      await ctx.reply(
+        "No wallets tracked yet.\nUse /track &lt;address&gt; [label]\nor set TRACKED_WALLETS in .env",
+        { parse_mode: "HTML" }
+      );
       return;
     }
     const lines = trackedWallets.map(
@@ -276,8 +277,8 @@ export function createTelegramBot(): Bot {
     });
     await ctx.reply(
       arg === "on"
-        ? "Dry-run ON — bot will simulate free-mint copies only."
-        : "Dry-run OFF — live free-mint replay enabled (needs PRIVATE_KEY + Robinhood gas)."
+        ? "Dry-run ON — bot will simulate mint copies only."
+        : "Dry-run OFF — live mint replay enabled (needs PRIVATE_KEY + ETH for gas/mint)."
     );
   });
 
@@ -292,8 +293,27 @@ export function createTelegramBot(): Bot {
     });
     await ctx.reply(
       arg === "on"
-        ? "Free-mints-only ON — paid buys will be skipped."
-        : "Free-mints-only OFF — bot will watch broader NFT activity."
+        ? "Free-mints-only ON — private/paid mints will be skipped."
+        : "Free-mints-only OFF — free + private mints (if /privatemints on) under max buy."
+    );
+  });
+
+  bot.command("privatemints", async (ctx) => {
+    const arg = (ctx.match || "").trim().toLowerCase();
+    if (arg !== "on" && arg !== "off") {
+      await ctx.reply("Usage: /privatemints on|off");
+      return;
+    }
+    await updateState((s) => {
+      s.privateMintsEnabled = arg === "on";
+      if (arg === "on") {
+        s.freeMintsOnly = false;
+      }
+    });
+    await ctx.reply(
+      arg === "on"
+        ? "Private mints ON — paid mints from 0x0 under /maxbuy will be copied (and free-mints-only turned OFF)."
+        : "Private mints OFF — only free (0 ETH) mints."
     );
   });
 
@@ -305,9 +325,9 @@ export function createTelegramBot(): Bot {
       return;
     }
     await updateState((s) => {
-      s.maxBuyRobinhood = value;
+      s.maxBuyEth = value;
     });
-    await ctx.reply(`Max buy set to ${value} (Robinhood native)`);
+    await ctx.reply(`Max buy set to ${value} ETH (private mints)`);
   });
 
   bot.command("allow", async (ctx) => {
@@ -352,8 +372,7 @@ export function createTelegramBot(): Bot {
       return;
     }
     const lines = list.map((w, i) => {
-      const price =
-        w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+      const price = w.lastPrice === null ? "—" : `${w.lastPrice.toFixed(6)} ETH`;
       const token = w.tokenId ? `#${w.tokenId}` : "floor";
       return `${i + 1}. <b>${escape(w.label)}</b> (${token})\n   <code>${w.contract}</code>\n   last: ${price}`;
     });
@@ -456,6 +475,7 @@ export function createTelegramBot(): Bot {
       to: contract,
       data,
       executeAt: when,
+      valueWei: "0",
     });
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });
@@ -481,14 +501,26 @@ export function createTelegramBot(): Bot {
     }
 
     try {
+      const state = getState();
       const tx = await getProvider().getTransaction(txHash);
       if (!tx?.to || !tx.data || tx.data === "0x") {
         await ctx.reply("Source tx has no mint calldata.");
         return;
       }
       if (tx.value > 0n) {
-        await ctx.reply("Source tx is paid (value > 0). Free-mint scheduler skipped it.");
-        return;
+        const valueEth = Number(formatEther(tx.value));
+        if (!state.privateMintsEnabled || state.freeMintsOnly) {
+          await ctx.reply(
+            `Source tx is paid (${valueEth} ETH). Enable with /privatemints on (and /freemints off).`
+          );
+          return;
+        }
+        if (valueEth > state.maxBuyEth) {
+          await ctx.reply(
+            `Source tx value ${valueEth} ETH > max buy ${state.maxBuyEth} ETH. Raise with /maxbuy.`
+          );
+          return;
+        }
       }
       const job = await addScheduledMint({
         label: `fromtx ${txHash.slice(0, 10)}…`,
@@ -496,6 +528,7 @@ export function createTelegramBot(): Bot {
         data: tx.data,
         executeAt: when,
         sourceTxHash: txHash,
+        valueWei: tx.value.toString(),
       });
       await registerNotifyChat(chatId(ctx));
       await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });

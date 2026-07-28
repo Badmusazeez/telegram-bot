@@ -58,26 +58,26 @@ function extractAlchemyKey(rpcUrl: string): string | null {
 async function estimatePurchaseValue(
   txHash: string,
   buyer: string
-): Promise<{ valueRobinhood: number; marketplace?: string }> {
+): Promise<{ valueEth: number; marketplace?: string }> {
   try {
     const provider = getProvider();
     const tx = await provider.getTransaction(txHash);
     if (!tx) {
-      return { valueRobinhood: 0 };
+      return { valueEth: 0 };
     }
 
     const market = marketplaceName(tx.to);
-    let valueRobinhood = 0;
+    let valueEth = 0;
 
     if (tx.from.toLowerCase() === buyer && tx.value > 0n) {
-      valueRobinhood = Number(formatEther(tx.value));
+      valueEth = Number(formatEther(tx.value));
     } else if (tx.value > 0n) {
-      valueRobinhood = Number(formatEther(tx.value));
+      valueEth = Number(formatEther(tx.value));
     }
 
-    return { valueRobinhood, marketplace: market };
+    return { valueEth, marketplace: market };
   } catch {
-    return { valueRobinhood: 0 };
+    return { valueEth: 0 };
   }
 }
 
@@ -148,7 +148,6 @@ async function logsForBuyer(
   toBlock: number,
   buyer: string
 ): Promise<Log[]> {
-  // Alchemy Free tier caps eth_getLogs at 10 blocks on Robinhood.
   const chunkSize = Math.max(1, config.chain.getLogsMaxBlocks);
   const all: Log[] = [];
 
@@ -159,6 +158,23 @@ async function logsForBuyer(
   }
 
   return all;
+}
+
+function shouldKeepMint(
+  isFreeMint: boolean,
+  isPrivateMint: boolean,
+  state: ReturnType<typeof getState>
+): boolean {
+  if (isFreeMint) {
+    return true;
+  }
+  if (isPrivateMint) {
+    if (state.freeMintsOnly) {
+      return false;
+    }
+    return state.privateMintsEnabled;
+  }
+  return false;
 }
 
 export async function scanForPurchases(): Promise<NftPurchase[]> {
@@ -195,7 +211,7 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         err instanceof Error ? err.message : err
       );
       console.error(
-        "[monitor] Tip: public Robinhood RPC is flaky — set ROBINHOOD_RPC_URL to Alchemy: https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY"
+        "[monitor] Tip: set ETH_RPC_URL to Alchemy: https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
       );
       continue;
     }
@@ -212,16 +228,17 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         continue;
       }
 
-      const { valueRobinhood, marketplace } = await estimatePurchaseValue(
+      const { valueEth, marketplace } = await estimatePurchaseValue(
         log.transactionHash,
         decoded.to
       );
 
-      const isFreeMint =
-        decoded.from === ZERO && valueRobinhood <= 0 && !marketplace;
-      const isPaid = valueRobinhood > 0 || !!marketplace;
+      const isMint = decoded.from === ZERO && !marketplace;
+      const isFreeMint = isMint && valueEth <= 0;
+      const isPrivateMint = isMint && valueEth > 0;
+      const isPaid = valueEth > 0 || !!marketplace;
 
-      if (state.freeMintsOnly && !isFreeMint) {
+      if (!shouldKeepMint(isFreeMint, isPrivateMint, state)) {
         continue;
       }
 
@@ -234,13 +251,16 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         seller: decoded.from,
         contract: decoded.contract,
         tokenId: decoded.tokenId,
-        valueRobinhood,
+        valueEth,
         blockNumber: log.blockNumber,
         timestamp: block?.timestamp ?? Math.floor(Date.now() / 1000),
         marketplace: isFreeMint
           ? "free-mint"
-          : marketplace || (valueRobinhood > 0 ? "on-chain" : "transfer"),
+          : isPrivateMint
+            ? "private-mint"
+            : marketplace || (valueEth > 0 ? "on-chain" : "transfer"),
         isFreeMint,
+        isPrivateMint,
         isPaid,
         ...meta,
       });

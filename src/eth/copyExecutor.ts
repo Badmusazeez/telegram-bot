@@ -1,4 +1,4 @@
-import { formatEther, type Wallet } from "ethers";
+import { formatEther, type TransactionResponse, type Wallet } from "ethers";
 import { config } from "../config";
 import { getState } from "../store/state";
 import type { CopyResult, NftPurchase } from "../types";
@@ -9,28 +9,54 @@ import {
 } from "./provider";
 
 /**
- * Free-mint copy executor for Robinhood Chain.
+ * ETH free + private mint copy executor.
  *
- * Replays whale calldata across ALL configured mint wallets.
+ * Replays whale mint calldata across ALL configured mint wallets.
+ * - Free mints: value = 0
+ * - Private/paid mints: value copied from whale tx if <= maxBuyEth
  */
 export async function maybeCopyPurchase(
   purchase: NftPurchase
 ): Promise<CopyResult> {
   const state = getState();
 
+  if (purchase.isPaid && purchase.valueEth > state.maxBuyEth) {
+    return {
+      attempted: false,
+      success: false,
+      dryRun: state.dryRun,
+      reason: `Skipped — mint price ${purchase.valueEth} ETH > max buy ${state.maxBuyEth} ETH.`,
+    };
+  }
+
   if (state.freeMintsOnly) {
-    if (
-      !purchase.isFreeMint ||
-      purchase.isPaid ||
-      purchase.valueRobinhood > 0
-    ) {
+    if (!purchase.isFreeMint || purchase.isPaid || purchase.valueEth > 0) {
       return {
         attempted: false,
         success: false,
         dryRun: state.dryRun,
-        reason: "Skipped — paid mint/buy (free-mints-only mode).",
+        reason: "Skipped — paid/private mint (free-mints-only mode).",
       };
     }
+  } else if (purchase.isPrivateMint || purchase.isPaid) {
+    if (!state.privateMintsEnabled) {
+      return {
+        attempted: false,
+        success: false,
+        dryRun: state.dryRun,
+        reason: "Skipped — private mints disabled. Use /privatemints on.",
+      };
+    }
+  }
+
+  // Only copy actual mints (from zero address), never secondary marketplace buys.
+  if (!purchase.isFreeMint && !purchase.isPrivateMint) {
+    return {
+      attempted: false,
+      success: false,
+      dryRun: state.dryRun,
+      reason: "Not a mint — skipped (secondary buy/transfer).",
+    };
   }
 
   if (!state.copyEnabled) {
@@ -51,15 +77,6 @@ export async function maybeCopyPurchase(
       success: false,
       dryRun: state.dryRun,
       reason: "Collection is not in the allowlist.",
-    };
-  }
-
-  if (!purchase.isFreeMint) {
-    return {
-      attempted: false,
-      success: false,
-      dryRun: state.dryRun,
-      reason: "Not a free mint — skipped.",
     };
   }
 
@@ -85,12 +102,23 @@ export async function maybeCopyPurchase(
   }
 
   if (sourceTx.value > 0n) {
-    return {
-      attempted: false,
-      success: false,
-      dryRun: state.dryRun,
-      reason: `Skipped paid mint (${formatEther(sourceTx.value)} native).`,
-    };
+    const valueEth = Number(formatEther(sourceTx.value));
+    if (!state.privateMintsEnabled || state.freeMintsOnly) {
+      return {
+        attempted: false,
+        success: false,
+        dryRun: state.dryRun,
+        reason: `Skipped paid mint (${valueEth} ETH).`,
+      };
+    }
+    if (valueEth > state.maxBuyEth) {
+      return {
+        attempted: false,
+        success: false,
+        dryRun: state.dryRun,
+        reason: `Skipped paid mint ${valueEth} ETH > max ${state.maxBuyEth} ETH.`,
+      };
+    }
   }
 
   if (!sourceTx.to || !sourceTx.data || sourceTx.data === "0x") {
@@ -122,18 +150,21 @@ export async function maybeCopyPurchase(
     };
   }
 
+  const kind = sourceTx.value > 0n ? "private mint" : "free mint";
   if (state.dryRun) {
     return {
       attempted: true,
       success: true,
       dryRun: true,
-      reason: `DRY RUN — would mint on ${wallets.length} wallet(s) for collection ${purchase.contract} #${purchase.tokenId}.`,
+      reason: `DRY RUN — would ${kind} on ${wallets.length} wallet(s) for ${purchase.contract} #${purchase.tokenId}${
+        sourceTx.value > 0n ? ` paying ${formatEther(sourceTx.value)} ETH` : ""
+      }.`,
     };
   }
 
   const results = await Promise.all(
     wallets.map((wallet) =>
-      mintWithWallet(wallet, sourceTx.to!, sourceTx.data, purchase.buyer)
+      mintWithWallet(wallet, sourceTx, purchase.buyer)
     )
   );
 
@@ -159,12 +190,13 @@ export async function maybeCopyPurchase(
 
 async function mintWithWallet(
   wallet: Wallet,
-  to: string,
-  rawData: string,
+  sourceTx: TransactionResponse,
   whale: string
 ): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
   const address = wallet.address.toLowerCase();
-  const candidates = buildCalldataCandidates(rawData, whale, address);
+  const to = sourceTx.to!;
+  const value = sourceTx.value;
+  const candidates = buildCalldataCandidates(sourceTx.data, whale, address);
   const provider = getProvider();
   const errors: string[] = [];
 
@@ -174,7 +206,7 @@ async function mintWithWallet(
         from: wallet.address,
         to,
         data,
-        value: 0n,
+        value,
       });
       if (gasEstimate > BigInt(config.maxMintGasLimit)) {
         errors.push(`v${index + 1} gas too high`);
@@ -183,7 +215,7 @@ async function mintWithWallet(
       const sent = await wallet.sendTransaction({
         to,
         data,
-        value: 0n,
+        value,
         gasLimit: (gasEstimate * 120n) / 100n,
       });
       const receipt = await sent.wait();

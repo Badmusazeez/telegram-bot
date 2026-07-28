@@ -1,5 +1,5 @@
 import { config } from "../config";
-import { describeWallet } from "../robinhood/monitor";
+import { describeWallet } from "../eth/monitor";
 import { shortAddress } from "../store/state";
 import type {
   CopyResult,
@@ -24,9 +24,11 @@ export function formatPurchaseAlert(
   const collection = purchase.collectionName || shortAddress(purchase.contract);
   const kind = purchase.isFreeMint
     ? "FREE MINT"
-    : purchase.isPaid
-      ? "PAID"
-      : "TRANSFER";
+    : purchase.isPrivateMint
+      ? `PRIVATE MINT (${purchase.valueEth} ETH)`
+      : purchase.isPaid
+        ? "PAID"
+        : "TRANSFER";
   const txUrl = config.chain.explorerTxUrl(purchase.txHash);
   const openSeaUrl = `https://opensea.io/assets/${config.chain.openseaChain}/${purchase.contract}/${purchase.tokenId}`;
   const copyTx = copy.txHash
@@ -34,7 +36,7 @@ export function formatPurchaseAlert(
     : "";
 
   return [
-    `<b>robinhood-nft-copy-bot alert</b>`,
+    `<b>eth-free-private-mint-bot alert</b>`,
     `<b>Chain:</b> ${escHtml(config.chain.name)}`,
     `<b>Type:</b> ${kind}`,
     ``,
@@ -43,6 +45,9 @@ export function formatPurchaseAlert(
     `<b>Item:</b> ${escHtml(title)}`,
     `<b>Token ID:</b> <code>${escHtml(purchase.tokenId)}</code>`,
     `<b>Contract:</b> <code>${escHtml(purchase.contract)}</code>`,
+    purchase.valueEth > 0
+      ? `<b>Price:</b> ${purchase.valueEth} ETH`
+      : `<b>Price:</b> free`,
     `<b>Whale tx:</b> <a href="${txUrl}">explorer</a>`,
     `<b>OpenSea:</b> <a href="${openSeaUrl}">view</a>`,
     ``,
@@ -67,8 +72,8 @@ export function formatPriceAlert(alert: PriceChangeAlert): string {
     alert.item.tokenId
       ? `<b>Token ID:</b> <code>${escHtml(alert.item.tokenId)}</code>`
       : `<b>Watch:</b> collection floor`,
-    `<b>Old:</b> ${oldP}`,
-    `<b>New:</b> ${alert.newPrice.toFixed(6)}`,
+    `<b>Old:</b> ${oldP} ETH`,
+    `<b>New:</b> ${alert.newPrice.toFixed(6)} ETH`,
     `<b>Change:</b> ${escHtml(pct)}`,
     `<b>OpenSea:</b> <a href="${alert.openSeaUrl}">view</a>`,
   ].join("\n");
@@ -81,39 +86,47 @@ export function formatStatus(params: {
   copyEnabled: boolean;
   dryRun: boolean;
   freeMintsOnly: boolean;
+  privateMintsEnabled: boolean;
   priceAlertsEnabled: boolean;
   priceAlertPct: number;
-  maxBuyRobinhood: number;
+  maxBuyEth: number;
   lastBlock: number;
   walletAddress?: string;
-  balanceRobinhood?: string;
+  balanceEth?: string;
 }): string {
+  const mode = params.freeMintsOnly
+    ? "FREE MINTS ONLY"
+    : params.privateMintsEnabled
+      ? "FREE + PRIVATE MINTS"
+      : "FREE MINTS (private off)";
+
   return [
-    `<b>robinhood-nft-copy-bot status</b>`,
+    `<b>eth-free-private-mint-bot status</b>`,
     ``,
     `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>)`,
-    `Mode: <b>${params.freeMintsOnly ? "FREE MINTS ONLY" : "ALL ACTIVITY"}</b>`,
+    `Mode: <b>${mode}</b>`,
     `Tracked wallets: <b>${params.trackedCount}</b>`,
     `Price watches: <b>${params.watchedPrices}</b>`,
     `Scheduled mints: <b>${params.pendingSchedules}</b> pending`,
     `Price alerts: <b>${params.priceAlertsEnabled ? "ON" : "OFF"}</b> (≥${params.priceAlertPct}%)`,
     `Auto-mint: <b>${params.copyEnabled ? "ON" : "OFF"}</b>`,
     `Dry run: <b>${params.dryRun ? "ON" : "OFF"}</b>`,
-    `Max buy (ignored for free mints): <b>${params.maxBuyRobinhood}</b>`,
+    `Private mints: <b>${params.privateMintsEnabled ? "ON" : "OFF"}</b>`,
+    `Max buy (private mints): <b>${params.maxBuyEth} ETH</b>`,
     `Last block: <code>${params.lastBlock || "—"}</code>`,
     params.walletAddress
-      ? `Bot wallet: <code>${escHtml(params.walletAddress)}</code> (balance ${escHtml(params.balanceRobinhood ?? "?")})`
+      ? `Bot wallet: <code>${escHtml(params.walletAddress)}</code> (balance ${escHtml(params.balanceEth ?? "?")} ETH)`
       : `Bot wallet: <i>not configured</i>`,
   ].join("\n");
 }
 
 export function helpText(): string {
   return [
-    `<b>robinhood-nft-copy-bot</b>`,
+    `<b>eth-free-private-mint-bot</b>`,
     `Active chain: <b>${escHtml(config.chain.name)}</b>`,
     ``,
-    `Tracks whale wallets and auto-copies <b>free mints only</b> on Robinhood Chain. Paid buys are skipped.`,
-    `Also watches minted NFT / collection prices and alerts on Telegram.`,
+    `Tracks whale wallets and auto-copies <b>free mints</b> + optional <b>private/paid mints</b> (under max buy) on Ethereum.`,
+    `Secondary marketplace buys are always skipped.`,
     ``,
     `<b>Commands</b>`,
     `/start — register this chat for alerts`,
@@ -124,11 +137,12 @@ export function helpText(): string {
     `/untrack &lt;address&gt; — stop tracking`,
     `/copy on|off — toggle auto-mint`,
     `/dryrun on|off — toggle simulation mode`,
-    `/freemints on|off — free-mints-only filter`,
+    `/freemints on|off — free-only vs free+private`,
+    `/privatemints on|off — allow private/paid mints under max buy`,
     `/addkey &lt;private_key&gt; [label] — add another mint wallet`,
     `/listkeys — list mint wallet addresses`,
     `/removekey &lt;address&gt; — remove a mint wallet`,
-    `/maxbuy &lt;amount&gt; — max paid price (unused in free-mint mode)`,
+    `/maxbuy &lt;amount&gt; — max ETH for private mints`,
     `/allow &lt;contract|clear&gt; — collection allowlist`,
     `/prices — list watched NFT prices`,
     `/watchprice &lt;contract&gt; [tokenId] — watch token or collection floor`,
@@ -143,12 +157,17 @@ export function helpText(): string {
 }
 
 export function formatScheduleCreated(job: ScheduledMint): string {
+  const valueEth =
+    job.valueWei && job.valueWei !== "0"
+      ? (Number(job.valueWei) / 1e18).toFixed(6)
+      : "0";
   return [
     `<b>Mint scheduled</b>`,
     `<b>ID:</b> <code>${escHtml(job.id)}</code>`,
     `<b>Label:</b> ${escHtml(job.label)}`,
     `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
     `<b>To:</b> <code>${escHtml(job.to)}</code>`,
+    `<b>Value:</b> ${valueEth} ETH`,
     `<b>Data:</b> <code>${escHtml(job.data.slice(0, 66))}${job.data.length > 66 ? "…" : ""}</code>`,
     job.sourceTxHash
       ? `<b>Source tx:</b> <a href="${config.chain.explorerTxUrl(job.sourceTxHash)}">explorer</a>`

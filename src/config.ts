@@ -5,9 +5,11 @@ import { resolveChain, type ChainConfig } from "./chains";
 const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
-  /** robinhood */
-  CHAIN: z.string().optional().default("robinhood"),
-  ROBINHOOD_RPC_URL: z.string().optional().default(""),
+  /** ethereum */
+  CHAIN: z.string().optional().default("ethereum"),
+  ETH_RPC_URL: z.string().optional().default(""),
+  /** Alias for ETH_RPC_URL */
+  RPC_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
     .string()
@@ -19,8 +21,14 @@ const schema = z.object({
     .optional()
     .default("true")
     .transform((v) => v.toLowerCase() !== "false"),
-  /** Only alert/copy free mints; skip paid buys and transfers. */
+  /** Only alert/copy free (0 ETH) mints; skip private/paid mints. */
   FREE_MINTS_ONLY: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((v) => v.toLowerCase() === "true"),
+  /** Copy private/paid mints (mint from 0x0 with value) under MAX_BUY_ETH. */
+  PRIVATE_MINTS_ENABLED: z
     .string()
     .optional()
     .default("true")
@@ -28,14 +36,16 @@ const schema = z.object({
   PRIVATE_KEY: z.string().optional().default(""),
   /** Comma-separated extra mint wallet private keys */
   PRIVATE_KEYS: z.string().optional().default(""),
-  MAX_BUY_ROBINHOOD: z
-    .string()
-    .optional()
-    .default("0.05"),
+  /**
+   * Optional seed tracked wallets from env.
+   * Format: 0xabc...,0xdef... or 0xabc:Label,0xdef:Whale2
+   */
+  TRACKED_WALLETS: z.string().optional().default(""),
+  MAX_BUY_ETH: z.string().optional().default("0.05"),
   MAX_GAS_GWEI: z
     .string()
     .optional()
-    .default("40")
+    .default("50")
     .transform((v) => Number(v)),
   MAX_MINT_GAS_LIMIT: z
     .string()
@@ -74,15 +84,16 @@ if (!parsed.success) {
 
 const env = parsed.data;
 const chain: ChainConfig = resolveChain(env.CHAIN);
-const rpcUrl = env.ROBINHOOD_RPC_URL.trim() || chain.defaultRpcUrl;
+const rpcUrl =
+  env.ETH_RPC_URL.trim() || env.RPC_URL.trim() || chain.defaultRpcUrl;
 
 if (!rpcUrl.startsWith("http")) {
-  throw new Error("ROBINHOOD_RPC_URL must be a valid RPC URL");
+  throw new Error("ETH_RPC_URL (or RPC_URL) must be a valid RPC URL");
 }
 
-const maxBuyRobinhood = Number(env.MAX_BUY_ROBINHOOD);
-if (!Number.isFinite(maxBuyRobinhood) || maxBuyRobinhood <= 0) {
-  throw new Error("MAX_BUY_ROBINHOOD must be > 0");
+const maxBuyEth = Number(env.MAX_BUY_ETH);
+if (!Number.isFinite(maxBuyEth) || maxBuyEth <= 0) {
+  throw new Error("MAX_BUY_ETH must be > 0");
 }
 
 function splitCsv(value: string): string[] {
@@ -100,6 +111,19 @@ function numberOr(value: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Parse TRACKED_WALLETS: 0xaddr or 0xaddr:Label */
+export function parseTrackedWalletsEnv(
+  raw: string
+): Array<{ address: string; label: string }> {
+  return splitCsv(raw).map((entry) => {
+    const [address, ...labelParts] = entry.split(":");
+    return {
+      address: address.trim(),
+      label: labelParts.join(":").trim(),
+    };
+  });
+}
+
 export const config = {
   telegramToken: env.TELEGRAM_BOT_TOKEN,
   allowedChatIds: new Set(splitCsv(env.TELEGRAM_ALLOWED_CHAT_IDS)),
@@ -109,9 +133,11 @@ export const config = {
   copyEnabled: env.COPY_ENABLED,
   dryRun: env.DRY_RUN,
   freeMintsOnly: env.FREE_MINTS_ONLY,
+  privateMintsEnabled: env.PRIVATE_MINTS_ENABLED,
   privateKey: env.PRIVATE_KEY,
   privateKeys: splitCsv(env.PRIVATE_KEYS),
-  maxBuyRobinhood,
+  trackedWalletsEnv: parseTrackedWalletsEnv(env.TRACKED_WALLETS),
+  maxBuyEth,
   maxGasGwei: env.MAX_GAS_GWEI,
   maxMintGasLimit: env.MAX_MINT_GAS_LIMIT,
   pollIntervalMs: numberOr(env.POLL_INTERVAL_MS, chain.defaultPollIntervalMs),
@@ -126,7 +152,8 @@ export const config = {
       ? env.PRICE_ALERT_PCT
       : 10,
   pricePollIntervalMs:
-    Number.isFinite(env.PRICE_POLL_INTERVAL_MS) && env.PRICE_POLL_INTERVAL_MS >= 30_000
+    Number.isFinite(env.PRICE_POLL_INTERVAL_MS) &&
+    env.PRICE_POLL_INTERVAL_MS >= 30_000
       ? env.PRICE_POLL_INTERVAL_MS
       : 120_000,
   statePath: "data/state.json",

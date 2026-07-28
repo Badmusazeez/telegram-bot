@@ -51,7 +51,6 @@ export async function fetchCollectionFloor(
   contract: string
 ): Promise<number | null> {
   const chain = config.chain.openseaChain;
-  // Resolve collection slug from contract, then stats.
   const nftUrl = `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}`;
   const contractInfo = (await fetchOpenSeaJson(nftUrl)) as {
     collection?: string;
@@ -161,7 +160,6 @@ export async function startPriceWatcher(
     }
   };
 
-  // First run after a short delay so mint monitor can settle.
   const first = setTimeout(() => {
     void tick();
   }, 15_000);

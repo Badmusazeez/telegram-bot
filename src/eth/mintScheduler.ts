@@ -84,12 +84,13 @@ async function sendOnWallet(
 ): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
   const address = wallet.address.toLowerCase();
   const provider = getProvider();
+  const value = BigInt(job.valueWei || "0");
   try {
     const gasEstimate = await provider.estimateGas({
       from: wallet.address,
       to: job.to,
       data: job.data,
-      value: 0n,
+      value,
     });
 
     if (gasEstimate > BigInt(config.maxMintGasLimit)) {
@@ -103,7 +104,7 @@ async function sendOnWallet(
     const sent = await wallet.sendTransaction({
       to: job.to,
       data: job.data,
-      value: 0n,
+      value,
       gasLimit: (gasEstimate * 120n) / 100n,
     });
     const receipt = await sent.wait();
@@ -129,12 +130,15 @@ async function sendOnWallet(
 async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
   const state = getState();
   const wallets = getAllMintWallets();
+  const value = BigInt(job.valueWei || "0");
 
   if (state.dryRun) {
     return {
       success: true,
       dryRun: true,
-      reason: `DRY RUN — would mint on ${wallets.length || 0} wallet(s) at ${job.executeAt} to ${job.to}`,
+      reason: `DRY RUN — would mint on ${wallets.length || 0} wallet(s) at ${job.executeAt} to ${job.to}${
+        value > 0n ? ` value=${value}` : ""
+      }`,
     };
   }
 

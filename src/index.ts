@@ -1,9 +1,9 @@
 import { config } from "./config";
-import { maybeCopyPurchase } from "./robinhood/copyExecutor";
-import { startMintScheduler } from "./robinhood/mintScheduler";
-import { startMonitor } from "./robinhood/monitor";
-import { startPriceWatcher } from "./robinhood/priceWatcher";
-import { getAllMintWallets, getProvider, getWallet } from "./robinhood/provider";
+import { maybeCopyPurchase } from "./eth/copyExecutor";
+import { startMintScheduler } from "./eth/mintScheduler";
+import { startMonitor } from "./eth/monitor";
+import { startPriceWatcher } from "./eth/priceWatcher";
+import { getAllMintWallets, getProvider, getWallet } from "./eth/provider";
 import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, loadState } from "./store/state";
 import {
@@ -14,7 +14,7 @@ import {
 } from "./telegram/bot";
 
 async function main(): Promise<void> {
-  console.log(`Starting robinhood-nft-copy-bot on ${config.chain.name}…`);
+  console.log(`Starting eth-free-private-mint-bot on ${config.chain.name}…`);
   await loadState();
   await loadMintWallets();
 
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
     `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
   );
   console.log(
-    `freeMintsOnly=${config.freeMintsOnly} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun}`
+    `freeMintsOnly=${config.freeMintsOnly} privateMints=${config.privateMintsEnabled} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun} maxBuy=${config.maxBuyEth} ETH`
   );
   console.log(
     `priceAlerts=${config.priceAlertsEnabled ? "on" : "off"} threshold=${config.priceAlertPct}% poll=${config.pricePollIntervalMs}ms`
@@ -54,12 +54,15 @@ async function main(): Promise<void> {
 
   const stopMonitor = await startMonitor(async (purchase) => {
     console.log(
-      `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
+      `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueEth} ETH via ${purchase.marketplace}`
     );
     const copy = await maybeCopyPurchase(purchase);
     await broadcastPurchase(bot, purchase, copy);
 
-    if (purchase.isFreeMint && (copy.success || copy.dryRun)) {
+    if (
+      (purchase.isFreeMint || purchase.isPrivateMint) &&
+      (copy.success || copy.dryRun)
+    ) {
       await addWatchedPrice({
         contract: purchase.contract,
         tokenId: purchase.tokenId,

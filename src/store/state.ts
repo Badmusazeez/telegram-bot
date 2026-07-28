@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { isAddress } from "ethers";
 import { config } from "../config";
 import type {
   BotState,
@@ -14,9 +15,10 @@ const DEFAULT_STATE: BotState = {
   copyEnabled: config.copyEnabled,
   dryRun: config.dryRun,
   freeMintsOnly: config.freeMintsOnly,
+  privateMintsEnabled: config.privateMintsEnabled,
   priceAlertsEnabled: config.priceAlertsEnabled,
   priceAlertPct: config.priceAlertPct,
-  maxBuyRobinhood: config.maxBuyRobinhood,
+  maxBuyEth: config.maxBuyEth,
   allowedCollections: [...config.allowedCollections],
   lastProcessedBlock: 0,
   notifyChatIds: [...config.allowedChatIds],
@@ -28,19 +30,39 @@ const DEFAULT_STATE: BotState = {
 let state: BotState = structuredClone(DEFAULT_STATE);
 let saveQueue: Promise<void> = Promise.resolve();
 
+function migrateLegacyState(parsed: Partial<BotState> & Record<string, unknown>): Partial<BotState> {
+  const next: Partial<BotState> & Record<string, unknown> = { ...parsed };
+  if (next.maxBuyEth === undefined && typeof next.maxBuyRobinhood === "number") {
+    next.maxBuyEth = next.maxBuyRobinhood as number;
+  }
+  if (next.privateMintsEnabled === undefined) {
+    next.privateMintsEnabled = config.privateMintsEnabled;
+  }
+  // Migrate scheduled mint jobs missing valueWei
+  if (Array.isArray(next.scheduledMints)) {
+    next.scheduledMints = (next.scheduledMints as ScheduledMint[]).map((j) => ({
+      ...j,
+      valueWei: j.valueWei ?? "0",
+    }));
+  }
+  return next;
+}
+
 export async function loadState(): Promise<BotState> {
   try {
     const raw = await fs.readFile(config.statePath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<BotState>;
+    const parsed = migrateLegacyState(JSON.parse(raw) as Partial<BotState>);
     state = {
       ...structuredClone(DEFAULT_STATE),
       ...parsed,
       trackedWallets: parsed.trackedWallets ?? [],
       freeMintsOnly: parsed.freeMintsOnly ?? config.freeMintsOnly,
+      privateMintsEnabled:
+        parsed.privateMintsEnabled ?? config.privateMintsEnabled,
       priceAlertsEnabled:
         parsed.priceAlertsEnabled ?? config.priceAlertsEnabled,
       priceAlertPct: parsed.priceAlertPct ?? config.priceAlertPct,
-      maxBuyRobinhood: parsed.maxBuyRobinhood ?? config.maxBuyRobinhood,
+      maxBuyEth: parsed.maxBuyEth ?? config.maxBuyEth,
       allowedCollections: parsed.allowedCollections ?? [
         ...config.allowedCollections,
       ],
@@ -50,13 +72,50 @@ export async function loadState(): Promise<BotState> {
           : [...config.allowedChatIds],
       recentTxHashes: parsed.recentTxHashes ?? [],
       watchedPrices: parsed.watchedPrices ?? [],
-      scheduledMints: parsed.scheduledMints ?? [],
+      scheduledMints: (parsed.scheduledMints ?? []).map((j) => ({
+        ...j,
+        valueWei: j.valueWei ?? "0",
+      })),
     };
   } catch {
     state = structuredClone(DEFAULT_STATE);
     await persistState();
   }
+
+  await seedTrackedWalletsFromEnv();
   return state;
+}
+
+/** Seed TRACKED_WALLETS from .env without wiping wallets added via Telegram. */
+async function seedTrackedWalletsFromEnv(): Promise<void> {
+  if (config.trackedWalletsEnv.length === 0) {
+    return;
+  }
+  let changed = false;
+  for (const entry of config.trackedWalletsEnv) {
+    if (!isAddress(entry.address)) {
+      console.warn(`[state] skipping invalid TRACKED_WALLETS address: ${entry.address}`);
+      continue;
+    }
+    const normalized = normalizeAddress(entry.address);
+    const existing = state.trackedWallets.find((w) => w.address === normalized);
+    if (existing) {
+      if (entry.label && entry.label !== existing.label) {
+        existing.label = entry.label;
+        changed = true;
+      }
+      continue;
+    }
+    state.trackedWallets.push({
+      address: normalized,
+      label: entry.label || shortAddress(normalized),
+      addedAt: new Date().toISOString(),
+    });
+    changed = true;
+  }
+  if (changed) {
+    await persistState();
+  }
 }
 
 export function getState(): BotState {
@@ -218,12 +277,14 @@ export async function addScheduledMint(params: {
   data: string;
   executeAt: Date;
   sourceTxHash?: string;
+  valueWei?: string;
 }): Promise<ScheduledMint> {
   const job: ScheduledMint = {
     id: newScheduleId(),
     label: params.label,
     to: normalizeAddress(params.to),
     data: params.data.toLowerCase(),
+    valueWei: params.valueWei ?? "0",
     executeAt: params.executeAt.toISOString(),
     createdAt: new Date().toISOString(),
     status: "pending",
