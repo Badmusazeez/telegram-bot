@@ -138,22 +138,45 @@ export async function maybeCopyPurchase(
   );
 
   const ok = results.filter((r) => r.ok);
+  const fail = results.filter((r) => !r.ok);
   const summary = results
-    .map(
-      (r) =>
-        `${r.address.slice(0, 6)}…${r.ok ? ` OK ${r.txHash?.slice(0, 10)}…` : ` FAIL (${r.error})`}`
-    )
+    .map((r) => {
+      if (r.ok) {
+        return `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}…`;
+      }
+      return `${shortAddr(r.address)} ${classifyWalletFailure(r.error || "", sourceTx.to!)}`;
+    })
     .join(" | ");
+
+  if (ok.length > 0) {
+    return {
+      attempted: true,
+      success: true,
+      dryRun: false,
+      reason: `Minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`,
+      txHash: ok[0]?.txHash,
+    };
+  }
+
+  const allWalletBound = fail.every((r) =>
+    isWalletBoundFailure(r.error || "", sourceTx.to!)
+  );
+  if (allWalletBound) {
+    return {
+      attempted: true,
+      success: false,
+      dryRun: false,
+      reason:
+        `Wallet-bound free mint — skipped (allowlist / OpenSea drop / signature). ` +
+        `Cannot copy into your wallet(s). (${wallets.length} wallet(s))`,
+    };
+  }
 
   return {
     attempted: true,
-    success: ok.length > 0,
+    success: false,
     dryRun: false,
-    reason:
-      ok.length > 0
-        ? `Minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
-        : `All ${wallets.length} wallet(s) failed: ${summary}`,
-    txHash: ok[0]?.txHash,
+    reason: `All ${wallets.length} wallet(s) failed: ${summary}`,
   };
 }
 
@@ -234,8 +257,47 @@ function replaceAddressInCalldata(
 
 function shortError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
-  if (msg.includes("execution reverted")) {
+  if (msg.includes("execution reverted") || /\breverted\b/i.test(msg)) {
     return "reverted";
   }
+  if (msg.includes("insufficient funds")) {
+    return "insufficient funds";
+  }
   return msg.slice(0, 80);
+}
+
+function shortAddr(address: string): string {
+  return `${address.slice(0, 6)}…`;
+}
+
+function isRevertError(error: string): boolean {
+  return /\breverted\b/i.test(error) || /execution reverted/i.test(error);
+}
+
+function isOpenSeaMinter(to: string): boolean {
+  return to.toLowerCase() === "0x00005ea00ac477b1030ce78506496e8c2de24bf5";
+}
+
+/** True when failure looks like allowlist / signature / OpenSea wallet-bound mint. */
+function isWalletBoundFailure(error: string, to: string): boolean {
+  if (!error.trim()) {
+    return false;
+  }
+  if (error.includes("insufficient funds") || error.includes("gas too high")) {
+    return false;
+  }
+  return isRevertError(error) || isOpenSeaMinter(to);
+}
+
+function classifyWalletFailure(error: string, to: string): string {
+  if (error.includes("insufficient funds")) {
+    return "needs RH gas";
+  }
+  if (error.includes("gas too high")) {
+    return "gas too high";
+  }
+  if (isWalletBoundFailure(error, to)) {
+    return "wallet-bound";
+  }
+  return `FAIL (${error})`;
 }
