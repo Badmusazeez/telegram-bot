@@ -14,6 +14,8 @@ import {
 } from "./telegram/bot";
 
 async function main(): Promise<void> {
+  // Ensure relative paths / cwd issues never break state persistence under pm2
+  process.chdir(config.projectRoot);
   console.log(`Starting robinhood-nft-copy-bot on ${config.chain.name}…`);
   await loadState();
   await loadMintWallets();

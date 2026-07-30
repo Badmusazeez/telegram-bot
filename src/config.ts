@@ -1,6 +1,11 @@
 import "dotenv/config";
+import path from "path";
 import { z } from "zod";
 import { resolveChain, type ChainConfig } from "./chains";
+
+/** Project root (folder with package.json), whether running from src/ or dist/. */
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+const dataDir = path.join(PROJECT_ROOT, "data");
 
 const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
@@ -129,6 +134,7 @@ export const config = {
     Number.isFinite(env.PRICE_POLL_INTERVAL_MS) && env.PRICE_POLL_INTERVAL_MS >= 30_000
       ? env.PRICE_POLL_INTERVAL_MS
       : 120_000,
-  statePath: "data/state.json",
-  mintWalletsPath: "data/mint-wallets.json",
+  statePath: path.join(dataDir, "state.json"),
+  mintWalletsPath: path.join(dataDir, "mint-wallets.json"),
+  projectRoot: PROJECT_ROOT,
 };
