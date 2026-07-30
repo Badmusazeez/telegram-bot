@@ -218,6 +218,7 @@ export async function addScheduledMint(params: {
   data: string;
   executeAt: Date;
   sourceTxHash?: string;
+  openSeaSlug?: string;
 }): Promise<ScheduledMint> {
   const job: ScheduledMint = {
     id: newScheduleId(),
@@ -228,6 +229,7 @@ export async function addScheduledMint(params: {
     createdAt: new Date().toISOString(),
     status: "pending",
     sourceTxHash: params.sourceTxHash?.toLowerCase(),
+    openSeaSlug: params.openSeaSlug?.trim() || undefined,
   };
   state.scheduledMints.push(job);
   await persistState();

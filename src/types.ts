@@ -51,6 +51,8 @@ export interface ScheduledMint {
   createdAt: string;
   status: ScheduledMintStatus;
   sourceTxHash?: string;
+  /** If set, mint calldata is rebuilt from OpenSea Drops API at fire time. */
+  openSeaSlug?: string;
   resultTxHash?: string;
   resultReason?: string;
   finishedAt?: string;

@@ -1,19 +1,25 @@
 import { isAddress } from "ethers";
 
-export type OpenSeaAssetRef = {
-  chain: string;
-  contract: string;
+export type OpenSeaLinkRef = {
+  kind: "asset" | "collection";
+  chain?: string;
+  contract?: string;
   tokenId?: string;
+  collectionSlug?: string;
   url: string;
 };
 
 /**
- * Parse OpenSea asset links like:
- * https://opensea.io/assets/robinhood/0xabc.../374
- * https://opensea.io/assets/ethereum/0xabc.../1
- * opensea.io/item/robinhood/0xabc/374 (newer style)
+ * Parse OpenSea links:
+ * - https://opensea.io/assets/robinhood/0xabc.../374
+ * - https://opensea.io/item/robinhood/0xabc.../374
+ * - https://opensea.io/collection/cool-cats
  */
-export function parseOpenSeaAssetUrl(raw: string): OpenSeaAssetRef | null {
+export function parseOpenSeaAssetUrl(raw: string): OpenSeaLinkRef | null {
+  return parseOpenSeaUrl(raw);
+}
+
+export function parseOpenSeaUrl(raw: string): OpenSeaLinkRef | null {
   const text = raw.trim();
   if (!text) {
     return null;
@@ -32,8 +38,15 @@ export function parseOpenSeaAssetUrl(raw: string): OpenSeaAssetRef | null {
   }
 
   const parts = url.pathname.split("/").filter(Boolean);
-  // /assets/{chain}/{contract}/{tokenId}
-  // /item/{chain}/{contract}/{tokenId}
+
+  if (parts[0] === "collection" && parts[1]) {
+    return {
+      kind: "collection",
+      collectionSlug: parts[1],
+      url: url.toString(),
+    };
+  }
+
   if (
     parts.length >= 3 &&
     (parts[0] === "assets" || parts[0] === "item")
@@ -45,6 +58,7 @@ export function parseOpenSeaAssetUrl(raw: string): OpenSeaAssetRef | null {
       return null;
     }
     return {
+      kind: "asset",
       chain,
       contract: contract.toLowerCase(),
       tokenId: tokenId || undefined,

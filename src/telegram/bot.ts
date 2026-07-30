@@ -5,7 +5,8 @@ import {
   parseScheduleTime,
   resolveCalldata,
 } from "../robinhood/mintScheduler";
-import { parseOpenSeaAssetUrl } from "../robinhood/openseaUrl";
+import { resolveScheduleFromOpenSeaLink } from "../robinhood/openseaDrop";
+import { parseOpenSeaUrl } from "../robinhood/openseaUrl";
 import {
   getAllMintWallets,
   getNativeBalance,
@@ -429,19 +430,61 @@ export function createTelegramBot(): Bot {
 
   bot.command("schedulemint", async (ctx) => {
     const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
-    if (parts.length < 2) {
+    if (parts.length < 1) {
       await ctx.reply(
         [
-          "Usage (OpenSea link — easiest):",
-          "/schedulemint <when> <opensea-nft-url>",
+          "Easiest (auto time from OpenSea Drop):",
+          "/schedulemint https://opensea.io/collection/your-drop",
+          "/schedulemint https://opensea.io/assets/robinhood/0xContract/1",
           "",
-          "Examples:",
-          "/schedulemint +5m https://opensea.io/assets/robinhood/0xContract/374",
-          "/schedulemint 2026-07-31T18:00:00Z https://opensea.io/assets/robinhood/0xContract/1",
+          "Manual time:",
+          "/schedulemint +5m https://opensea.io/assets/robinhood/0xContract/1",
           "",
           "Advanced:",
           "/schedulemint <when> <contract> <mint|mint1|0xcalldata>",
+          "",
+          "Needs OPENSEA_API_KEY in .env for auto time.",
         ].join("\n")
+      );
+      return;
+    }
+
+    // Link-only: /schedulemint <opensea-url>
+    if (parts.length === 1 && parseOpenSeaUrl(parts[0])) {
+      try {
+        await ctx.reply("Looking up OpenSea drop schedule…");
+        const resolved = await resolveScheduleFromOpenSeaLink(parts[0]);
+        const job = await addScheduledMint({
+          label: `opensea ${resolved.name} (${resolved.stageLabel})`,
+          to: resolved.contract,
+          // Placeholder; rebuilt from OpenSea Drops API at fire time.
+          data: "0x",
+          executeAt: resolved.executeAt,
+          openSeaSlug: resolved.slug,
+        });
+        await registerNotifyChat(chatId(ctx));
+        await ctx.reply(
+          [
+            formatScheduleCreated(job),
+            ``,
+            `<b>OpenSea drop:</b> <a href="${escape(resolved.openSeaUrl)}">${escape(resolved.name)}</a>`,
+            `<b>Stage:</b> ${escape(resolved.stageLabel)} (${escape(resolved.stageType)})`,
+            `<b>Time source:</b> OpenSea ${resolved.isLive ? "(live now → mint ASAP)" : "next stage start"}`,
+            `<i>Calldata will be built from OpenSea at mint time. Allowlist stages may still revert.</i>`,
+          ].join("\n"),
+          { parse_mode: "HTML" }
+        );
+      } catch (err) {
+        await ctx.reply(
+          `❌ ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      return;
+    }
+
+    if (parts.length < 2) {
+      await ctx.reply(
+        "Usage:\n/schedulemint <opensea-url>\n/schedulemint <when> <opensea-url>\n/schedulemint <when> <contract> mint1"
       );
       return;
     }
@@ -450,7 +493,7 @@ export function createTelegramBot(): Bot {
     let whenRaw = parts[0];
     let targetRaw = parts[1];
     let dataRaw = parts[2] || "mint1";
-    if (parseOpenSeaAssetUrl(parts[0]) && parseScheduleTime(parts[1])) {
+    if (parseOpenSeaUrl(parts[0]) && parseScheduleTime(parts[1])) {
       whenRaw = parts[1];
       targetRaw = parts[0];
       dataRaw = parts[2] || "mint1";
@@ -462,28 +505,65 @@ export function createTelegramBot(): Bot {
       return;
     }
 
-    const openSea = parseOpenSeaAssetUrl(targetRaw);
-    let contract = targetRaw;
-    let labelExtra = "";
+    const openSea = parseOpenSeaUrl(targetRaw);
     if (openSea) {
-      if (openSea.chain !== "robinhood" && openSea.chain !== config.chain.openseaChain) {
+      // Manual time + OpenSea link: still prefer Drop API schedule metadata / slug.
+      try {
+        const resolved = await resolveScheduleFromOpenSeaLink(targetRaw);
+        const job = await addScheduledMint({
+          label: `opensea ${resolved.name} (manual time)`,
+          to: resolved.contract,
+          data: "0x",
+          executeAt: when,
+          openSeaSlug: resolved.slug,
+        });
+        await registerNotifyChat(chatId(ctx));
         await ctx.reply(
-          `That OpenSea link is chain "${openSea.chain}". This bot only schedules on ${config.chain.name} (robinhood).`
+          [
+            formatScheduleCreated(job),
+            ``,
+            `<b>OpenSea drop:</b> ${escape(resolved.name)}`,
+            `<b>Note:</b> using your manual time (OpenSea stage was ${escape(resolved.executeAt.toISOString())}).`,
+          ].join("\n"),
+          { parse_mode: "HTML" }
         );
-        return;
+      } catch (err) {
+        // Fallback: contract from asset URL + mint1
+        if (openSea.kind === "asset" && openSea.contract) {
+          const wallet = getWallet();
+          const data = resolveCalldata(dataRaw, wallet?.address || openSea.contract);
+          if (!data) {
+            await ctx.reply("Invalid calldata. Use mint / mint1 / 0x...");
+            return;
+          }
+          const job = await addScheduledMint({
+            label: `opensea ${shortAddress(openSea.contract)}${openSea.tokenId ? ` #${openSea.tokenId}` : ""}`,
+            to: openSea.contract,
+            data,
+            executeAt: when,
+          });
+          await registerNotifyChat(chatId(ctx));
+          await ctx.reply(
+            `${formatScheduleCreated(job)}\n\n<i>OpenSea Drop API unavailable (${escape(
+              err instanceof Error ? err.message : String(err)
+            )}). Scheduled with mint1 fallback.</i>`,
+            { parse_mode: "HTML" }
+          );
+          return;
+        }
+        await ctx.reply(`❌ ${err instanceof Error ? err.message : String(err)}`);
       }
-      contract = openSea.contract;
-      labelExtra = openSea.tokenId ? ` #${openSea.tokenId}` : "";
-    } else if (!isAddress(contract)) {
+      return;
+    }
+
+    if (!isAddress(targetRaw)) {
       await ctx.reply(
-        "Invalid target. Paste an OpenSea NFT link or a 0x contract address."
+        "Invalid target. Paste an OpenSea NFT/collection link or a 0x contract address."
       );
       return;
     }
 
-    // OpenSea-link form only needs when + url; default mint1.
-    // Contract form still needs calldata/preset as 3rd arg unless OpenSea url was used.
-    if (!openSea && parts.length < 3) {
+    if (parts.length < 3) {
       await ctx.reply(
         "For contract address form, include mint function:\n/schedulemint +5m 0xContract mint1"
       );
@@ -491,29 +571,19 @@ export function createTelegramBot(): Bot {
     }
 
     const wallet = getWallet();
-    const data = resolveCalldata(dataRaw, wallet?.address || contract);
+    const data = resolveCalldata(dataRaw, wallet?.address || targetRaw);
     if (!data) {
       await ctx.reply("Invalid calldata. Use hex 0x... or presets: mint / mint1");
       return;
     }
     const job = await addScheduledMint({
-      label: openSea
-        ? `opensea ${shortAddress(contract.toLowerCase())}${labelExtra}`
-        : `mint ${shortAddress(contract.toLowerCase())}`,
-      to: contract,
+      label: `mint ${shortAddress(targetRaw.toLowerCase())}`,
+      to: targetRaw,
       data,
       executeAt: when,
     });
     await registerNotifyChat(chatId(ctx));
-    await ctx.reply(
-      [
-        formatScheduleCreated(job),
-        openSea
-          ? `\n<b>From OpenSea:</b> <a href="${escape(openSea.url)}">nft</a>\n<i>Uses public mint1() calldata. Wallet-bound / allowlist drops may still revert.</i>`
-          : "",
-      ].join(""),
-      { parse_mode: "HTML" }
-    );
+    await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });
   });
 
   bot.command("schedulemintfromtx", async (ctx) => {

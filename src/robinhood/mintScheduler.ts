@@ -4,6 +4,7 @@ import {
   markScheduledMint,
 } from "../store/state";
 import type { ScheduledMint, ScheduledMintResult } from "../types";
+import { buildOpenSeaDropMintTx } from "./openseaDrop";
 import {
   gasIsAffordable,
   getAllMintWallets,
@@ -80,16 +81,17 @@ export function resolveCalldata(raw: string, buyer: string): string | null {
 
 async function sendOnWallet(
   wallet: Wallet,
-  job: ScheduledMint
+  params: { to: string; data: string; valueWei?: bigint }
 ): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
   const address = wallet.address.toLowerCase();
   const provider = getProvider();
+  const value = params.valueWei ?? 0n;
   try {
     const gasEstimate = await provider.estimateGas({
       from: wallet.address,
-      to: job.to,
-      data: job.data,
-      value: 0n,
+      to: params.to,
+      data: params.data,
+      value,
     });
 
     if (gasEstimate > BigInt(config.maxMintGasLimit)) {
@@ -101,9 +103,9 @@ async function sendOnWallet(
     }
 
     const sent = await wallet.sendTransaction({
-      to: job.to,
-      data: job.data,
-      value: 0n,
+      to: params.to,
+      data: params.data,
+      value,
       gasLimit: (gasEstimate * 120n) / 100n,
     });
     const receipt = await sent.wait();
@@ -126,6 +128,26 @@ async function sendOnWallet(
   }
 }
 
+async function resolveJobTxForWallet(
+  job: ScheduledMint,
+  wallet: Wallet
+): Promise<{ to: string; data: string; valueWei: bigint }> {
+  if (job.openSeaSlug) {
+    const built = await buildOpenSeaDropMintTx({
+      slug: job.openSeaSlug,
+      minter: wallet.address,
+      quantity: 1,
+    });
+    if (built.valueWei > 0n) {
+      throw new Error(
+        `OpenSea mint requires payment (${built.valueWei} wei) — free-mint only.`
+      );
+    }
+    return built;
+  }
+  return { to: job.to, data: job.data, valueWei: 0n };
+}
+
 async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
   const state = getState();
   const wallets = getAllMintWallets();
@@ -134,7 +156,9 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     return {
       success: true,
       dryRun: true,
-      reason: `DRY RUN — would mint on ${wallets.length || 0} wallet(s) at ${job.executeAt} to ${job.to}`,
+      reason: `DRY RUN — would mint on ${wallets.length || 0} wallet(s) at ${job.executeAt} to ${job.to}${
+        job.openSeaSlug ? ` (OpenSea drop ${job.openSeaSlug})` : ""
+      }`,
     };
   }
 
@@ -154,7 +178,20 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     };
   }
 
-  const results = await Promise.all(wallets.map((w) => sendOnWallet(w, job)));
+  const results = await Promise.all(
+    wallets.map(async (w) => {
+      try {
+        const tx = await resolveJobTxForWallet(job, w);
+        return sendOnWallet(w, tx);
+      } catch (err) {
+        return {
+          address: w.address.toLowerCase(),
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    })
+  );
   const ok = results.filter((r) => r.ok);
   const summary = results
     .map(
