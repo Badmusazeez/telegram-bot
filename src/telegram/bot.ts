@@ -5,6 +5,7 @@ import {
   parseScheduleTime,
   resolveCalldata,
 } from "../robinhood/mintScheduler";
+import { parseOpenSeaAssetUrl } from "../robinhood/openseaUrl";
 import {
   getAllMintWallets,
   getNativeBalance,
@@ -428,23 +429,67 @@ export function createTelegramBot(): Bot {
 
   bot.command("schedulemint", async (ctx) => {
     const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
-    if (parts.length < 3) {
+    if (parts.length < 2) {
       await ctx.reply(
-        "Usage:\n/schedulemint <when> <contract> <calldata|mint|mint1>\n\nExamples:\n/schedulemint +5m 0xContract mint1\n/schedulemint 2026-07-25T18:00:00Z 0xContract 0x1249c58b"
+        [
+          "Usage (OpenSea link — easiest):",
+          "/schedulemint <when> <opensea-nft-url>",
+          "",
+          "Examples:",
+          "/schedulemint +5m https://opensea.io/assets/robinhood/0xContract/374",
+          "/schedulemint 2026-07-31T18:00:00Z https://opensea.io/assets/robinhood/0xContract/1",
+          "",
+          "Advanced:",
+          "/schedulemint <when> <contract> <mint|mint1|0xcalldata>",
+        ].join("\n")
       );
       return;
     }
-    const when = parseScheduleTime(parts[0]);
-    const contract = parts[1];
-    const dataRaw = parts[2];
+
+    // Support either: /schedulemint +5m <url>  OR  /schedulemint <url> +5m
+    let whenRaw = parts[0];
+    let targetRaw = parts[1];
+    let dataRaw = parts[2] || "mint1";
+    if (parseOpenSeaAssetUrl(parts[0]) && parseScheduleTime(parts[1])) {
+      whenRaw = parts[1];
+      targetRaw = parts[0];
+      dataRaw = parts[2] || "mint1";
+    }
+
+    const when = parseScheduleTime(whenRaw);
     if (!when || when.getTime() <= Date.now()) {
-      await ctx.reply("Invalid/past time. Use +5m, +2h, or ISO like 2026-07-25T18:00:00Z");
+      await ctx.reply("Invalid/past time. Use +5m, +2h, or ISO like 2026-07-31T18:00:00Z");
       return;
     }
-    if (!isAddress(contract)) {
-      await ctx.reply("Invalid contract address.");
+
+    const openSea = parseOpenSeaAssetUrl(targetRaw);
+    let contract = targetRaw;
+    let labelExtra = "";
+    if (openSea) {
+      if (openSea.chain !== "robinhood" && openSea.chain !== config.chain.openseaChain) {
+        await ctx.reply(
+          `That OpenSea link is chain "${openSea.chain}". This bot only schedules on ${config.chain.name} (robinhood).`
+        );
+        return;
+      }
+      contract = openSea.contract;
+      labelExtra = openSea.tokenId ? ` #${openSea.tokenId}` : "";
+    } else if (!isAddress(contract)) {
+      await ctx.reply(
+        "Invalid target. Paste an OpenSea NFT link or a 0x contract address."
+      );
       return;
     }
+
+    // OpenSea-link form only needs when + url; default mint1.
+    // Contract form still needs calldata/preset as 3rd arg unless OpenSea url was used.
+    if (!openSea && parts.length < 3) {
+      await ctx.reply(
+        "For contract address form, include mint function:\n/schedulemint +5m 0xContract mint1"
+      );
+      return;
+    }
+
     const wallet = getWallet();
     const data = resolveCalldata(dataRaw, wallet?.address || contract);
     if (!data) {
@@ -452,13 +497,23 @@ export function createTelegramBot(): Bot {
       return;
     }
     const job = await addScheduledMint({
-      label: `mint ${shortAddress(contract.toLowerCase())}`,
+      label: openSea
+        ? `opensea ${shortAddress(contract.toLowerCase())}${labelExtra}`
+        : `mint ${shortAddress(contract.toLowerCase())}`,
       to: contract,
       data,
       executeAt: when,
     });
     await registerNotifyChat(chatId(ctx));
-    await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });
+    await ctx.reply(
+      [
+        formatScheduleCreated(job),
+        openSea
+          ? `\n<b>From OpenSea:</b> <a href="${escape(openSea.url)}">nft</a>\n<i>Uses public mint1() calldata. Wallet-bound / allowlist drops may still revert.</i>`
+          : "",
+      ].join(""),
+      { parse_mode: "HTML" }
+    );
   });
 
   bot.command("schedulemintfromtx", async (ctx) => {
