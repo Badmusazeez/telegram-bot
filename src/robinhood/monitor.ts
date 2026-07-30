@@ -118,6 +118,11 @@ async function logsForBuyerChunk(
   toBlock: number,
   buyer: string
 ): Promise<Log[]> {
+  // Inclusive range must stay within Alchemy Free's 10-block cap.
+  if (toBlock - fromBlock + 1 > 10) {
+    toBlock = fromBlock + 9;
+  }
+
   const provider = getProvider();
   const toTopic = zeroPadValue(buyer, 32);
   let lastErr: unknown;
@@ -131,10 +136,19 @@ async function logsForBuyerChunk(
       });
     } catch (err) {
       lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      // If Alchemy rejects the range, split in half and recurse.
+      if (
+        msg.includes("10 block") &&
+        toBlock > fromBlock
+      ) {
+        const mid = Math.floor((fromBlock + toBlock) / 2);
+        const left = await logsForBuyerChunk(fromBlock, mid, buyer);
+        const right = await logsForBuyerChunk(mid + 1, toBlock, buyer);
+        return [...left, ...right];
+      }
       console.warn(
-        `[monitor] getLogs retry ${attempt}/3 for ${buyer} blocks ${fromBlock}-${toBlock}: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `[monitor] getLogs retry ${attempt}/3 for ${buyer} blocks ${fromBlock}-${toBlock}: ${msg}`
       );
       await sleep(800 * attempt);
     }
@@ -149,7 +163,7 @@ async function logsForBuyer(
   buyer: string
 ): Promise<Log[]> {
   // Alchemy Free tier caps eth_getLogs at 10 blocks on Robinhood.
-  const chunkSize = Math.max(1, config.chain.getLogsMaxBlocks);
+  const chunkSize = Math.min(10, Math.max(1, config.chain.getLogsMaxBlocks));
   const all: Log[] = [];
 
   for (let start = fromBlock; start <= toBlock; start += chunkSize) {
@@ -195,7 +209,7 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         err instanceof Error ? err.message : err
       );
       console.error(
-        "[monitor] Tip: public Robinhood RPC is flaky — set ROBINHOOD_RPC_URL to Alchemy: https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY"
+        "[monitor] Tip: Alchemy Free allows max 10 blocks per eth_getLogs. Use ROBINHOOD_RPC_URL=https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY"
       );
       continue;
     }
