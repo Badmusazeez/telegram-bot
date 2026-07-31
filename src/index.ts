@@ -4,6 +4,7 @@ import { startMintScheduler } from "./eth/mintScheduler";
 import { startMonitor } from "./eth/monitor";
 import { startPriceWatcher } from "./eth/priceWatcher";
 import { getAllMintWallets, getProvider, getWallet } from "./eth/provider";
+import { BOT } from "./identity";
 import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, loadState } from "./store/state";
 import {
@@ -14,7 +15,9 @@ import {
 } from "./telegram/bot";
 
 async function main(): Promise<void> {
-  console.log(`Starting eth-free-private-mint-bot on ${config.chain.name}…`);
+  console.log(
+    `Starting @${BOT.telegramUsername} (${BOT.title}) on ${config.chain.name} — Ethereum only, separate from @${BOT.siblingBot}`
+  );
   await loadState();
   await loadMintWallets();
 

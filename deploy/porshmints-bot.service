@@ -1,22 +1,21 @@
 [Unit]
-Description=ETH free + private mint Telegram bot
+Description=@porshmints_bot Ethereum free + private mint Telegram bot
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Change these two paths if you cloned elsewhere / different Linux user
-User=ubuntu
-WorkingDirectory=/home/ubuntu/telegram-bot
+# IMPORTANT: keep this bot in its OWN folder — do not reuse the @Nftcopymint_bot (Robinhood) directory.
+User=root
+WorkingDirectory=/root/porshmints-bot
 Environment=NODE_ENV=production
 # Loads .env via dotenv inside the app — keep secrets ONLY in WorkingDirectory/.env
+# Use a DIFFERENT TELEGRAM_BOT_TOKEN than @Nftcopymint_bot
 ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=5
-# Hardening
 NoNewPrivileges=true
 PrivateTmp=true
-# Limit crash loops filling disk
 StandardOutput=journal
 StandardError=journal
 

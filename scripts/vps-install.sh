@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-time VPS install for eth-free-private-mint-bot
+# One-time VPS install for @porshmints_bot (Ethereum)
+# Keep this in a SEPARATE folder from @Nftcopymint_bot (Robinhood).
 # Usage (from repo root):
 #   chmod +x scripts/vps-install.sh
 #   ./scripts/vps-install.sh
@@ -7,6 +8,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+echo "==> Installing @porshmints_bot (Ethereum)…"
+echo "    Keep this separate from @Nftcopymint_bot (Robinhood)."
 
 echo "==> Checking Node.js…"
 if ! command -v node >/dev/null 2>&1; then
@@ -35,6 +39,7 @@ if [[ ! -f .env ]]; then
   cp env.example .env
   chmod 600 .env
   echo "    Edit secrets now:  nano .env"
+  echo "    Use the @porshmints_bot token — NOT the @Nftcopymint_bot token."
 else
   echo "==> .env already exists (leaving it alone)"
   chmod 600 .env || true
@@ -48,12 +53,13 @@ npm run build
 
 echo
 echo "Done. Next steps:"
-echo "  1) nano .env   # TELEGRAM_BOT_TOKEN, chat id, ETH_RPC_URL, PRIVATE_KEY, TRACKED_WALLETS"
+echo "  1) nano .env   # @porshmints_bot token, chat id, ETH_RPC_URL, PRIVATE_KEY, TRACKED_WALLETS"
 echo "  2) npm run check"
 echo "  3) Quick test:  npm run start:dev"
 echo "  4) Or install systemd (keeps running after logout):"
-echo "       sudo cp deploy/eth-mint-bot.service /etc/systemd/system/"
+echo "       sudo cp deploy/porshmints-bot.service /etc/systemd/system/"
+echo "       # edit WorkingDirectory= if your path is not /root/porshmints-bot"
 echo "       sudo systemctl daemon-reload"
-echo "       sudo systemctl enable --now eth-mint-bot"
-echo "       sudo journalctl -u eth-mint-bot -f"
+echo "       sudo systemctl enable --now porshmints-bot"
+echo "       sudo journalctl -u porshmints-bot -f"
 echo

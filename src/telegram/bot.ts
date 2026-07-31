@@ -12,6 +12,7 @@ import {
   getWallet,
   mintWalletCount,
 } from "../eth/provider";
+import { BOT } from "../identity";
 import {
   addMintWallet,
   listMintWalletPublic,
@@ -78,7 +79,14 @@ export function createTelegramBot(): Bot {
   bot.command("start", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      "eth-free-private-mint-bot connected.\n\nTip: /track 0xWallet Label\nOr set TRACKED_WALLETS + PRIVATE_KEY in .env\n/help for all commands."
+      [
+        `@${BOT.telegramUsername} (${BOT.title}) connected.`,
+        `Chain: ${BOT.chainLabel} only — not related to @${BOT.siblingBot}.`,
+        "",
+        "Tip: /track 0xWallet Label",
+        "Or set TRACKED_WALLETS + PRIVATE_KEY in .env",
+        "/help for all commands.",
+      ].join("\n")
     );
   });
 

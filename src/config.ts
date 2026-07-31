@@ -156,6 +156,7 @@ export const config = {
     env.PRICE_POLL_INTERVAL_MS >= 30_000
       ? env.PRICE_POLL_INTERVAL_MS
       : 120_000,
-  statePath: "data/state.json",
-  mintWalletsPath: "data/mint-wallets.json",
+  // Separate files from @Nftcopymint_bot (Robinhood) — never share state/keys.
+  statePath: "data/porshmints-state.json",
+  mintWalletsPath: "data/porshmints-mint-wallets.json",
 };

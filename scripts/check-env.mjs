@@ -82,7 +82,8 @@ else console.log("! PRIVATE_KEY empty (alerts-only / dry-run until you set it)")
 if (tracked) ok("TRACKED_WALLETS set");
 else console.log("! TRACKED_WALLETS empty (use /track in Telegram)");
 
-console.log("\nReady. Start with:");
+console.log("\n@porshmints_bot (Ethereum) ready. Start with:");
 console.log("  npm run start:dev");
 console.log("  # or production: npm run build && npm start");
-console.log("  # or systemd:    sudo systemctl start eth-mint-bot\n");
+console.log("  # or systemd:    sudo systemctl start porshmints-bot");
+console.log("  # Keep separate from @Nftcopymint_bot (Robinhood).\n");

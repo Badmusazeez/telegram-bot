@@ -32,13 +32,10 @@ let saveQueue: Promise<void> = Promise.resolve();
 
 function migrateLegacyState(parsed: Partial<BotState> & Record<string, unknown>): Partial<BotState> {
   const next: Partial<BotState> & Record<string, unknown> = { ...parsed };
-  if (next.maxBuyEth === undefined && typeof next.maxBuyRobinhood === "number") {
-    next.maxBuyEth = next.maxBuyRobinhood as number;
-  }
   if (next.privateMintsEnabled === undefined) {
     next.privateMintsEnabled = config.privateMintsEnabled;
   }
-  // Migrate scheduled mint jobs missing valueWei
+  // Older local drafts may omit valueWei on scheduled jobs.
   if (Array.isArray(next.scheduledMints)) {
     next.scheduledMints = (next.scheduledMints as ScheduledMint[]).map((j) => ({
       ...j,

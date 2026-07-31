@@ -1,5 +1,6 @@
 import { config } from "../config";
 import { describeWallet } from "../eth/monitor";
+import { BOT } from "../identity";
 import { shortAddress } from "../store/state";
 import type {
   CopyResult,
@@ -36,7 +37,8 @@ export function formatPurchaseAlert(
     : "";
 
   return [
-    `<b>eth-free-private-mint-bot alert</b>`,
+    `<b>@${BOT.telegramUsername} alert</b>`,
+    `<b>Bot:</b> ${escHtml(BOT.title)} (Ethereum)`,
     `<b>Chain:</b> ${escHtml(config.chain.name)}`,
     `<b>Type:</b> ${kind}`,
     ``,
@@ -101,9 +103,11 @@ export function formatStatus(params: {
       : "FREE MINTS (private off)";
 
   return [
-    `<b>eth-free-private-mint-bot status</b>`,
+    `<b>@${BOT.telegramUsername} status</b>`,
     ``,
-    `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>)`,
+    `Bot: <b>${escHtml(BOT.title)}</b> · Telegram <code>@${BOT.telegramUsername}</code>`,
+    `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>) — Ethereum only`,
+    `Not related to <code>@${BOT.siblingBot}</code> (Robinhood).`,
     `Mode: <b>${mode}</b>`,
     `Tracked wallets: <b>${params.trackedCount}</b>`,
     `Price watches: <b>${params.watchedPrices}</b>`,
@@ -122,8 +126,9 @@ export function formatStatus(params: {
 
 export function helpText(): string {
   return [
-    `<b>eth-free-private-mint-bot</b>`,
-    `Active chain: <b>${escHtml(config.chain.name)}</b>`,
+    `<b>@${BOT.telegramUsername}</b> — ${escHtml(BOT.title)}`,
+    `Active chain: <b>${escHtml(config.chain.name)}</b> (Ethereum only)`,
+    `Separate from <code>@${BOT.siblingBot}</code> (Robinhood Chain).`,
     ``,
     `Tracks whale wallets and auto-copies <b>free mints</b> + optional <b>private/paid mints</b> (under max buy) on Ethereum.`,
     `Secondary marketplace buys are always skipped.`,

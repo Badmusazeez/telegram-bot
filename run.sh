@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Foreground runner (good for first test on VPS).
-# For always-on: use systemd (see README / deploy/eth-mint-bot.service).
+# Foreground runner for @porshmints_bot (Ethereum).
+# For always-on: use systemd (deploy/porshmints-bot.service).
+# Do not run this from the @Nftcopymint_bot (Robinhood) folder.
 set -euo pipefail
 cd "$(dirname "$0")"
 

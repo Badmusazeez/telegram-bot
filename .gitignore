@@ -1,6 +1,10 @@
 node_modules/
 dist/
 .env
+# @porshmints_bot (Ethereum) — never share with @Nftcopymint_bot
+data/porshmints-state.json
+data/porshmints-mint-wallets.json
+# legacy names (ignore if present)
 data/state.json
 data/mint-wallets.json
 *.log

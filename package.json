@@ -1,7 +1,7 @@
 {
-  "name": "eth-free-private-mint-bot",
+  "name": "porshmints-bot",
   "version": "1.0.0",
-  "description": "Ethereum free + private mint NFT copy bot with Telegram tracking",
+  "description": "@porshmints_bot — Ethereum free + private mint Telegram bot (separate from @Nftcopymint_bot / Robinhood)",
   "main": "dist/index.js",
   "scripts": {
     "check": "node scripts/check-env.mjs",
@@ -16,10 +16,10 @@
     "node": ">=20"
   },
   "keywords": [
+    "porshmints",
     "ethereum",
     "nft",
     "telegram",
-    "copy-trading",
     "free-mint",
     "private-mint",
     "bot"
