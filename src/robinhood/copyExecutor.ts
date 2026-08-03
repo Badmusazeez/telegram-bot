@@ -5,6 +5,7 @@ import type { CopyResult, NftPurchase } from "../types";
 import {
   gasIsAffordable,
   getAllMintWallets,
+  getMintProvider,
   getProvider,
 } from "./provider";
 
@@ -188,7 +189,7 @@ async function mintWithWallet(
 ): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
   const address = wallet.address.toLowerCase();
   const candidates = buildCalldataCandidates(rawData, whale, address);
-  const provider = getProvider();
+  const provider = getMintProvider();
   const errors: string[] = [];
 
   for (const [index, data] of candidates.entries()) {

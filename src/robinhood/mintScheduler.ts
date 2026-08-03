@@ -8,7 +8,7 @@ import { buildOpenSeaDropMintTx } from "./openseaDrop";
 import {
   gasIsAffordable,
   getAllMintWallets,
-  getProvider,
+  getMintProvider,
 } from "./provider";
 import type { Wallet } from "ethers";
 
@@ -84,7 +84,7 @@ async function sendOnWallet(
   params: { to: string; data: string; valueWei?: bigint }
 ): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
   const address = wallet.address.toLowerCase();
-  const provider = getProvider();
+  const provider = getMintProvider();
   const value = params.valueWei ?? 0n;
   try {
     const gasEstimate = await provider.estimateGas({

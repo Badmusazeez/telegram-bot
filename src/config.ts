@@ -12,7 +12,11 @@ const schema = z.object({
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
   /** robinhood */
   CHAIN: z.string().optional().default("robinhood"),
+  /** Tracker / monitor RPC (Alchemy recommended for eth_getLogs). */
   ROBINHOOD_RPC_URL: z.string().optional().default(""),
+  TRACK_RPC_URL: z.string().optional().default(""),
+  /** Mint / send-tx RPC (Chainstack recommended). Falls back to tracker RPC. */
+  MINT_RPC_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
     .string()
@@ -79,10 +83,17 @@ if (!parsed.success) {
 
 const env = parsed.data;
 const chain: ChainConfig = resolveChain(env.CHAIN);
-const rpcUrl = env.ROBINHOOD_RPC_URL.trim() || chain.defaultRpcUrl;
+const trackRpcUrl =
+  env.TRACK_RPC_URL.trim() ||
+  env.ROBINHOOD_RPC_URL.trim() ||
+  chain.defaultRpcUrl;
+const mintRpcUrl = env.MINT_RPC_URL.trim() || trackRpcUrl;
 
-if (!rpcUrl.startsWith("http")) {
-  throw new Error("ROBINHOOD_RPC_URL must be a valid RPC URL");
+if (!trackRpcUrl.startsWith("http")) {
+  throw new Error("TRACK_RPC_URL / ROBINHOOD_RPC_URL must be a valid RPC URL");
+}
+if (!mintRpcUrl.startsWith("http")) {
+  throw new Error("MINT_RPC_URL must be a valid RPC URL");
 }
 
 const maxBuyRobinhood = Number(env.MAX_BUY_ROBINHOOD);
@@ -105,12 +116,32 @@ function numberOr(value: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function extractAlchemyKey(rpcUrl: string): string {
+  const match = rpcUrl.match(/g\.alchemy\.com\/v2\/([^/?#]+)/i);
+  return match?.[1] ?? "";
+}
+
+function maskRpc(url: string): string {
+  return url.replace(/\/v2\/[^/?#]+/i, "/v2/***").replace(/\/[a-f0-9]{16,}/gi, "/***");
+}
+
+export const rpcLabels = {
+  track: maskRpc(trackRpcUrl),
+  mint: maskRpc(mintRpcUrl),
+};
+
 export const config = {
   telegramToken: env.TELEGRAM_BOT_TOKEN,
   allowedChatIds: new Set(splitCsv(env.TELEGRAM_ALLOWED_CHAT_IDS)),
   chain,
-  rpcUrl,
-  alchemyApiKey: env.ALCHEMY_API_KEY,
+  /** @deprecated use trackRpcUrl — kept for older call sites */
+  rpcUrl: trackRpcUrl,
+  trackRpcUrl,
+  mintRpcUrl,
+  alchemyApiKey:
+    env.ALCHEMY_API_KEY.trim() ||
+    extractAlchemyKey(trackRpcUrl) ||
+    "",
   copyEnabled: env.COPY_ENABLED,
   dryRun: env.DRY_RUN,
   freeMintsOnly: env.FREE_MINTS_ONLY,

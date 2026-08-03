@@ -3,7 +3,8 @@ import { maybeCopyPurchase } from "./robinhood/copyExecutor";
 import { startMintScheduler } from "./robinhood/mintScheduler";
 import { startMonitor } from "./robinhood/monitor";
 import { startPriceWatcher } from "./robinhood/priceWatcher";
-import { getAllMintWallets, getProvider, getWallet } from "./robinhood/provider";
+import { rpcLabels } from "./config";
+import { getAllMintWallets, getMintProvider, getProvider, getWallet } from "./robinhood/provider";
 import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, loadState } from "./store/state";
 import {
@@ -20,11 +21,24 @@ async function main(): Promise<void> {
   await loadState();
   await loadMintWallets();
 
-  const provider = getProvider();
-  const network = await provider.getNetwork();
+  const trackProvider = getProvider();
+  const mintProvider = getMintProvider();
+  const network = await trackProvider.getNetwork();
   if (network.chainId !== config.chain.chainId) {
     console.warn(
-      `Warning: connected chainId=${network.chainId} (expected ${config.chain.chainId} for ${config.chain.name})`
+      `Warning: track RPC chainId=${network.chainId} (expected ${config.chain.chainId} for ${config.chain.name})`
+    );
+  }
+  try {
+    const mintNet = await mintProvider.getNetwork();
+    if (mintNet.chainId !== config.chain.chainId) {
+      console.warn(
+        `Warning: mint RPC chainId=${mintNet.chainId} (expected ${config.chain.chainId} for ${config.chain.name})`
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `Warning: mint RPC check failed: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 
@@ -35,6 +49,8 @@ async function main(): Promise<void> {
   console.log(
     `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
   );
+  console.log(`Track RPC: ${rpcLabels.track}`);
+  console.log(`Mint  RPC: ${rpcLabels.mint}`);
   console.log(
     `freeMintsOnly=${config.freeMintsOnly} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun}`
   );

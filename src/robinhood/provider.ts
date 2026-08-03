@@ -3,14 +3,24 @@ import { config } from "../config";
 import { getMintWalletCount, getEthersWallets } from "../store/mintWallets";
 import { getState } from "../store/state";
 
-let provider: JsonRpcProvider | null = null;
+let trackProvider: JsonRpcProvider | null = null;
+let mintProvider: JsonRpcProvider | null = null;
 let primaryWallet: Wallet | null = null;
 
+/** Tracker RPC — whale monitoring / eth_getLogs (Alchemy). */
 export function getProvider(): JsonRpcProvider {
-  if (!provider) {
-    provider = new JsonRpcProvider(config.rpcUrl);
+  if (!trackProvider) {
+    trackProvider = new JsonRpcProvider(config.trackRpcUrl);
   }
-  return provider;
+  return trackProvider;
+}
+
+/** Mint RPC — send txs / gas estimates (Chainstack). */
+export function getMintProvider(): JsonRpcProvider {
+  if (!mintProvider) {
+    mintProvider = new JsonRpcProvider(config.mintRpcUrl);
+  }
+  return mintProvider;
 }
 
 /** Primary wallet (first configured) — used for status display. */
@@ -23,12 +33,12 @@ export function getWallet(): Wallet | null {
     return null;
   }
   if (!primaryWallet) {
-    primaryWallet = new Wallet(config.privateKey, getProvider());
+    primaryWallet = new Wallet(config.privateKey, getMintProvider());
   }
   return primaryWallet;
 }
 
-/** All mint wallets (multi-wallet). */
+/** All mint wallets connected to the mint RPC. */
 export function getAllMintWallets(): Wallet[] {
   return getEthersWallets();
 }
@@ -38,12 +48,12 @@ export function mintWalletCount(): number {
 }
 
 export async function getNativeBalance(address: string): Promise<string> {
-  const balance = await getProvider().getBalance(address);
+  const balance = await getMintProvider().getBalance(address);
   return formatEther(balance);
 }
 
 export async function gasIsAffordable(): Promise<boolean> {
-  const fee = await getProvider().getFeeData();
+  const fee = await getMintProvider().getFeeData();
   if (!fee.gasPrice) {
     return true;
   }

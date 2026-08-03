@@ -24,7 +24,7 @@ async function enrichNft(
   tokenId: string
 ): Promise<Pick<NftPurchase, "collectionName" | "tokenName" | "imageUrl">> {
   const network = config.chain.alchemyNftNetwork;
-  const key = config.alchemyApiKey || extractAlchemyKey(config.rpcUrl);
+  const key = config.alchemyApiKey || extractAlchemyKey(config.trackRpcUrl);
   if (!key || !network) {
     return {};
   }
