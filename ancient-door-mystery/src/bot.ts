@@ -4,6 +4,12 @@ import { config } from "./config";
 import { SCENE, formatLine } from "./script";
 
 const HERO_IMAGE = path.join(__dirname, "..", "public", "hero.png");
+const SCENE_VIDEO = path.join(
+  __dirname,
+  "..",
+  "public",
+  "ancient-door-mystery.mp4"
+);
 
 function chatId(ctx: Context): string {
   return String(ctx.chat?.id ?? "");
@@ -31,9 +37,22 @@ async function sendHero(ctx: Context): Promise<void> {
     caption:
       "<b>Ancient Door</b>\n" +
       "Three travelers stand before one massive ancient door.\n" +
-      "Tap below to open am.",
+      "Tap below to open am — or /video for the full voiceover scene.",
     parse_mode: "HTML",
-    reply_markup: new InlineKeyboard().text("Open the door", "scene:0"),
+    reply_markup: new InlineKeyboard()
+      .text("Open the door", "scene:0")
+      .row()
+      .text("Watch video ▶", "video"),
+  });
+}
+
+async function sendSceneVideo(ctx: Context): Promise<void> {
+  await ctx.replyWithVideo(new InputFile(SCENE_VIDEO), {
+    caption:
+      "<b>Ancient Door Mystery</b>\n" +
+      "Voiceover scene (~20s) with Narrator, Young Explorer, Elderly Woman, and Hooded Guide.",
+    parse_mode: "HTML",
+    supports_streaming: true,
   });
 }
 
@@ -93,16 +112,26 @@ export function createBot(): Bot {
     await sendHero(ctx);
   });
 
+  bot.command("video", async (ctx) => {
+    await sendSceneVideo(ctx);
+  });
+
   bot.command("help", async (ctx) => {
     await ctx.reply(
       "<b>Ancient Door Mystery</b>\n\n" +
         "/start — begin the scene\n" +
         "/scene — show the door again\n" +
+        "/video — downloadable voiceover video\n" +
         "/help — this message\n\n" +
         "<b>Cast</b>\n" +
         "Narrator · Young Explorer · Elderly Woman · Hooded Guide",
       { parse_mode: "HTML" }
     );
+  });
+
+  bot.callbackQuery("video", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendSceneVideo(ctx);
   });
 
   bot.callbackQuery(/^scene:(\d+)$/, async (ctx) => {

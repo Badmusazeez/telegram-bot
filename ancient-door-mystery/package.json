@@ -11,7 +11,8 @@
     "start": "tsx src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "web": "python3 -m http.server 5173"
+    "web": "python3 -m http.server 5173",
+    "video": "node scripts/generate-video.mjs"
   },
   "engines": {
     "node": ">=20"
