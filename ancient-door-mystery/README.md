@@ -1,22 +1,43 @@
 # Ancient Door Mystery
 
-A cinematic interactive scene: three travelers stand before a massive ancient door as golden light pours out, told in short Pidgin dialogue beats.
+Cinematic Pidgin scene — Telegram bot + web experience.
 
-## Run locally
+## Scene script
+
+**Narrator**
+- One massive ancient door slowly open.
+- Bright golden light shine from inside.
+
+**Young Explorer**
+- Wetin dey wait for us inside?
+
+**Elderly Woman**
+- Only person wey get courage go know.
+
+**Hooded Guide**
+- The biggest secret still dey front.
+
+## Telegram bot
 
 ```bash
 cd ancient-door-mystery
-python3 -m http.server 5173
+npm run setup   # paste TELEGRAM_BOT_TOKEN from @BotFather
+npm run bot     # starts polling
+```
+
+In Telegram:
+- `/start` — intro + hero image
+- tap **Open the door** — first Narrator line
+- **Continue** through each line
+- **Replay scene** at the end
+- `/scene` — show the door again
+
+Optional: set `TELEGRAM_ALLOWED_CHAT_IDS` in `.env` to lock the bot to your chats.
+
+## Web scene
+
+```bash
+npm run web
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
-
-## Scene
-
-1. **Narrator** — One massive ancient door slowly open.
-2. **Narrator** — Bright golden light shine from inside.
-3. **Young Explorer** — Wetin dey wait for us inside?
-4. **Elderly Woman** — Only person wey get courage go know.
-5. **Hooded Guide** — The biggest secret still dey front.
-
-Click **Open the door**, then **Continue** through each line.
