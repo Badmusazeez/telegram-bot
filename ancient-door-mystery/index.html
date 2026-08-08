@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ancient Door — The Biggest Secret</title>
+    <meta
+      name="description"
+      content="Three travelers stand before a massive ancient door. Bright golden light shines from inside. An interactive Pidgin mystery scene."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true">
+      <div class="atmosphere__glow"></div>
+      <div class="atmosphere__grain"></div>
+    </div>
+
+    <main class="stage" id="stage">
+      <section class="hero" id="hero" aria-label="Ancient Door opening scene">
+        <img
+          class="hero__image"
+          src="./public/hero.png"
+          alt="Three travelers stand before massive carved stone doors opening onto a golden ancient city"
+          width="1536"
+          height="1024"
+        />
+        <div class="hero__veil" aria-hidden="true"></div>
+
+        <div class="hero__content" data-panel="intro">
+          <p class="brand">Ancient Door</p>
+          <h1 class="headline">The biggest secret still dey front.</h1>
+          <p class="lede">
+            One massive ancient door slowly open. Bright golden light shine from
+            inside.
+          </p>
+          <div class="cta-row">
+            <button class="cta" type="button" id="watchBtn">
+              Watch scene
+            </button>
+            <a
+              class="cta cta--ghost"
+              href="./public/ancient-door-mystery.mp4"
+              download="ancient-door-mystery.mp4"
+            >
+              Download video
+            </a>
+          </div>
+        </div>
+
+        <div class="video-panel" id="videoPanel" hidden>
+          <video
+            id="sceneVideo"
+            class="scene-video"
+            controls
+            playsinline
+            preload="metadata"
+            poster="./public/scene-vertical.png"
+            src="./public/ancient-door-mystery.mp4"
+          ></video>
+          <div class="video-panel__actions">
+            <a
+              class="cta"
+              href="./public/ancient-door-mystery.mp4"
+              download="ancient-door-mystery.mp4"
+            >
+              Download MP4
+            </a>
+            <button class="ghost" type="button" id="backBtn">Back</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
