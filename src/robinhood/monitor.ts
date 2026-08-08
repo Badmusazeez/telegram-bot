@@ -8,6 +8,7 @@ import {
 } from "../store/state";
 import type { NftPurchase } from "../types";
 import { marketplaceName } from "./marketplaces";
+import { classifyTrackRpcError, type TrackRpcIssue } from "./rpcHealth";
 import { getProvider } from "./provider";
 
 const ERC721_IFACE = new Interface([
@@ -18,6 +19,7 @@ const TRANSFER_TOPIC = id("Transfer(address,address,uint256)");
 const ZERO = "0x0000000000000000000000000000000000000000";
 
 export type PurchaseHandler = (purchase: NftPurchase) => Promise<void>;
+export type RpcIssueHandler = (issue: TrackRpcIssue) => Promise<void>;
 
 async function enrichNft(
   contract: string,
@@ -175,14 +177,26 @@ async function logsForBuyer(
   return all;
 }
 
-export async function scanForPurchases(): Promise<NftPurchase[]> {
+export async function scanForPurchases(
+  onRpcIssue?: RpcIssueHandler
+): Promise<NftPurchase[]> {
   const state = getState();
   if (state.trackedWallets.length === 0) {
     return [];
   }
 
   const provider = getProvider();
-  const latest = await provider.getBlockNumber();
+  let latest: number;
+  try {
+    latest = await provider.getBlockNumber();
+  } catch (err) {
+    const issue = classifyTrackRpcError(err);
+    if (issue && onRpcIssue) {
+      await onRpcIssue(issue);
+    }
+    throw err;
+  }
+
   let fromBlock = state.lastProcessedBlock
     ? state.lastProcessedBlock + 1
     : Math.max(0, latest - config.lookbackBlocks);
@@ -208,9 +222,14 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         `[monitor] getLogs failed for ${wallet.address}:`,
         err instanceof Error ? err.message : err
       );
-      console.error(
-        "[monitor] Tip: Alchemy Free allows max 10 blocks per eth_getLogs. Use ROBINHOOD_RPC_URL=https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY"
-      );
+      const issue = classifyTrackRpcError(err);
+      if (issue && onRpcIssue) {
+        await onRpcIssue(issue);
+      } else {
+        console.error(
+          "[monitor] Tip: Alchemy Free allows max 10 blocks per eth_getLogs. Use TRACK_RPC_URL=https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY"
+        );
+      }
       continue;
     }
 
@@ -279,7 +298,8 @@ export function describeWallet(address: string): string {
 }
 
 export async function startMonitor(
-  onPurchase: PurchaseHandler
+  onPurchase: PurchaseHandler,
+  onRpcIssue?: RpcIssueHandler
 ): Promise<() => void> {
   let stopped = false;
   let running = false;
@@ -290,12 +310,16 @@ export async function startMonitor(
     }
     running = true;
     try {
-      const purchases = await scanForPurchases();
+      const purchases = await scanForPurchases(onRpcIssue);
       for (const purchase of purchases) {
         await onPurchase(purchase);
       }
     } catch (err) {
       console.error("[monitor] scan failed:", err);
+      const issue = classifyTrackRpcError(err);
+      if (issue && onRpcIssue) {
+        await onRpcIssue(issue);
+      }
     } finally {
       running = false;
     }

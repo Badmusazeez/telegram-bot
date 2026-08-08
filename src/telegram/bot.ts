@@ -739,3 +739,38 @@ export async function broadcastScheduleResult(
     }
   }
 }
+
+/** Avoid spamming Telegram when Alchemy keeps returning quota errors. */
+const RPC_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
+let lastRpcAlertAt = 0;
+let lastRpcAlertKind = "";
+
+export async function broadcastRpcAlert(
+  bot: Bot,
+  text: string,
+  kind = "quota"
+): Promise<void> {
+  const now = Date.now();
+  if (kind === lastRpcAlertKind && now - lastRpcAlertAt < RPC_ALERT_COOLDOWN_MS) {
+    return;
+  }
+  lastRpcAlertAt = now;
+  lastRpcAlertKind = kind;
+
+  const state = getState();
+  const targets =
+    state.notifyChatIds.length > 0
+      ? state.notifyChatIds
+      : [...config.allowedChatIds];
+
+  for (const id of targets) {
+    try {
+      await bot.api.sendMessage(id, text, {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
+    } catch (err) {
+      console.error(`[telegram] failed RPC alert to ${id}:`, err);
+    }
+  }
+}

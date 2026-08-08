@@ -7,9 +7,11 @@ import { rpcLabels } from "./config";
 import { getAllMintWallets, getMintProvider, getProvider, getWallet } from "./robinhood/provider";
 import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, loadState } from "./store/state";
+import { formatTrackRpcIssue } from "./robinhood/rpcHealth";
 import {
   broadcastPriceAlert,
   broadcastPurchase,
+  broadcastRpcAlert,
   broadcastScheduleResult,
   createTelegramBot,
 } from "./telegram/bot";
@@ -70,30 +72,36 @@ async function main(): Promise<void> {
     );
   }
 
-  const stopMonitor = await startMonitor(async (purchase) => {
-    console.log(
-      `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
-    );
-    const copy = await maybeCopyPurchase(purchase);
-    await broadcastPurchase(bot, purchase, copy);
+  const stopMonitor = await startMonitor(
+    async (purchase) => {
+      console.log(
+        `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
+      );
+      const copy = await maybeCopyPurchase(purchase);
+      await broadcastPurchase(bot, purchase, copy);
 
-    if (purchase.isFreeMint && (copy.success || copy.dryRun)) {
-      await addWatchedPrice({
-        contract: purchase.contract,
-        tokenId: purchase.tokenId,
-        label:
-          purchase.tokenName ||
-          purchase.collectionName ||
-          `${purchase.contract.slice(0, 6)}…#${purchase.tokenId}`,
-      });
-      await addWatchedPrice({
-        contract: purchase.contract,
-        label:
-          (purchase.collectionName || purchase.contract.slice(0, 10)) +
-          " floor",
-      });
+      if (purchase.isFreeMint && (copy.success || copy.dryRun)) {
+        await addWatchedPrice({
+          contract: purchase.contract,
+          tokenId: purchase.tokenId,
+          label:
+            purchase.tokenName ||
+            purchase.collectionName ||
+            `${purchase.contract.slice(0, 6)}…#${purchase.tokenId}`,
+        });
+        await addWatchedPrice({
+          contract: purchase.contract,
+          label:
+            (purchase.collectionName || purchase.contract.slice(0, 10)) +
+            " floor",
+        });
+      }
+    },
+    async (issue) => {
+      console.warn(`[rpc] track issue ${issue.kind}: ${issue.message}`);
+      await broadcastRpcAlert(bot, formatTrackRpcIssue(issue), issue.kind);
     }
-  });
+  );
 
   const stopPrices = await startPriceWatcher(async (alert) => {
     console.log(
