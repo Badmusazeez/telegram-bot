@@ -64,8 +64,27 @@ export function formatTrackRpcIssue(issue: TrackRpcIssue): string {
     `Whale tracking may miss free mints until this clears.`,
     `<b>Detail:</b> <code>${escapeHtml(issue.message)}</code>`,
     ``,
-    `Fix: create a new Alchemy Robinhood app key, update TRACK_RPC_URL / ROBINHOOD_RPC_URL in .env, then:`,
-    `<code>pm2 restart robinhood-nft-bot --update-env</code>`,
+    `If failover is configured, bot will try TRACK_RPC_BACKUP_URL (Alchemy) then return to Chainstack when healthy.`,
+  ].join("\n");
+}
+
+export function formatTrackRpcSwitch(event: {
+  from: string;
+  to: string;
+  reason: string;
+}): string {
+  if (event.to === "backup") {
+    return [
+      `<b>🔀 Tracker failover</b>`,
+      `Primary (Chainstack) is slow/down → using <b>Alchemy backup</b>.`,
+      `<b>Reason:</b> <code>${escapeHtml(event.reason.slice(0, 200))}</code>`,
+      `Bot will auto-switch back to Chainstack when it recovers.`,
+    ].join("\n");
+  }
+  return [
+    `<b>✅ Tracker recovered</b>`,
+    `Switched back to <b>Chainstack primary</b> tracker.`,
+    `<b>Detail:</b> <code>${escapeHtml(event.reason.slice(0, 200))}</code>`,
   ].join("\n");
 }
 

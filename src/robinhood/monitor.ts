@@ -9,7 +9,7 @@ import {
 import type { NftPurchase } from "../types";
 import { marketplaceName } from "./marketplaces";
 import { classifyTrackRpcError, type TrackRpcIssue } from "./rpcHealth";
-import { getProvider } from "./provider";
+import { withTrackRpc } from "./trackRpc";
 
 const ERC721_IFACE = new Interface([
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
@@ -62,8 +62,9 @@ async function estimatePurchaseValue(
   buyer: string
 ): Promise<{ valueRobinhood: number; marketplace?: string }> {
   try {
-    const provider = getProvider();
-    const tx = await provider.getTransaction(txHash);
+    const tx = await withTrackRpc((provider) =>
+      provider.getTransaction(txHash)
+    );
     if (!tx) {
       return { valueRobinhood: 0 };
     }
@@ -125,17 +126,18 @@ async function logsForBuyerChunk(
     toBlock = fromBlock + 9;
   }
 
-  const provider = getProvider();
   const toTopic = zeroPadValue(buyer, 32);
   let lastErr: unknown;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      return await provider.getLogs({
-        fromBlock,
-        toBlock,
-        topics: [TRANSFER_TOPIC, null, toTopic],
-      });
+      return await withTrackRpc((provider) =>
+        provider.getLogs({
+          fromBlock,
+          toBlock,
+          topics: [TRANSFER_TOPIC, null, toTopic],
+        })
+      );
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
@@ -185,10 +187,9 @@ export async function scanForPurchases(
     return [];
   }
 
-  const provider = getProvider();
   let latest: number;
   try {
-    latest = await provider.getBlockNumber();
+    latest = await withTrackRpc((provider) => provider.getBlockNumber());
   } catch (err) {
     const issue = classifyTrackRpcError(err);
     if (issue && onRpcIssue) {
@@ -259,7 +260,9 @@ export async function scanForPurchases(
       }
 
       const meta = await enrichNft(decoded.contract, decoded.tokenId);
-      const block = await provider.getBlock(log.blockNumber);
+      const block = await withTrackRpc((provider) =>
+        provider.getBlock(log.blockNumber)
+      );
 
       purchases.push({
         txHash: log.transactionHash,

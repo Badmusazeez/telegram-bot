@@ -2,17 +2,14 @@ import { JsonRpcProvider, Wallet, formatEther } from "ethers";
 import { config } from "../config";
 import { getMintWalletCount, getEthersWallets } from "../store/mintWallets";
 import { getState } from "../store/state";
+import { getTrackProvider } from "./trackRpc";
 
-let trackProvider: JsonRpcProvider | null = null;
 let mintProvider: JsonRpcProvider | null = null;
 let primaryWallet: Wallet | null = null;
 
-/** Tracker RPC — whale monitoring / eth_getLogs (Alchemy). */
+/** Active tracker RPC (Chainstack primary, Alchemy backup via failover). */
 export function getProvider(): JsonRpcProvider {
-  if (!trackProvider) {
-    trackProvider = new JsonRpcProvider(config.trackRpcUrl);
-  }
-  return trackProvider;
+  return getTrackProvider();
 }
 
 /** Mint RPC — send txs / gas estimates (Chainstack). */

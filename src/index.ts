@@ -7,7 +7,11 @@ import { rpcLabels } from "./config";
 import { getAllMintWallets, getMintProvider, getProvider, getWallet } from "./robinhood/provider";
 import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, loadState } from "./store/state";
-import { formatTrackRpcIssue } from "./robinhood/rpcHealth";
+import {
+  formatTrackRpcIssue,
+  formatTrackRpcSwitch,
+} from "./robinhood/rpcHealth";
+import { setTrackRpcSwitchHandler } from "./robinhood/trackRpc";
 import {
   broadcastPriceAlert,
   broadcastPurchase,
@@ -51,8 +55,17 @@ async function main(): Promise<void> {
   console.log(
     `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
   );
-  console.log(`Track RPC: ${rpcLabels.track}`);
+  console.log(`Track RPC (primary): ${rpcLabels.track}`);
+  console.log(`Track RPC (backup):  ${rpcLabels.trackBackup}`);
   console.log(`Mint  RPC: ${rpcLabels.mint}`);
+
+  setTrackRpcSwitchHandler(async (event) => {
+    await broadcastRpcAlert(
+      bot,
+      formatTrackRpcSwitch(event),
+      `switch:${event.to}`
+    );
+  });
   console.log(
     `freeMintsOnly=${config.freeMintsOnly} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun}`
   );
