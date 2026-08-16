@@ -55,6 +55,43 @@ export async function getNativeBalance(address: string): Promise<string> {
   return formatEther(balance);
 }
 
+/** Minimum native balance required to attempt a mint (covers gas). */
+const MIN_MINT_BALANCE_WEI = 50_000_000_000_000n; // 0.00005 ETH
+
+/**
+ * Return only wallets with enough RH gas to mint.
+ * Empty wallets are skipped so they don't waste the mint window.
+ */
+export async function getFundedMintWallets(
+  wallets?: Wallet[]
+): Promise<{ funded: Wallet[]; skippedEmpty: number }> {
+  const all = wallets ?? getAllMintWallets();
+  const provider = getMintProvider();
+  const funded: Wallet[] = [];
+  let skippedEmpty = 0;
+
+  const balances = await Promise.all(
+    all.map(async (w) => {
+      try {
+        const bal = await provider.getBalance(w.address);
+        return { w, bal };
+      } catch {
+        return { w, bal: 0n };
+      }
+    })
+  );
+
+  for (const { w, bal } of balances) {
+    if (bal >= MIN_MINT_BALANCE_WEI) {
+      funded.push(w);
+    } else {
+      skippedEmpty += 1;
+    }
+  }
+
+  return { funded, skippedEmpty };
+}
+
 export async function gasIsAffordable(): Promise<boolean> {
   const fee = await getMintProvider().getFeeData();
   if (!fee.gasPrice) {

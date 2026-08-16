@@ -33,6 +33,13 @@ export function formatPurchaseAlert(
     ? `\n<b>Our tx:</b> <a href="${config.chain.explorerTxUrl(copy.txHash)}">explorer</a>`
     : "";
 
+  const mintLine =
+    copy.success && !copy.dryRun
+      ? `<b>Auto-mint:</b> ✅ MINTED — ${escHtml(copy.reason)}${copyTx}`
+      : copy.dryRun
+        ? `<b>Auto-mint:</b> ⚠️ ${escHtml(copy.reason)}`
+        : `<b>Auto-mint:</b> ❌ ${escHtml(copy.reason)}${copyTx}`;
+
   return [
     `<b>robinhood-nft-copy-bot alert</b>`,
     `<b>Chain:</b> ${escHtml(config.chain.name)}`,
@@ -46,7 +53,7 @@ export function formatPurchaseAlert(
     `<b>Whale tx:</b> <a href="${txUrl}">explorer</a>`,
     `<b>OpenSea:</b> <a href="${openSeaUrl}">view</a>`,
     ``,
-    `<b>Auto-mint:</b> ${escHtml(copy.reason)}${copyTx}`,
+    mintLine,
   ].join("\n");
 }
 
@@ -88,11 +95,20 @@ export function formatStatus(params: {
   tipBlock?: number;
   walletAddress?: string;
   balanceRobinhood?: string;
+  lastCopy?: {
+    at: string;
+    txHash: string;
+    success: boolean;
+    reason: string;
+  } | null;
 }): string {
   const lag =
     params.tipBlock && params.lastBlock
       ? Math.max(0, params.tipBlock - params.lastBlock)
       : null;
+  const lastCopyLine = params.lastCopy
+    ? `Last copy: <b>${params.lastCopy.success ? "OK" : "FAIL"}</b> <code>${escHtml(params.lastCopy.at)}</code>\n<code>${escHtml(params.lastCopy.reason)}</code>`
+    : `Last copy: <i>none yet</i>`;
   return [
     `<b>robinhood-nft-copy-bot status</b>`,
     ``,
@@ -109,6 +125,7 @@ export function formatStatus(params: {
     params.tipBlock
       ? `Chain tip: <code>${params.tipBlock}</code>${lag !== null ? ` (behind <b>${lag}</b> blocks)` : ""}`
       : "",
+    lastCopyLine,
     params.walletAddress
       ? `Bot wallet: <code>${escHtml(params.walletAddress)}</code> (balance ${escHtml(params.balanceRobinhood ?? "?")})`
       : `Bot wallet: <i>not configured</i>`,

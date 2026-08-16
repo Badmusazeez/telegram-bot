@@ -5,6 +5,7 @@ import type { CopyResult, NftPurchase } from "../types";
 import {
   gasIsAffordable,
   getAllMintWallets,
+  getFundedMintWallets,
   getMintBackupProvider,
   getMintProvider,
   getProvider,
@@ -24,6 +25,27 @@ import { maxMintQuantityLadder } from "./mintQuantity";
 
 /** One copy attempt per whale mint tx (Scatter/721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
+
+/** Last copy attempt — shown in /status for debugging. */
+let lastCopySummary: {
+  at: string;
+  txHash: string;
+  success: boolean;
+  reason: string;
+} | null = null;
+
+export function getLastCopySummary(): typeof lastCopySummary {
+  return lastCopySummary;
+}
+
+function rememberCopyResult(purchase: NftPurchase, result: CopyResult): void {
+  lastCopySummary = {
+    at: new Date().toISOString(),
+    txHash: purchase.txHash,
+    success: result.success && !result.dryRun,
+    reason: result.reason.slice(0, 280),
+  };
+}
 
 /**
  * Free-mint copy executor for Robinhood Chain.
@@ -47,9 +69,25 @@ export async function maybeCopyPurchase(
     };
   }
 
-  const pending = executeCopy(purchase);
+  const pending = (async () => {
+    let result = await executeCopy(purchase);
+    // Retry once on RPC indexing lag — common on fast RH blocks.
+    if (
+      !result.success &&
+      /RPC lag|Could not load source mint/i.test(result.reason)
+    ) {
+      await sleep(1_500);
+      result = await executeCopy(purchase);
+    }
+    rememberCopyResult(purchase, result);
+    // Don't permanently cache hard failures — allow a later hit to retry.
+    if (!result.success && !result.dryRun) {
+      copyBySourceTx.delete(txKey);
+    }
+    return result;
+  })();
+
   copyBySourceTx.set(txKey, pending);
-  // Bound memory: drop old entries occasionally
   if (copyBySourceTx.size > 500) {
     const first = copyBySourceTx.keys().next().value;
     if (first) copyBySourceTx.delete(first);
@@ -153,8 +191,8 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
-  const wallets = getAllMintWallets();
-  if (wallets.length === 0) {
+  const allWallets = getAllMintWallets();
+  if (allWallets.length === 0) {
     return {
       attempted: false,
       success: false,
@@ -163,6 +201,17 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
+  const { funded, skippedEmpty } = await getFundedMintWallets(allWallets);
+  if (funded.length === 0) {
+    return {
+      attempted: false,
+      success: false,
+      dryRun: state.dryRun,
+      reason: `No mint wallets have gas (${allWallets.length} configured, all empty). Send Robinhood Chain ETH to /listkeys addresses.`,
+    };
+  }
+
+  const wallets = funded;
   const scatterLike = isScatterMintCalldata(sourceTx.data);
   const openSeaLike = isOpenSeaMinter(sourceTx.to);
   const whaleQty = decodeWhaleMintQuantity(sourceTx.data) || 1;
@@ -172,7 +221,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
       attempted: true,
       success: false,
       dryRun: true,
-      reason: `NOT MINTED — dry-run is ON. Use /dryrun off (and /copy on) for live max mint. Would try scatter=${scatterLike} opensea=${openSeaLike} whaleQty≈${whaleQty} on ${wallets.length} wallet(s).`,
+      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try scatter=${scatterLike} opensea=${openSeaLike} whaleQty≈${whaleQty} on ${wallets.length} funded wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
     };
   }
 
@@ -180,7 +229,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   const collection = purchase.contract;
 
   console.log(
-    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} wallets=${wallets.length} scatter=${scatterLike} opensea=${openSeaLike}`
+    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} scatter=${scatterLike} opensea=${openSeaLike}`
   );
 
   // 1) Scatter first when detected (signature-bound — must rebuild via API)

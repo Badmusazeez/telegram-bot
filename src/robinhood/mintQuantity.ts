@@ -8,25 +8,18 @@ export function hardMaxMintQuantity(): number {
 }
 
 /**
- * Quantity ladder: always try MAX first, then step down.
- * Whale qty is only a hint — never caps us below max.
+ * Quantity ladder: always try MAX first, then step down fast.
+ * Kept short so we don't burn the competitive mint window on estimateGas.
  */
 export function maxMintQuantityLadder(whaleQuantity?: number): number[] {
   const hardMax = hardMaxMintQuantity();
   const whale = Math.max(1, Math.min(Number(whaleQuantity) || 1, hardMax));
   const steps = [
     hardMax,
-    Math.min(hardMax, 40),
-    Math.min(hardMax, 30),
-    Math.min(hardMax, 25),
     Math.min(hardMax, 20),
-    Math.min(hardMax, 15),
     Math.min(hardMax, 10),
-    Math.min(hardMax, Math.max(whale * 2, whale)),
+    Math.min(hardMax, Math.max(whale, 5)),
     whale,
-    5,
-    3,
-    2,
     1,
   ];
   return [...new Set(steps.filter((q) => q >= 1 && q <= hardMax))].sort(
