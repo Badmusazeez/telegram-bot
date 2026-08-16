@@ -134,6 +134,7 @@ export function helpText(): string {
     `/untrack &lt;address&gt; — stop tracking`,
     `/copy on|off — toggle auto-mint`,
     `/dryrun on|off — toggle simulation mode`,
+    `/golive — /copy on + /dryrun off (live MAX mint)`,
     `/freemints on|off — free-mints-only filter`,
     `/addkey &lt;private_key&gt; [label] — add another mint wallet`,
     `/listkeys — list mint wallet addresses`,

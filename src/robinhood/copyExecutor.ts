@@ -114,14 +114,13 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
-  const trackProvider = getProvider();
-  const sourceTx = await trackProvider.getTransaction(purchase.txHash);
+  const sourceTx = await loadSourceTx(purchase.txHash);
   if (!sourceTx) {
     return {
       attempted: false,
       success: false,
       dryRun: state.dryRun,
-      reason: "Could not load source mint transaction.",
+      reason: "Could not load source mint transaction (RPC lag). Will retry next hit.",
     };
   }
 
@@ -170,39 +169,27 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   if (state.dryRun) {
     return {
       attempted: true,
-      success: true,
+      success: false,
       dryRun: true,
-      reason: `DRY RUN — multi-strategy max mint on ${wallets.length} wallet(s) for ${purchase.contract} (scatter=${scatterLike} opensea=${openSeaLike} whaleQty≈${whaleQty}).`,
+      reason: `NOT MINTED — dry-run is ON. Use /dryrun off (and /copy on) for live max mint. Would try scatter=${scatterLike} opensea=${openSeaLike} whaleQty≈${whaleQty} on ${wallets.length} wallet(s).`,
     };
   }
 
   const attempts: string[] = [];
-
-  // Always mint against the NFT collection address (not a router), at max qty.
   const collection = purchase.contract;
 
-  // 1) Scatter first when detected — whale calldata is signature-bound and cannot be replayed
+  console.log(
+    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} wallets=${wallets.length} scatter=${scatterLike} opensea=${openSeaLike}`
+  );
+
+  // 1) Scatter first when detected (signature-bound — must rebuild via API)
   if (scatterLike) {
     const scatter = await mintScatter(purchase, wallets, collection);
     if (scatter.success) return scatter;
     attempts.push(scatter.reason);
   }
 
-  // 2) OpenSea Drop builder — auto-fetches instant API key when needed
-  try {
-    await ensureOpenSeaApiKey();
-  } catch {
-    // continue; mintOpenSea will report failure
-  }
-  if (getOpenSeaApiKey()) {
-    const os = await mintOpenSea(purchase, wallets);
-    if (os.success) return os;
-    attempts.push(os.reason);
-  } else if (openSeaLike) {
-    attempts.push("OpenSea path needs API key (auto-fetch failed)");
-  }
-
-  // 3) Scatter fallback for sites that hide behind Scatter without us seeing selector yet
+  // 2) Scatter for unknown sites (many RH free mints are Scatter under the hood)
   if (!scatterLike) {
     try {
       const scatter = await mintScatter(purchase, wallets, collection);
@@ -215,16 +202,28 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     }
   }
 
-  // 4) Public contract max-mint probes (skip for Scatter — needs live signature)
-  if (!scatterLike) {
-    const publicTry = await mintPublicMax(
-      wallets,
-      [collection, sourceTx.to],
-      whaleQty
-    );
-    if (publicTry.success) return publicTry;
-    attempts.push(publicTry.reason);
+  // 3) OpenSea Drop builder — max_per_wallet
+  try {
+    await ensureOpenSeaApiKey();
+  } catch {
+    // continue
   }
+  if (getOpenSeaApiKey()) {
+    const os = await mintOpenSea(purchase, wallets);
+    if (os.success) return os;
+    attempts.push(os.reason);
+  } else if (openSeaLike) {
+    attempts.push("OpenSea path needs API key (auto-fetch failed)");
+  }
+
+  // 4) Public contract max-mint probes
+  const publicTry = await mintPublicMax(
+    wallets,
+    [collection, sourceTx.to],
+    whaleQty
+  );
+  if (publicTry.success) return publicTry;
+  attempts.push(publicTry.reason);
 
   // 5) Replay whale calldata (rewrite address + bump qty) — last resort
   const replay = await mintByReplay(
@@ -236,6 +235,8 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   );
   if (replay.success) return replay;
   attempts.push(replay.reason);
+
+  console.warn(`[mint] all strategies failed for ${purchase.txHash}: ${attempts.join(" || ")}`);
 
   return {
     attempted: true,
@@ -492,14 +493,41 @@ async function mintByReplay(
   };
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** RH is fast — logs can arrive before getTransaction is indexed. Retry both RPCs. */
+async function loadSourceTx(txHash: string) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const tx = await getProvider().getTransaction(txHash);
+      if (tx?.to && tx.data && tx.data !== "0x") return tx;
+    } catch {
+      // try mint rpc
+    }
+    try {
+      const tx = await getMintProvider().getTransaction(txHash);
+      if (tx?.to && tx.data && tx.data !== "0x") return tx;
+    } catch {
+      // continue
+    }
+    await sleep(350 * (attempt + 1));
+  }
+  return null;
+}
+
 async function sendMintTx(
   wallet: Wallet,
   params: { to: string; data: string; valueWei: bigint }
 ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
   const provider = getMintProvider();
+  const connected =
+    wallet.provider === provider ? wallet : wallet.connect(provider);
   try {
+    const from = await connected.getAddress();
     const gasEstimate = await provider.estimateGas({
-      from: wallet.address,
+      from,
       to: params.to,
       data: params.data,
       value: params.valueWei,
@@ -510,14 +538,48 @@ async function sendMintTx(
         error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
       };
     }
-    const sent = await wallet.sendTransaction({
+
+    const fee = await provider.getFeeData();
+    const gasLimit = (gasEstimate * 130n) / 100n;
+    const txRequest: {
+      to: string;
+      data: string;
+      value: bigint;
+      gasLimit: bigint;
+      chainId: number;
+      gasPrice?: bigint;
+      maxFeePerGas?: bigint;
+      maxPriorityFeePerGas?: bigint;
+    } = {
       to: params.to,
       data: params.data,
       value: params.valueWei,
-      gasLimit: (gasEstimate * 130n) / 100n,
-    });
-    const receipt = await sent.wait();
-    if (!receipt || receipt.status !== 1) {
+      gasLimit,
+      chainId: Number(config.chain.chainId),
+    };
+    if (fee.maxFeePerGas != null) {
+      txRequest.maxFeePerGas = fee.maxFeePerGas;
+      txRequest.maxPriorityFeePerGas = fee.maxPriorityFeePerGas ?? 0n;
+    } else if (fee.gasPrice != null) {
+      txRequest.gasPrice = fee.gasPrice;
+    }
+
+    console.log(
+      `[mint] sending from=${from.slice(0, 8)}… to=${params.to.slice(0, 10)}… gas=${gasLimit}`
+    );
+    const sent = await connected.sendTransaction(txRequest);
+    console.log(`[mint] broadcast ${sent.hash}`);
+
+    // Don't hang forever if RPC never returns the receipt.
+    const receipt = await Promise.race([
+      sent.wait(),
+      sleep(90_000).then(() => null),
+    ]);
+    if (!receipt) {
+      // Tx may still land — report hash so user can check explorer.
+      return { ok: true, txHash: sent.hash };
+    }
+    if (receipt.status !== 1) {
       return { ok: false, error: `reverted ${sent.hash}` };
     }
     return { ok: true, txHash: sent.hash };

@@ -1,8 +1,15 @@
+import { Interface } from "ethers";
 import { config } from "../config";
 import { clampMaxPerWallet, maxMintQuantityLadder } from "./mintQuantity";
 import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
+import { getMintProvider } from "./provider";
 
 const SCATTER_MINT_SELECTOR = "0x4a21a2df";
+const NAME_IFACE = new Interface([
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+]);
+
 const slugCache = new Map<string, string>(); // contract -> scatter slug
 
 export type ScatterInviteList = {
@@ -237,6 +244,30 @@ async function slugMatchesContract(
   return false;
 }
 
+async function onChainCollectionName(contract: string): Promise<string | null> {
+  try {
+    const provider = getMintProvider();
+    const data = NAME_IFACE.encodeFunctionData("name", []);
+    const raw = await provider.call({ to: contract, data });
+    if (!raw || raw === "0x") return null;
+    const [name] = NAME_IFACE.decodeFunctionResult("name", raw);
+    const s = String(name || "").trim();
+    return s || null;
+  } catch {
+    try {
+      const provider = getMintProvider();
+      const data = NAME_IFACE.encodeFunctionData("symbol", []);
+      const raw = await provider.call({ to: contract, data });
+      if (!raw || raw === "0x") return null;
+      const [sym] = NAME_IFACE.decodeFunctionResult("symbol", raw);
+      const s = String(sym || "").trim();
+      return s || null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 export async function resolveScatterSlug(
   contract: string,
   collectionName?: string
@@ -246,9 +277,10 @@ export async function resolveScatterSlug(
   if (cached) return cached;
 
   const openSea = await openSeaCollectionHints(contract);
+  const onChain = collectionName ? null : await onChainCollectionName(contract);
   const candidates = slugCandidates(contract, {
     openSeaSlug: openSea.slug,
-    collectionName: collectionName || openSea.name,
+    collectionName: collectionName || openSea.name || onChain,
     scatterSlug: openSea.scatterSlug,
   });
 
@@ -346,8 +378,13 @@ export async function prepareScatterFreeMint(params: {
     );
   }
 
-  const lists = await fetchEligibleLists(slug, params.minterAddress);
-  const picked = pickBestFreeList(lists);
+  const listsWithMinter = await fetchEligibleLists(slug, params.minterAddress);
+  let picked = pickBestFreeList(listsWithMinter);
+  if (!picked) {
+    // Some Scatter responses omit free public lists when filtered by minter.
+    const listsPublic = await fetchEligibleLists(slug);
+    picked = pickBestFreeList(listsPublic);
+  }
   if (!picked) {
     throw new Error("No active free Scatter mint list for this wallet");
   }

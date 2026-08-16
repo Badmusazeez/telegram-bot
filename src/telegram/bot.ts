@@ -294,6 +294,33 @@ export function createTelegramBot(): Bot {
     );
   });
 
+  bot.command("golive", async (ctx) => {
+    const wallets = getAllMintWallets();
+    if (wallets.length === 0) {
+      await ctx.reply(
+        "No mint wallets. Add one first:\n/addkey <private_key>\nor set PRIVATE_KEY in .env"
+      );
+      return;
+    }
+    await updateState((s) => {
+      s.copyEnabled = true;
+      s.dryRun = false;
+      s.freeMintsOnly = true;
+    });
+    await ctx.reply(
+      [
+        "<b>LIVE MAX MINT enabled</b>",
+        "• /copy on",
+        "• /dryrun off",
+        "• /freemints on",
+        ``,
+        `Wallets: <b>${wallets.length}</b>`,
+        `Fund each with Robinhood Chain gas, then keep the bot running.`,
+      ].join("\n"),
+      { parse_mode: "HTML" }
+    );
+  });
+
   bot.command("copy", async (ctx) => {
     const arg = (ctx.match || "").trim().toLowerCase();
     if (arg !== "on" && arg !== "off") {

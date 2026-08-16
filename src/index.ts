@@ -10,7 +10,7 @@ import { startPriceWatcher } from "./robinhood/priceWatcher";
 import { rpcLabels } from "./config";
 import { getAllMintWallets, getMintProvider, getProvider, getWallet } from "./robinhood/provider";
 import { loadMintWallets } from "./store/mintWallets";
-import { addWatchedPrice, loadState } from "./store/state";
+import { addWatchedPrice, getState, loadState } from "./store/state";
 import {
   formatTrackRpcIssue,
   formatTrackRpcSwitch,
@@ -30,6 +30,18 @@ async function main(): Promise<void> {
   console.log(`Starting robinhood-nft-copy-bot on ${config.chain.name}…`);
   await loadState();
   await loadMintWallets();
+
+  const bootState = getState();
+  if (!bootState.copyEnabled) {
+    console.warn(
+      "[boot] AUTO-MINT IS OFF — Telegram: /copy on   (or /golive)"
+    );
+  }
+  if (bootState.dryRun) {
+    console.warn(
+      "[boot] DRY-RUN IS ON — bot will NOT send mint txs. Telegram: /dryrun off   (or /golive)"
+    );
+  }
 
   try {
     await ensureOpenSeaApiKey();
@@ -90,7 +102,7 @@ async function main(): Promise<void> {
     `poll=${config.pollIntervalMs}ms lookback=${config.lookbackBlocks} maxScan=${config.chain.maxScanBlocks}`
   );
   console.log(
-    `freeMintsOnly=${config.freeMintsOnly} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun}`
+    `freeMintsOnly=${bootState.freeMintsOnly} autoMint=${bootState.copyEnabled ? "on" : "off"} dryRun=${bootState.dryRun}`
   );
   console.log(
     `priceAlerts=${config.priceAlertsEnabled ? "on" : "off"} threshold=${config.priceAlertPct}% pricePoll=${config.pricePollIntervalMs}ms`
@@ -120,7 +132,7 @@ async function main(): Promise<void> {
       ]);
       await broadcastPurchase(bot, enriched, copy);
 
-      if (purchase.isFreeMint && (copy.success || copy.dryRun)) {
+      if (purchase.isFreeMint && copy.success && !copy.dryRun) {
         await addWatchedPrice({
           contract: purchase.contract,
           tokenId: purchase.tokenId,
