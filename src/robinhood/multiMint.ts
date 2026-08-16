@@ -160,28 +160,28 @@ export function buildPublicMaxMintCandidates(params: {
   for (const q of qtys) {
     out.push({
       to: params.to,
-      data: MINT_IFACE.encodeFunctionData("mint", [BigInt(q)]),
+      data: MINT_IFACE.encodeFunctionData("mint(uint256)", [BigInt(q)]),
       valueWei: 0n,
       label: `mint(${q})`,
       quantity: q,
     });
     out.push({
       to: params.to,
-      data: MINT_IFACE.encodeFunctionData("publicMint", [BigInt(q)]),
+      data: MINT_IFACE.encodeFunctionData("publicMint(uint256)", [BigInt(q)]),
       valueWei: 0n,
       label: `publicMint(${q})`,
       quantity: q,
     });
     out.push({
       to: params.to,
-      data: MINT_IFACE.encodeFunctionData("claim", [BigInt(q)]),
+      data: MINT_IFACE.encodeFunctionData("claim(uint256)", [BigInt(q)]),
       valueWei: 0n,
       label: `claim(${q})`,
       quantity: q,
     });
     out.push({
       to: params.to,
-      data: MINT_IFACE.encodeFunctionData("mintTo", [
+      data: MINT_IFACE.encodeFunctionData("mintTo(address,uint256)", [
         params.minter,
         BigInt(q),
       ]),
@@ -193,7 +193,7 @@ export function buildPublicMaxMintCandidates(params: {
 
   out.push({
     to: params.to,
-    data: MINT_IFACE.encodeFunctionData("mint", []),
+    data: MINT_IFACE.encodeFunctionData("mint()", []),
     valueWei: 0n,
     label: "mint()",
     quantity: 1,
