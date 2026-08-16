@@ -1,0 +1,37 @@
+{
+  "name": "robinhood-nft-copy-bot",
+  "version": "1.0.0",
+  "description": "Robinhood Chain free-mint NFT copy bot with Telegram tracking",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "opensea-key": "tsx scripts/fetch-opensea-key.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "robinhood",
+    "robinhood-chain",
+    "nft",
+    "telegram",
+    "copy-trading",
+    "free-mint",
+    "bot"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "ethers": "^6.13.5",
+    "grammy": "^1.35.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

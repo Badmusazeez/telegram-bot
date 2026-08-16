@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+data/state.json
+data/mint-wallets.json
+data/opensea-api-key.json
+*.log
+.DS_Store
