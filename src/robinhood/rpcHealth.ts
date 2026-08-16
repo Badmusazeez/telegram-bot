@@ -64,7 +64,7 @@ export function formatTrackRpcIssue(issue: TrackRpcIssue): string {
     `Whale tracking may miss free mints until this clears.`,
     `<b>Detail:</b> <code>${escapeHtml(issue.message)}</code>`,
     ``,
-    `If failover is configured, bot will try TRACK_RPC_BACKUP_URL (Alchemy) then return to Chainstack when healthy.`,
+    `If failover is configured, bot will try TRACK_RPC_BACKUP_URL (Chainstack) then return to Alchemy when healthy.`,
   ].join("\n");
 }
 
@@ -76,14 +76,14 @@ export function formatTrackRpcSwitch(event: {
   if (event.to === "backup") {
     return [
       `<b>🔀 Tracker failover</b>`,
-      `Primary (Chainstack) is slow/down → using <b>Alchemy backup</b>.`,
+      `Primary (Alchemy) is slow/down → using <b>Chainstack backup</b>.`,
       `<b>Reason:</b> <code>${escapeHtml(event.reason.slice(0, 200))}</code>`,
-      `Bot will auto-switch back to Chainstack when it recovers.`,
+      `Bot will auto-switch back to Alchemy when it recovers.`,
     ].join("\n");
   }
   return [
     `<b>✅ Tracker recovered</b>`,
-    `Switched back to <b>Chainstack primary</b> tracker.`,
+    `Switched back to <b>Alchemy primary</b> tracker.`,
     `<b>Detail:</b> <code>${escapeHtml(event.reason.slice(0, 200))}</code>`,
   ].join("\n");
 }

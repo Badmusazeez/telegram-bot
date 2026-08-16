@@ -20,7 +20,7 @@ function walletsPath(): string {
 }
 
 function provider(): JsonRpcProvider {
-  // Mint wallets must send txs on the mint RPC (Chainstack), not tracker Alchemy.
+  // Mint wallets must send txs on the mint RPC (Alchemy), not a stale tracker URL.
   if (!sharedProvider) {
     sharedProvider = new JsonRpcProvider(config.mintRpcUrl);
   }

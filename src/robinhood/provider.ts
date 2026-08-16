@@ -7,17 +7,23 @@ import { getTrackProvider } from "./trackRpc";
 let mintProvider: JsonRpcProvider | null = null;
 let primaryWallet: Wallet | null = null;
 
-/** Active tracker RPC (Chainstack primary, Alchemy backup via failover). */
+/** Active tracker RPC (Alchemy primary, Chainstack backup via failover). */
 export function getProvider(): JsonRpcProvider {
   return getTrackProvider();
 }
 
-/** Mint RPC — send txs / gas estimates (Chainstack). */
+/** Mint RPC — send txs / gas estimates (Alchemy primary). */
 export function getMintProvider(): JsonRpcProvider {
   if (!mintProvider) {
     mintProvider = new JsonRpcProvider(config.mintRpcUrl);
   }
   return mintProvider;
+}
+
+/** Mint backup RPC (Chainstack) when configured. */
+export function getMintBackupProvider(): JsonRpcProvider | null {
+  if (!config.mintBackupRpcUrl) return null;
+  return new JsonRpcProvider(config.mintBackupRpcUrl);
 }
 
 /** Primary wallet (first configured) — used for status display. */

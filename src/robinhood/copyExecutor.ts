@@ -5,6 +5,7 @@ import type { CopyResult, NftPurchase } from "../types";
 import {
   gasIsAffordable,
   getAllMintWallets,
+  getMintBackupProvider,
   getMintProvider,
   getProvider,
 } from "./provider";
@@ -521,71 +522,87 @@ async function sendMintTx(
   wallet: Wallet,
   params: { to: string; data: string; valueWei: bigint }
 ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
-  const provider = getMintProvider();
-  const connected =
-    wallet.provider === provider ? wallet : wallet.connect(provider);
-  try {
-    const from = await connected.getAddress();
-    const gasEstimate = await provider.estimateGas({
-      from,
-      to: params.to,
-      data: params.data,
-      value: params.valueWei,
-    });
-    if (gasEstimate > BigInt(config.maxMintGasLimit)) {
-      return {
-        ok: false,
-        error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
+  const trySend = async (
+    provider: ReturnType<typeof getMintProvider>,
+    label: string
+  ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> => {
+    const connected = wallet.connect(provider);
+    try {
+      const from = await connected.getAddress();
+      const gasEstimate = await provider.estimateGas({
+        from,
+        to: params.to,
+        data: params.data,
+        value: params.valueWei,
+      });
+      if (gasEstimate > BigInt(config.maxMintGasLimit)) {
+        return {
+          ok: false,
+          error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
+        };
+      }
+
+      const fee = await provider.getFeeData();
+      const gasLimit = (gasEstimate * 130n) / 100n;
+      const txRequest: {
+        to: string;
+        data: string;
+        value: bigint;
+        gasLimit: bigint;
+        chainId: number;
+        gasPrice?: bigint;
+        maxFeePerGas?: bigint;
+        maxPriorityFeePerGas?: bigint;
+      } = {
+        to: params.to,
+        data: params.data,
+        value: params.valueWei,
+        gasLimit,
+        chainId: Number(config.chain.chainId),
       };
-    }
+      if (fee.maxFeePerGas != null) {
+        txRequest.maxFeePerGas = fee.maxFeePerGas;
+        txRequest.maxPriorityFeePerGas = fee.maxPriorityFeePerGas ?? 0n;
+      } else if (fee.gasPrice != null) {
+        txRequest.gasPrice = fee.gasPrice;
+      }
 
-    const fee = await provider.getFeeData();
-    const gasLimit = (gasEstimate * 130n) / 100n;
-    const txRequest: {
-      to: string;
-      data: string;
-      value: bigint;
-      gasLimit: bigint;
-      chainId: number;
-      gasPrice?: bigint;
-      maxFeePerGas?: bigint;
-      maxPriorityFeePerGas?: bigint;
-    } = {
-      to: params.to,
-      data: params.data,
-      value: params.valueWei,
-      gasLimit,
-      chainId: Number(config.chain.chainId),
-    };
-    if (fee.maxFeePerGas != null) {
-      txRequest.maxFeePerGas = fee.maxFeePerGas;
-      txRequest.maxPriorityFeePerGas = fee.maxPriorityFeePerGas ?? 0n;
-    } else if (fee.gasPrice != null) {
-      txRequest.gasPrice = fee.gasPrice;
-    }
+      console.log(
+        `[mint] sending via ${label} from=${from.slice(0, 8)}… to=${params.to.slice(0, 10)}… gas=${gasLimit}`
+      );
+      const sent = await connected.sendTransaction(txRequest);
+      console.log(`[mint] broadcast ${sent.hash}`);
 
-    console.log(
-      `[mint] sending from=${from.slice(0, 8)}… to=${params.to.slice(0, 10)}… gas=${gasLimit}`
-    );
-    const sent = await connected.sendTransaction(txRequest);
-    console.log(`[mint] broadcast ${sent.hash}`);
-
-    // Don't hang forever if RPC never returns the receipt.
-    const receipt = await Promise.race([
-      sent.wait(),
-      sleep(90_000).then(() => null),
-    ]);
-    if (!receipt) {
-      // Tx may still land — report hash so user can check explorer.
+      const receipt = await Promise.race([
+        sent.wait(),
+        sleep(90_000).then(() => null),
+      ]);
+      if (!receipt) {
+        return { ok: true, txHash: sent.hash };
+      }
+      if (receipt.status !== 1) {
+        return { ok: false, error: `reverted ${sent.hash}` };
+      }
       return { ok: true, txHash: sent.hash };
+    } catch (err) {
+      return { ok: false, error: shortError(err) };
     }
-    if (receipt.status !== 1) {
-      return { ok: false, error: `reverted ${sent.hash}` };
-    }
-    return { ok: true, txHash: sent.hash };
-  } catch (err) {
-    return { ok: false, error: shortError(err) };
+  };
+
+  const primary = await trySend(getMintProvider(), "alchemy");
+  if (primary.ok) return primary;
+
+  const backup = getMintBackupProvider();
+  const err = primary.error || "";
+  const networkish =
+    /timeout|econn|socket|502|503|504|unavailable|rate limit|429|quota|capacity/i.test(
+      err
+    );
+  if (backup && networkish) {
+    console.warn(`[mint] Alchemy mint RPC failed (${err}) — trying Chainstack backup`);
+    return trySend(backup, "chainstack-backup");
   }
+  return primary;
 }
 
 async function mintWithWallet(

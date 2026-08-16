@@ -24,7 +24,8 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     key: "robinhood",
     name: "Robinhood Chain",
     chainId: 4663n,
-    defaultRpcUrl: "https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY",
+    defaultRpcUrl:
+      "https://robinhood-mainnet.g.alchemy.com/v2/eVuaN-ufVXjtvufzC9Tiu",
     explorerTxUrl: (tx) => `https://robinhoodchain.blockscout.com/tx/${tx}`,
     explorerAddressUrl: (addr) =>
       `https://robinhoodchain.blockscout.com/address/${addr}`,

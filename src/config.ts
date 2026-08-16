@@ -12,13 +12,15 @@ const schema = z.object({
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
   /** robinhood */
   CHAIN: z.string().optional().default("robinhood"),
-  /** Primary tracker RPC (Chainstack recommended). */
+  /** Primary tracker RPC (Alchemy). */
   ROBINHOOD_RPC_URL: z.string().optional().default(""),
   TRACK_RPC_URL: z.string().optional().default(""),
-  /** Backup tracker RPC (Alchemy) — used when primary is slow/down. */
+  /** Backup tracker RPC (Chainstack) — used when primary is slow/down. */
   TRACK_RPC_BACKUP_URL: z.string().optional().default(""),
-  /** Mint / send-tx RPC (Chainstack recommended). Falls back to tracker RPC. */
+  /** Mint / send-tx RPC (Alchemy). Falls back to tracker RPC. */
   MINT_RPC_URL: z.string().optional().default(""),
+  /** Optional mint backup (Chainstack). Falls back to TRACK_RPC_BACKUP_URL. */
+  MINT_RPC_BACKUP_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
     .string()
@@ -97,6 +99,10 @@ const trackRpcUrl =
   chain.defaultRpcUrl;
 const trackBackupRpcUrl = env.TRACK_RPC_BACKUP_URL.trim();
 const mintRpcUrl = env.MINT_RPC_URL.trim() || trackRpcUrl;
+const mintBackupRaw =
+  env.MINT_RPC_BACKUP_URL.trim() || trackBackupRpcUrl;
+const mintBackupRpcUrl =
+  mintBackupRaw && mintBackupRaw !== mintRpcUrl ? mintBackupRaw : "";
 
 if (!trackRpcUrl.startsWith("http")) {
   throw new Error("TRACK_RPC_URL / ROBINHOOD_RPC_URL must be a valid RPC URL");
@@ -106,6 +112,9 @@ if (trackBackupRpcUrl && !trackBackupRpcUrl.startsWith("http")) {
 }
 if (!mintRpcUrl.startsWith("http")) {
   throw new Error("MINT_RPC_URL must be a valid RPC URL");
+}
+if (mintBackupRaw && !mintBackupRaw.startsWith("http")) {
+  throw new Error("MINT_RPC_BACKUP_URL must be a valid RPC URL");
 }
 if (trackBackupRpcUrl && trackBackupRpcUrl === trackRpcUrl) {
   console.warn(
@@ -146,6 +155,7 @@ export const rpcLabels = {
   track: maskRpc(trackRpcUrl),
   trackBackup: trackBackupRpcUrl ? maskRpc(trackBackupRpcUrl) : "(none)",
   mint: maskRpc(mintRpcUrl),
+  mintBackup: mintBackupRpcUrl ? maskRpc(mintBackupRpcUrl) : "(none)",
 };
 
 export const config = {
@@ -160,10 +170,12 @@ export const config = {
       ? trackBackupRpcUrl
       : "",
   mintRpcUrl,
+  mintBackupRpcUrl,
   alchemyApiKey:
     env.ALCHEMY_API_KEY.trim() ||
-    extractAlchemyKey(trackBackupRpcUrl) ||
     extractAlchemyKey(trackRpcUrl) ||
+    extractAlchemyKey(mintRpcUrl) ||
+    extractAlchemyKey(trackBackupRpcUrl) ||
     "",
   copyEnabled: env.COPY_ENABLED,
   dryRun: env.DRY_RUN,
