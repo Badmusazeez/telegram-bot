@@ -87,10 +87,13 @@ async function main(): Promise<void> {
     );
   });
   console.log(
+    `poll=${config.pollIntervalMs}ms lookback=${config.lookbackBlocks} maxScan=${config.chain.maxScanBlocks}`
+  );
+  console.log(
     `freeMintsOnly=${config.freeMintsOnly} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun}`
   );
   console.log(
-    `priceAlerts=${config.priceAlertsEnabled ? "on" : "off"} threshold=${config.priceAlertPct}% poll=${config.pricePollIntervalMs}ms`
+    `priceAlerts=${config.priceAlertsEnabled ? "on" : "off"} threshold=${config.priceAlertPct}% pricePoll=${config.pricePollIntervalMs}ms`
   );
   if (wallets.length > 0) {
     console.log(`Mint wallets (${wallets.length}):`);

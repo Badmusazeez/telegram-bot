@@ -128,10 +128,25 @@ export async function rememberTx(txHash: string): Promise<boolean> {
     return false;
   }
   state.recentTxHashes.push(key);
-  if (state.recentTxHashes.length > 500) {
-    state.recentTxHashes = state.recentTxHashes.slice(-500);
+  if (state.recentTxHashes.length > 2000) {
+    state.recentTxHashes = state.recentTxHashes.slice(-2000);
   }
-  await persistState();
+  // Debounced persist — do not await per-event (was stalling mint detection).
+  void persistState();
+  return true;
+}
+
+/** Sync dedupe for hot path; persists in background. */
+export function rememberTxFast(txHash: string): boolean {
+  const key = txHash.toLowerCase();
+  if (state.recentTxHashes.includes(key)) {
+    return false;
+  }
+  state.recentTxHashes.push(key);
+  if (state.recentTxHashes.length > 2000) {
+    state.recentTxHashes = state.recentTxHashes.slice(-2000);
+  }
+  void persistState();
   return true;
 }
 

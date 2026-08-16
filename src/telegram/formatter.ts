@@ -85,9 +85,14 @@ export function formatStatus(params: {
   priceAlertPct: number;
   maxBuyRobinhood: number;
   lastBlock: number;
+  tipBlock?: number;
   walletAddress?: string;
   balanceRobinhood?: string;
 }): string {
+  const lag =
+    params.tipBlock && params.lastBlock
+      ? Math.max(0, params.tipBlock - params.lastBlock)
+      : null;
   return [
     `<b>robinhood-nft-copy-bot status</b>`,
     ``,
@@ -100,11 +105,16 @@ export function formatStatus(params: {
     `Auto-mint: <b>${params.copyEnabled ? "ON" : "OFF"}</b>`,
     `Dry run: <b>${params.dryRun ? "ON" : "OFF"}</b>`,
     `Max buy (ignored for free mints): <b>${params.maxBuyRobinhood}</b>`,
-    `Last block: <code>${params.lastBlock || "—"}</code>`,
+    `Last scanned: <code>${params.lastBlock || "—"}</code>`,
+    params.tipBlock
+      ? `Chain tip: <code>${params.tipBlock}</code>${lag !== null ? ` (behind <b>${lag}</b> blocks)` : ""}`
+      : "",
     params.walletAddress
       ? `Bot wallet: <code>${escHtml(params.walletAddress)}</code> (balance ${escHtml(params.balanceRobinhood ?? "?")})`
       : `Bot wallet: <i>not configured</i>`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function helpText(): string {

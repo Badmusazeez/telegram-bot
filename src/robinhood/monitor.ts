@@ -2,7 +2,7 @@ import { Interface, Log, formatEther, id, zeroPadValue } from "ethers";
 import { config } from "../config";
 import {
   getState,
-  rememberTx,
+  rememberTxFast,
   shortAddress,
   updateState,
 } from "../store/state";
@@ -137,17 +137,20 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function logsForBuyerChunk(
+/**
+ * One getLogs for ALL tracked wallets (topic OR on `to`).
+ * Robinhood ~100ms/block — scanning wallets one-by-one was too slow and missed mints.
+ */
+async function logsForTrackedChunk(
   fromBlock: number,
   toBlock: number,
-  buyer: string
+  buyerTopics: string[]
 ): Promise<Log[]> {
-  // Inclusive range must stay within Alchemy Free's 10-block cap.
   if (toBlock - fromBlock + 1 > 10) {
     toBlock = fromBlock + 9;
   }
 
-  const toTopic = zeroPadValue(buyer, 32);
+  const toFilter = buyerTopics.length === 1 ? buyerTopics[0] : buyerTopics;
   let lastErr: unknown;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -156,45 +159,64 @@ async function logsForBuyerChunk(
         provider.getLogs({
           fromBlock,
           toBlock,
-          topics: [TRANSFER_TOPIC, null, toTopic],
+          topics: [TRANSFER_TOPIC, null, toFilter],
         })
       );
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      // If Alchemy rejects the range, split in half and recurse.
       if (
-        msg.includes("10 block") &&
+        (msg.includes("10 block") || /block range/i.test(msg)) &&
         toBlock > fromBlock
       ) {
         const mid = Math.floor((fromBlock + toBlock) / 2);
-        const left = await logsForBuyerChunk(fromBlock, mid, buyer);
-        const right = await logsForBuyerChunk(mid + 1, toBlock, buyer);
+        const left = await logsForTrackedChunk(fromBlock, mid, buyerTopics);
+        const right = await logsForTrackedChunk(mid + 1, toBlock, buyerTopics);
         return [...left, ...right];
       }
+      // Some RPCs reject large topic OR lists — fall back to per-wallet.
+      if (
+        buyerTopics.length > 1 &&
+        (/query returned more than|too many|response size|payload/i.test(msg) ||
+          msg.includes("413"))
+      ) {
+        const parts = await Promise.all(
+          buyerTopics.map((t) => logsForTrackedChunk(fromBlock, toBlock, [t]))
+        );
+        return parts.flat();
+      }
       console.warn(
-        `[monitor] getLogs retry ${attempt}/3 for ${buyer} blocks ${fromBlock}-${toBlock}: ${msg}`
+        `[monitor] getLogs retry ${attempt}/3 blocks ${fromBlock}-${toBlock}: ${msg}`
       );
-      await sleep(800 * attempt);
+      await sleep(400 * attempt);
     }
   }
 
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
-async function logsForBuyer(
+async function logsForTrackedWallets(
   fromBlock: number,
   toBlock: number,
-  buyer: string
+  buyers: string[]
 ): Promise<Log[]> {
-  // Alchemy Free tier caps eth_getLogs at 10 blocks on Robinhood.
   const chunkSize = Math.min(10, Math.max(1, config.chain.getLogsMaxBlocks));
+  const buyerTopics = buyers.map((b) => zeroPadValue(b, 32));
   const all: Log[] = [];
 
+  // Parallelize chunk fetches (bounded) so catch-up stays ahead of ~10 blk/s chain.
+  const ranges: Array<{ start: number; end: number }> = [];
   for (let start = fromBlock; start <= toBlock; start += chunkSize) {
-    const end = Math.min(toBlock, start + chunkSize - 1);
-    const part = await logsForBuyerChunk(start, end, buyer);
-    all.push(...part);
+    ranges.push({ start, end: Math.min(toBlock, start + chunkSize - 1) });
+  }
+
+  const concurrency = 4;
+  for (let i = 0; i < ranges.length; i += concurrency) {
+    const batch = ranges.slice(i, i + concurrency);
+    const parts = await Promise.all(
+      batch.map((r) => logsForTrackedChunk(r.start, r.end, buyerTopics))
+    );
+    for (const part of parts) all.push(...part);
   }
 
   return all;
@@ -219,93 +241,101 @@ export async function scanForPurchases(
     throw err;
   }
 
+  // Leave 1 block cushion — tip block logs can still be incomplete on some RPCs.
+  const tip = Math.max(0, latest - 1);
+
   let fromBlock = state.lastProcessedBlock
     ? state.lastProcessedBlock + 1
-    : Math.max(0, latest - config.lookbackBlocks);
+    : Math.max(0, tip - config.lookbackBlocks);
 
-  const maxScan = config.chain.maxScanBlocks;
-  if (latest - fromBlock > maxScan) {
-    fromBlock = latest - maxScan;
+  if (fromBlock > tip) {
+    return [];
   }
-  if (fromBlock > latest) {
+
+  /**
+   * NEVER jump the cursor to the tip (that permanently skips mints).
+   * Robinhood ≈ 10 blocks/sec — only advance through a bounded window per tick
+   * and leave the rest for the next poll.
+   */
+  const maxScan = Math.max(50, config.chain.maxScanBlocks);
+  const toBlock = Math.min(tip, fromBlock + maxScan - 1);
+
+  const buyers = state.trackedWallets.map((w) => w.address.toLowerCase());
+  const buyerSet = new Set(buyers);
+
+  let logs: Log[] = [];
+  try {
+    logs = await logsForTrackedWallets(fromBlock, toBlock, buyers);
+  } catch (err) {
+    console.error(
+      `[monitor] getLogs failed blocks ${fromBlock}-${toBlock}:`,
+      err instanceof Error ? err.message : err
+    );
+    const issue = classifyTrackRpcError(err);
+    if (issue && onRpcIssue) {
+      await onRpcIssue(issue);
+    }
+    // Do not advance cursor — retry same window.
     return [];
   }
 
   const purchases: NftPurchase[] = [];
-  let scanOk = true;
+  // Cache tx value lookups (721A multi-Transfer spam).
+  const valueCache = new Map<
+    string,
+    { valueRobinhood: number; marketplace?: string }
+  >();
 
-  for (const wallet of state.trackedWallets) {
-    let logs: Log[] = [];
-    try {
-      logs = await logsForBuyer(fromBlock, latest, wallet.address);
-    } catch (err) {
-      scanOk = false;
-      console.error(
-        `[monitor] getLogs failed for ${wallet.address}:`,
-        err instanceof Error ? err.message : err
-      );
-      const issue = classifyTrackRpcError(err);
-      if (issue && onRpcIssue) {
-        await onRpcIssue(issue);
-      } else {
-        console.error(
-          "[monitor] Tip: Alchemy Free allows max 10 blocks per eth_getLogs. Use TRACK_RPC_URL=https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY"
-        );
-      }
+  for (const log of logs) {
+    const decoded = decodeTransfer(log);
+    if (!decoded) continue;
+    if (!buyerSet.has(decoded.to)) continue;
+
+    const dedupeKey = `${log.transactionHash}:${decoded.contract}:${decoded.tokenId}`;
+    const isNew = rememberTxFast(dedupeKey);
+    if (!isNew) continue;
+
+    const txKey = log.transactionHash.toLowerCase();
+    let valued = valueCache.get(txKey);
+    if (!valued) {
+      valued = await estimatePurchaseValue(log.transactionHash, decoded.to);
+      valueCache.set(txKey, valued);
+    }
+    const { valueRobinhood, marketplace } = valued;
+
+    const isFreeMint = decoded.from === ZERO && valueRobinhood <= 0;
+    const isPaid = !isFreeMint && (valueRobinhood > 0 || !!marketplace);
+
+    if (state.freeMintsOnly && !isFreeMint) {
       continue;
     }
 
-    for (const log of logs) {
-      const decoded = decodeTransfer(log);
-      if (!decoded) {
-        continue;
-      }
-
-      const dedupeKey = `${log.transactionHash}:${decoded.contract}:${decoded.tokenId}`;
-      const isNew = await rememberTx(dedupeKey);
-      if (!isNew) {
-        continue;
-      }
-
-      const { valueRobinhood, marketplace } = await estimatePurchaseValue(
-        log.transactionHash,
-        decoded.to
-      );
-
-      // Free mint = mint Transfer (from zero) with no native payment.
-      // Do NOT require !marketplace — OpenSea/Scatter paths must still copy.
-      const isFreeMint = decoded.from === ZERO && valueRobinhood <= 0;
-      const isPaid = !isFreeMint && (valueRobinhood > 0 || !!marketplace);
-
-      if (state.freeMintsOnly && !isFreeMint) {
-        continue;
-      }
-
-      // Speed path: do NOT await NFT metadata / block before copy-mint.
-      // Enrichment happens in parallel with auto-mint (see enrichPurchase).
-      purchases.push({
-        txHash: log.transactionHash,
-        buyer: decoded.to,
-        seller: decoded.from,
-        contract: decoded.contract,
-        tokenId: decoded.tokenId,
-        valueRobinhood,
-        blockNumber: log.blockNumber,
-        timestamp: Math.floor(Date.now() / 1000),
-        marketplace: isFreeMint
-          ? "free-mint"
-          : marketplace || (valueRobinhood > 0 ? "on-chain" : "transfer"),
-        isFreeMint,
-        isPaid,
-      });
-    }
+    purchases.push({
+      txHash: log.transactionHash,
+      buyer: decoded.to,
+      seller: decoded.from,
+      contract: decoded.contract,
+      tokenId: decoded.tokenId,
+      valueRobinhood,
+      blockNumber: log.blockNumber,
+      timestamp: Math.floor(Date.now() / 1000),
+      marketplace: isFreeMint
+        ? "free-mint"
+        : marketplace || (valueRobinhood > 0 ? "on-chain" : "transfer"),
+      isFreeMint,
+      isPaid,
+    });
   }
 
-  // Don't skip blocks when RPC fails — retry same window next poll.
-  if (scanOk) {
-    await updateState((s) => {
-      s.lastProcessedBlock = latest;
-    });
+  // Advance only through the window we successfully scanned (never skip ahead).
+  await updateState((s) => {
+    s.lastProcessedBlock = toBlock;
+  });
+
+  if (toBlock < tip) {
+    console.log(
+      `[monitor] catch-up ${fromBlock}-${toBlock} (tip ${tip}, behind ${tip - toBlock} blocks)`
+    );
   }
 
   return purchases;
@@ -323,17 +353,40 @@ export async function startMonitor(
   onRpcIssue?: RpcIssueHandler
 ): Promise<() => void> {
   let stopped = false;
-  let running = false;
+  let scanning = false;
+  /** Handlers run in background so mint/Telegram never block the next scan. */
+  let handleTail: Promise<void> = Promise.resolve();
+
+  const enqueuePurchases = (purchases: NftPurchase[]) => {
+    for (const purchase of purchases) {
+      handleTail = handleTail
+        .then(async () => {
+          if (stopped) return;
+          try {
+            await onPurchase(purchase);
+          } catch (err) {
+            console.error(
+              `[monitor] handler failed for ${purchase.txHash}:`,
+              err instanceof Error ? err.message : err
+            );
+          }
+        })
+        .catch(() => {
+          // keep queue alive
+        });
+    }
+  };
 
   const tick = async () => {
-    if (stopped || running) {
+    if (stopped || scanning) {
       return;
     }
-    running = true;
+    scanning = true;
     try {
       const purchases = await scanForPurchases(onRpcIssue);
-      for (const purchase of purchases) {
-        await onPurchase(purchase);
+      if (purchases.length > 0) {
+        console.log(`[monitor] detected ${purchases.length} event(s)`);
+        enqueuePurchases(purchases);
       }
     } catch (err) {
       console.error("[monitor] scan failed:", err);
@@ -342,11 +395,12 @@ export async function startMonitor(
         await onRpcIssue(issue);
       }
     } finally {
-      running = false;
+      scanning = false;
     }
   };
 
   await tick();
+  // Catch up faster when behind: poll often; scan itself is the rate limiter.
   const timer = setInterval(() => {
     void tick();
   }, config.pollIntervalMs);

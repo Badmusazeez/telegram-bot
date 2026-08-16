@@ -30,10 +30,14 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       `https://robinhoodchain.blockscout.com/address/${addr}`,
     openseaChain: "robinhood",
     alchemyNftNetwork: "robinhood-mainnet",
-    maxScanBlocks: 100,
+    // RH ≈ 100ms/block (~10 blk/s). Scan windows must stay ahead of the tip
+    // without JUMPING (jumping permanently skips mints). 2000 ≈ ~3+ min/tick.
+    maxScanBlocks: 2000,
     getLogsMaxBlocks: 10,
-    defaultLookbackBlocks: 40,
-    defaultPollIntervalMs: 8_000,
+    // Fresh start / restart lookback (~2 min).
+    defaultLookbackBlocks: 1200,
+    // Scan often; copy/Telegram no longer block the scan loop.
+    defaultPollIntervalMs: 2_500,
   },
 };
 

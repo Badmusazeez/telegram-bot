@@ -123,6 +123,12 @@ export function createTelegramBot(): Bot {
     const pendingSchedules = state.scheduledMints.filter(
       (j) => j.status === "pending"
     ).length;
+    let tipBlock: number | undefined;
+    try {
+      tipBlock = Number(await getProvider().getBlockNumber());
+    } catch {
+      tipBlock = undefined;
+    }
     await ctx.reply(
       formatStatus({
         trackedCount: state.trackedWallets.length,
@@ -135,6 +141,7 @@ export function createTelegramBot(): Bot {
         priceAlertPct: state.priceAlertPct,
         maxBuyRobinhood: state.maxBuyRobinhood,
         lastBlock: state.lastProcessedBlock,
+        tipBlock,
         walletAddress,
         balanceRobinhood,
       }),
