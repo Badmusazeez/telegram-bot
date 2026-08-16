@@ -12,12 +12,12 @@ const schema = z.object({
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
   /** robinhood */
   CHAIN: z.string().optional().default("robinhood"),
-  /** Primary tracker RPC (Alchemy). */
+  /** Primary tracker RPC (Alchemy — testnet or mainnet). */
   ROBINHOOD_RPC_URL: z.string().optional().default(""),
   TRACK_RPC_URL: z.string().optional().default(""),
   /** Backup tracker RPC (Chainstack) — used when primary is slow/down. */
   TRACK_RPC_BACKUP_URL: z.string().optional().default(""),
-  /** Mint / send-tx RPC (Alchemy). Falls back to tracker RPC. */
+  /** Mint / send-tx RPC (Alchemy mainnet recommended). Falls back to tracker RPC. */
   MINT_RPC_URL: z.string().optional().default(""),
   /** Optional mint backup (Chainstack). Falls back to TRACK_RPC_BACKUP_URL. */
   MINT_RPC_BACKUP_URL: z.string().optional().default(""),
