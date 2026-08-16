@@ -112,7 +112,7 @@ export function helpText(): string {
     `<b>robinhood-nft-copy-bot</b>`,
     `Active chain: <b>${escHtml(config.chain.name)}</b>`,
     ``,
-    `Tracks whale wallets and auto-copies <b>free mints only</b> on Robinhood Chain. Paid buys are skipped.`,
+    `Tracks whale wallets and auto-copies <b>free mints only</b> on Robinhood Chain (OpenSea / Scatter / contract / site). Always tries <b>max</b> free qty. Paid buys are skipped.`,
     `Also watches minted NFT / collection prices and alerts on Telegram.`,
     ``,
     `<b>Commands</b>`,

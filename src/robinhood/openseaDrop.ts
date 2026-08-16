@@ -8,6 +8,7 @@ export type OpenSeaDropStage = {
   price?: string;
   start_time?: string;
   end_time?: string;
+  max_per_wallet?: string;
 };
 
 export type OpenSeaDrop = {

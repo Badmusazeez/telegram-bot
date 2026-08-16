@@ -1,7 +1,7 @@
 import { config } from "./config";
 import { maybeCopyPurchase } from "./robinhood/copyExecutor";
 import { startMintScheduler } from "./robinhood/mintScheduler";
-import { startMonitor } from "./robinhood/monitor";
+import { enrichPurchase, startMonitor } from "./robinhood/monitor";
 import { startPriceWatcher } from "./robinhood/priceWatcher";
 import { rpcLabels } from "./config";
 import { getAllMintWallets, getMintProvider, getProvider, getWallet } from "./robinhood/provider";
@@ -90,22 +90,26 @@ async function main(): Promise<void> {
       console.log(
         `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
       );
-      const copy = await maybeCopyPurchase(purchase);
-      await broadcastPurchase(bot, purchase, copy);
+      // Copy immediately; enrich metadata in parallel for Telegram (do not delay mint).
+      const [copy, enriched] = await Promise.all([
+        maybeCopyPurchase(purchase),
+        enrichPurchase(purchase),
+      ]);
+      await broadcastPurchase(bot, enriched, copy);
 
       if (purchase.isFreeMint && (copy.success || copy.dryRun)) {
         await addWatchedPrice({
           contract: purchase.contract,
           tokenId: purchase.tokenId,
           label:
-            purchase.tokenName ||
-            purchase.collectionName ||
+            enriched.tokenName ||
+            enriched.collectionName ||
             `${purchase.contract.slice(0, 6)}…#${purchase.tokenId}`,
         });
         await addWatchedPrice({
           contract: purchase.contract,
           label:
-            (purchase.collectionName || purchase.contract.slice(0, 10)) +
+            (enriched.collectionName || purchase.contract.slice(0, 10)) +
             " floor",
         });
       }

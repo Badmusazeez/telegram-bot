@@ -13,6 +13,7 @@ export type ScatterInviteList = {
   start_time?: string | null;
   end_time?: string | null;
   address?: string;
+  root?: string;
 };
 
 export type ScatterMintTx = {
@@ -74,7 +75,48 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
   return json;
 }
 
-async function openSeaCollectionSlug(contract: string): Promise<string | null> {
+function extractScatterSlugFromText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const m = text.match(/scatter\.art\/c\/([a-z0-9-]+)/i);
+  return m?.[1]?.toLowerCase() || null;
+}
+
+/** Expand one slug into common Scatter URL variants (Cash Apes → cash-ape). */
+export function expandSlugVariants(raw: string): string[] {
+  const base = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\/(www\.)?scatter\.art\/c\//i, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!base) return [];
+
+  const out: string[] = [];
+  const add = (s?: string | null) => {
+    if (!s) return;
+    const v = s.replace(/^-|-$/g, "");
+    if (v && !out.includes(v)) out.push(v);
+  };
+
+  add(base);
+  add(base.replace(/-/g, ""));
+  if (base.endsWith("-s")) add(base.slice(0, -2));
+  if (base.endsWith("s") && base.length > 3) add(base.slice(0, -1));
+  if (base.endsWith("es") && base.length > 4) add(base.slice(0, -2));
+  if (base.endsWith("ies") && base.length > 5) add(`${base.slice(0, -3)}y`);
+  // Pluralize simple singular forms too (ape → apes)
+  if (!base.endsWith("s")) {
+    add(`${base}s`);
+    add(`${base}es`);
+  }
+  return out;
+}
+
+async function openSeaCollectionHints(contract: string): Promise<{
+  slug?: string | null;
+  name?: string | null;
+  scatterSlug?: string | null;
+}> {
   try {
     const chain = config.chain.openseaChain;
     const headers: Record<string, string> = { accept: "application/json" };
@@ -85,19 +127,66 @@ async function openSeaCollectionSlug(contract: string): Promise<string | null> {
       `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}`,
       { headers }
     );
-    if (!res.ok) return null;
-    const data = (await res.json()) as { collection?: string; name?: string };
-    return data.collection || null;
+    if (!res.ok) return {};
+    const data = (await res.json()) as {
+      collection?: string;
+      name?: string;
+    };
+    const slug = data.collection || null;
+    let scatterSlug: string | null = null;
+    let name = data.name || null;
+
+    if (slug && config.openseaApiKey) {
+      try {
+        const colRes = await fetch(
+          `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`,
+          { headers }
+        );
+        if (colRes.ok) {
+          const col = (await colRes.json()) as {
+            name?: string;
+            project_url?: string;
+            discord_url?: string;
+            telegram_url?: string;
+            wiki_url?: string;
+            instagram_username?: string;
+            description?: string;
+          };
+          name = col.name || name;
+          const blob = [
+            col.project_url,
+            col.discord_url,
+            col.telegram_url,
+            col.wiki_url,
+            col.description,
+          ]
+            .filter(Boolean)
+            .join("\n");
+          scatterSlug = extractScatterSlugFromText(blob);
+        }
+      } catch {
+        // ignore collection detail failures
+      }
+    }
+
+    return { slug, name, scatterSlug };
   } catch {
-    return null;
+    return {};
   }
 }
 
 function slugCandidates(
   contract: string,
-  hints: { openSeaSlug?: string | null; collectionName?: string | null }
+  hints: {
+    openSeaSlug?: string | null;
+    collectionName?: string | null;
+    scatterSlug?: string | null;
+  }
 ): string[] {
   const out: string[] = [];
+  const addAll = (s?: string | null) => {
+    for (const v of expandSlugVariants(s || "")) add(v);
+  };
   const add = (s?: string | null) => {
     if (!s) return;
     const v = s.trim().toLowerCase();
@@ -105,24 +194,39 @@ function slugCandidates(
   };
 
   add(slugCache.get(contract.toLowerCase()));
-  add(hints.openSeaSlug);
-  if (hints.openSeaSlug?.endsWith("-s")) {
-    add(hints.openSeaSlug.slice(0, -2));
-  }
-  if (hints.collectionName) {
-    add(
-      hints.collectionName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "")
-    );
-    add(
-      hints.collectionName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "")
-    );
-  }
+  add(hints.scatterSlug);
+  addAll(hints.scatterSlug);
+  addAll(hints.openSeaSlug);
+  addAll(hints.collectionName);
   return out;
+}
+
+async function slugMatchesContract(
+  slug: string,
+  contract: string
+): Promise<boolean> {
+  const key = contract.toLowerCase();
+  try {
+    const data = (await fetchJson(
+      `https://api.scatter.art/v1/collection/${encodeURIComponent(slug)}`
+    )) as { address?: string };
+    if (data?.address && data.address.toLowerCase() === key) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  try {
+    const lists = await fetchEligibleLists(slug);
+    if (lists.some((l) => l.address?.toLowerCase() === key)) {
+      return true;
+    }
+    // Some collections omit address on list rows; accept if collection fetch matched earlier.
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 export async function resolveScatterSlug(
@@ -133,35 +237,17 @@ export async function resolveScatterSlug(
   const cached = slugCache.get(key);
   if (cached) return cached;
 
-  const openSeaSlug = await openSeaCollectionSlug(contract);
+  const openSea = await openSeaCollectionHints(contract);
   const candidates = slugCandidates(contract, {
-    openSeaSlug,
-    collectionName,
+    openSeaSlug: openSea.slug,
+    collectionName: collectionName || openSea.name,
+    scatterSlug: openSea.scatterSlug,
   });
 
   for (const slug of candidates) {
-    try {
-      const data = (await fetchJson(
-        `https://api.scatter.art/v1/collection/${encodeURIComponent(slug)}`
-      )) as { address?: string };
-      if (
-        data?.address &&
-        data.address.toLowerCase() === key
-      ) {
-        slugCache.set(key, slug);
-        return slug;
-      }
-      // Some responses may omit address but still be valid for lists
-      const lists = await fetchEligibleLists(slug);
-      if (
-        lists.some((l) => l.address?.toLowerCase() === key) ||
-        lists.length > 0
-      ) {
-        slugCache.set(key, slug);
-        return slug;
-      }
-    } catch {
-      // try next candidate
+    if (await slugMatchesContract(slug, key)) {
+      slugCache.set(key, slug);
+      return slug;
     }
   }
   return null;
@@ -280,4 +366,10 @@ export async function prepareScatterFreeMint(params: {
     listName: picked.list.name || picked.list.id,
     slug,
   };
+}
+
+/** Remember a known Scatter slug (e.g. from a pasted URL). */
+export function rememberScatterSlug(contract: string, slug: string): void {
+  const s = expandSlugVariants(slug)[0];
+  if (s) slugCache.set(contract.toLowerCase(), s);
 }

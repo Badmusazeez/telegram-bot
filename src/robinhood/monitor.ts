@@ -52,6 +52,27 @@ async function enrichNft(
   }
 }
 
+/** Fill collection/token metadata + block time (safe to run parallel with mint). */
+export async function enrichPurchase(
+  purchase: NftPurchase
+): Promise<NftPurchase> {
+  try {
+    const [meta, block] = await Promise.all([
+      enrichNft(purchase.contract, purchase.tokenId),
+      withTrackRpc((provider) => provider.getBlock(purchase.blockNumber)).catch(
+        () => null
+      ),
+    ]);
+    return {
+      ...purchase,
+      ...meta,
+      timestamp: block?.timestamp ?? purchase.timestamp,
+    };
+  } catch {
+    return purchase;
+  }
+}
+
 function extractAlchemyKey(rpcUrl: string): string | null {
   const match = rpcUrl.match(/g\.alchemy\.com\/v2\/([^/?#]+)/i);
   return match?.[1] ?? null;
@@ -251,19 +272,17 @@ export async function scanForPurchases(
         decoded.to
       );
 
-      const isFreeMint =
-        decoded.from === ZERO && valueRobinhood <= 0 && !marketplace;
-      const isPaid = valueRobinhood > 0 || !!marketplace;
+      // Free mint = mint Transfer (from zero) with no native payment.
+      // Do NOT require !marketplace — OpenSea/Scatter paths must still copy.
+      const isFreeMint = decoded.from === ZERO && valueRobinhood <= 0;
+      const isPaid = !isFreeMint && (valueRobinhood > 0 || !!marketplace);
 
       if (state.freeMintsOnly && !isFreeMint) {
         continue;
       }
 
-      const meta = await enrichNft(decoded.contract, decoded.tokenId);
-      const block = await withTrackRpc((provider) =>
-        provider.getBlock(log.blockNumber)
-      );
-
+      // Speed path: do NOT await NFT metadata / block before copy-mint.
+      // Enrichment happens in parallel with auto-mint (see enrichPurchase).
       purchases.push({
         txHash: log.transactionHash,
         buyer: decoded.to,
@@ -272,13 +291,12 @@ export async function scanForPurchases(
         tokenId: decoded.tokenId,
         valueRobinhood,
         blockNumber: log.blockNumber,
-        timestamp: block?.timestamp ?? Math.floor(Date.now() / 1000),
+        timestamp: Math.floor(Date.now() / 1000),
         marketplace: isFreeMint
           ? "free-mint"
           : marketplace || (valueRobinhood > 0 ? "on-chain" : "transfer"),
         isFreeMint,
         isPaid,
-        ...meta,
       });
     }
   }

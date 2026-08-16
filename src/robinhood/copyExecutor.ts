@@ -12,6 +12,12 @@ import {
   isScatterMintCalldata,
   prepareScatterFreeMint,
 } from "./scatter";
+import {
+  buildPublicMaxMintCandidates,
+  decodeWhaleMintQuantity,
+  prepareOpenSeaFreeMint,
+  replaceCalldataQuantity,
+} from "./multiMint";
 
 /** One copy attempt per whale mint tx (Scatter/721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -19,8 +25,11 @@ const copyBySourceTx = new Map<string, Promise<CopyResult>>();
 /**
  * Free-mint copy executor for Robinhood Chain.
  *
- * - Scatter.art: build fresh mint calldata via Scatter API (max free list qty)
- * - Other: replay whale calldata across all mint wallets
+ * Strategies (max qty when possible):
+ * 1) Scatter.art API
+ * 2) OpenSea Drop API
+ * 3) Public contract mint/claim variants at max qty
+ * 4) Whale calldata replay (+ address rewrite / qty bump)
  */
 export async function maybeCopyPurchase(
   purchase: NftPurchase
@@ -153,51 +162,80 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   }
 
   const scatterLike = isScatterMintCalldata(sourceTx.data);
+  const openSeaLike = isOpenSeaMinter(sourceTx.to);
+  const whaleQty = decodeWhaleMintQuantity(sourceTx.data) || 1;
 
   if (state.dryRun) {
     return {
       attempted: true,
       success: true,
       dryRun: true,
-      reason: scatterLike
-        ? `DRY RUN — Scatter free mint on ${wallets.length} wallet(s) (max list qty) for ${purchase.contract}.`
-        : `DRY RUN — would mint on ${wallets.length} wallet(s) for collection ${purchase.contract} #${purchase.tokenId}.`,
+      reason: `DRY RUN — multi-strategy max mint on ${wallets.length} wallet(s) for ${purchase.contract} (scatter=${scatterLike} opensea=${openSeaLike} whaleQty≈${whaleQty}).`,
     };
   }
 
-  // Scatter: never replay whale calldata (signatures are wallet-bound).
+  const attempts: string[] = [];
+
+  // Always mint against the NFT collection address (not a router), at max qty.
+  const collection = purchase.contract;
+
+  // 1) Scatter first when detected — whale calldata is signature-bound and cannot be replayed
   if (scatterLike) {
-    return mintScatter(purchase, wallets, sourceTx.to);
+    const scatter = await mintScatter(purchase, wallets, collection);
+    if (scatter.success) return scatter;
+    attempts.push(scatter.reason);
   }
 
-  // Non-Scatter: try calldata replay first; if all wallet-bound, try Scatter API fallback.
+  // 2) OpenSea Drop builder (needs API key) — max_per_wallet
+  if (config.openseaApiKey) {
+    const os = await mintOpenSea(purchase, wallets);
+    if (os.success) return os;
+    attempts.push(os.reason);
+  } else if (openSeaLike) {
+    attempts.push("OpenSea path needs OPENSEA_API_KEY");
+  }
+
+  // 3) Scatter fallback for sites that hide behind Scatter without us seeing selector yet
+  if (!scatterLike) {
+    try {
+      const scatter = await mintScatter(purchase, wallets, collection);
+      if (scatter.success) return scatter;
+      attempts.push(scatter.reason);
+    } catch (err) {
+      attempts.push(
+        `Scatter: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  // 4) Public contract max-mint probes (skip for Scatter — needs live signature)
+  if (!scatterLike) {
+    const publicTry = await mintPublicMax(
+      wallets,
+      [collection, sourceTx.to],
+      whaleQty
+    );
+    if (publicTry.success) return publicTry;
+    attempts.push(publicTry.reason);
+  }
+
+  // 5) Replay whale calldata (rewrite address + bump qty) — last resort
   const replay = await mintByReplay(
     wallets,
     sourceTx.to,
     sourceTx.data,
-    purchase.buyer
+    purchase.buyer,
+    whaleQty
   );
-  if (replay.success) {
-    return replay;
-  }
+  if (replay.success) return replay;
+  attempts.push(replay.reason);
 
-  const allBound = replay.reason.includes("wallet-bound");
-  if (allBound) {
-    try {
-      return await mintScatter(purchase, wallets, purchase.contract);
-    } catch (err) {
-      return {
-        attempted: true,
-        success: false,
-        dryRun: false,
-        reason: `${replay.reason} | Scatter fallback: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      };
-    }
-  }
-
-  return replay;
+  return {
+    attempted: true,
+    success: false,
+    dryRun: false,
+    reason: `All mint strategies failed: ${attempts.join(" || ")}`,
+  };
 }
 
 async function mintScatter(
@@ -263,14 +301,145 @@ async function mintScatter(
   };
 }
 
+async function mintOpenSea(
+  purchase: NftPurchase,
+  wallets: Wallet[]
+): Promise<CopyResult> {
+  const results = await Promise.all(
+    wallets.map(async (wallet) => {
+      const address = wallet.address.toLowerCase();
+      try {
+        const prepared = await prepareOpenSeaFreeMint({
+          collectionAddress: purchase.contract,
+          minterAddress: wallet.address,
+        });
+        const sent = await sendMintTx(wallet, {
+          to: prepared.to,
+          data: prepared.data,
+          valueWei: prepared.valueWei,
+        });
+        if (!sent.ok) {
+          return {
+            address,
+            ok: false as const,
+            error: sent.error || "opensea send failed",
+          };
+        }
+        return {
+          address,
+          ok: true as const,
+          txHash: sent.txHash,
+          detail: `OpenSea ${prepared.slug} x${prepared.quantity} (${prepared.stageLabel})`,
+        };
+      } catch (err) {
+        return {
+          address,
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    })
+  );
+
+  const ok = results.filter((r) => r.ok);
+  const summary = results
+    .map((r) =>
+      r.ok
+        ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
+        : `${shortAddr(r.address)} FAIL (${r.error})`
+    )
+    .join(" | ");
+
+  return {
+    attempted: true,
+    success: ok.length > 0,
+    dryRun: false,
+    reason:
+      ok.length > 0
+        ? `OpenSea minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
+        : `OpenSea mint failed: ${summary}`,
+    txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
+  };
+}
+
+async function mintPublicMax(
+  wallets: Wallet[],
+  targets: string[],
+  whaleQty: number
+): Promise<CopyResult> {
+  const uniqueTargets = [
+    ...new Set(targets.map((t) => t.toLowerCase()).filter(Boolean)),
+  ];
+
+  const results = await Promise.all(
+    wallets.map(async (wallet) => {
+      const address = wallet.address.toLowerCase();
+      const errors: string[] = [];
+      for (const to of uniqueTargets) {
+        const candidates = buildPublicMaxMintCandidates({
+          to,
+          minter: wallet.address,
+          whaleQuantity: whaleQty,
+        });
+        for (const c of candidates) {
+          const sent = await sendMintTx(wallet, {
+            to: c.to,
+            data: c.data,
+            valueWei: c.valueWei,
+          });
+          if (sent.ok) {
+            return {
+              address,
+              ok: true as const,
+              txHash: sent.txHash,
+              detail: `${c.label} @ ${shortAddr(to)}`,
+            };
+          }
+          errors.push(`${c.label}:${sent.error}`);
+          // If qty too high / wrong ABI, continue; keep probes short for speed
+          if (errors.length > 12) break;
+        }
+      }
+      return {
+        address,
+        ok: false as const,
+        error: errors.slice(0, 6).join("; ") || "no public mint worked",
+      };
+    })
+  );
+
+  const ok = results.filter((r) => r.ok);
+  const summary = results
+    .map((r) =>
+      r.ok
+        ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
+        : `${shortAddr(r.address)} FAIL (${r.error})`
+    )
+    .join(" | ");
+
+  return {
+    attempted: true,
+    success: ok.length > 0,
+    dryRun: false,
+    reason:
+      ok.length > 0
+        ? `Public max-minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
+        : `Public max-mint failed: ${summary}`,
+    txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
+  };
+}
+
 async function mintByReplay(
   wallets: Wallet[],
   to: string,
   rawData: string,
-  whale: string
+  whale: string,
+  whaleQty: number
 ): Promise<CopyResult> {
   const results = await Promise.all(
-    wallets.map((wallet) => mintWithWallet(wallet, to, rawData, whale))
+    wallets.map((wallet) =>
+      mintWithWallet(wallet, to, rawData, whale, whaleQty)
+    )
   );
 
   const ok = results.filter((r) => r.ok);
@@ -289,7 +458,7 @@ async function mintByReplay(
       attempted: true,
       success: true,
       dryRun: false,
-      reason: `Minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`,
+      reason: `Replay minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`,
       txHash: ok[0]?.txHash,
     };
   }
@@ -312,7 +481,7 @@ async function mintByReplay(
     attempted: true,
     success: false,
     dryRun: false,
-    reason: `All ${wallets.length} wallet(s) failed: ${summary}`,
+    reason: `Replay failed on all wallets: ${summary}`,
   };
 }
 
@@ -354,10 +523,11 @@ async function mintWithWallet(
   wallet: Wallet,
   to: string,
   rawData: string,
-  whale: string
+  whale: string,
+  whaleQty: number
 ): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
   const address = wallet.address.toLowerCase();
-  const candidates = buildCalldataCandidates(rawData, whale, address);
+  const candidates = buildCalldataCandidates(rawData, whale, address, whaleQty);
   const errors: string[] = [];
 
   for (const [index, data] of candidates.entries()) {
@@ -374,13 +544,22 @@ async function mintWithWallet(
 function buildCalldataCandidates(
   data: string,
   whale: string,
-  buyer: string
+  buyer: string,
+  whaleQty: number
 ): string[] {
   const original = data.toLowerCase();
   const rewritten = replaceAddressInCalldata(original, whale, buyer);
   const out = [original];
   if (rewritten !== original) {
     out.push(rewritten);
+  }
+  // Bump quantity toward max (whale qty * 2, capped)
+  const maxQ = Math.min(Math.max(whaleQty, 1) * 2, 20);
+  for (const q of [maxQ, whaleQty].filter((n, i, a) => a.indexOf(n) === i)) {
+    const bumped = replaceCalldataQuantity(rewritten !== original ? rewritten : original, q);
+    if (bumped && !out.includes(bumped)) {
+      out.unshift(bumped); // try max first
+    }
   }
   return out;
 }
