@@ -59,6 +59,18 @@ When dry-run looks good:
 - Symbol: RH gas (native)  
 - Explorer: https://robinhoodchain.blockscout.com  
 
+## OpenSea API key
+
+The bot auto-creates a free 7-day key on startup:
+
+```bash
+curl -X POST https://api.opensea.io/api/v2/auth/keys
+# or
+npm run opensea-key -- --refresh
+```
+
+Key is stored in `data/opensea-api-key.json`. Optional: set `OPENSEA_API_KEY` in `.env` for a permanent portal key. Telegram: `/openseakey` · `/openseakey refresh`.
+
 ## Safety
 
 - Never paste a private key into Telegram

@@ -1,6 +1,10 @@
 import { Interface } from "ethers";
 import { config } from "../config";
 import {
+  ensureOpenSeaApiKey,
+  getOpenSeaApiKey,
+} from "./openseaAuth";
+import {
   buildOpenSeaDropMintTx,
   fetchOpenSeaDrop,
   type OpenSeaDropStage,
@@ -23,7 +27,13 @@ function maxPerWallet(stage: OpenSeaDropStage | null | undefined): number {
 }
 
 async function resolveOpenSeaSlug(contract: string): Promise<string | null> {
-  if (!config.openseaApiKey) return null;
+  try {
+    await ensureOpenSeaApiKey();
+  } catch {
+    return null;
+  }
+  const key = getOpenSeaApiKey();
+  if (!key) return null;
   try {
     const chain = config.chain.openseaChain;
     const res = await fetch(
@@ -31,7 +41,7 @@ async function resolveOpenSeaSlug(contract: string): Promise<string | null> {
       {
         headers: {
           accept: "application/json",
-          "x-api-key": config.openseaApiKey,
+          "x-api-key": key,
         },
       }
     );
@@ -55,8 +65,9 @@ export async function prepareOpenSeaFreeMint(params: {
   slug: string;
   stageLabel: string;
 }> {
-  if (!config.openseaApiKey) {
-    throw new Error("OPENSEA_API_KEY missing — cannot build OpenSea drop mint");
+  await ensureOpenSeaApiKey();
+  if (!getOpenSeaApiKey()) {
+    throw new Error("OpenSea API key missing — cannot build OpenSea drop mint");
   }
 
   const slug = await resolveOpenSeaSlug(params.collectionAddress);

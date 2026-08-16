@@ -1,5 +1,9 @@
 import { config } from "../config";
 import {
+  ensureOpenSeaApiKey,
+  getOpenSeaApiKey,
+} from "./openseaAuth";
+import {
   getState,
   updateWatchedPrice,
 } from "../store/state";
@@ -8,15 +12,39 @@ import type { PriceChangeAlert, WatchedPriceItem } from "../types";
 export type PriceAlertHandler = (alert: PriceChangeAlert) => Promise<void>;
 
 async function fetchOpenSeaJson(url: string): Promise<unknown | null> {
-  if (!config.openseaApiKey) {
+  try {
+    await ensureOpenSeaApiKey();
+  } catch {
+    return null;
+  }
+  const key = getOpenSeaApiKey();
+  if (!key) {
     return null;
   }
   const res = await fetch(url, {
     headers: {
       accept: "application/json",
-      "x-api-key": config.openseaApiKey,
+      "x-api-key": key,
     },
   });
+  if (res.status === 401 || res.status === 403) {
+    try {
+      await ensureOpenSeaApiKey({ forceRefresh: true });
+      const refreshed = getOpenSeaApiKey();
+      if (refreshed) {
+        const retry = await fetch(url, {
+          headers: {
+            accept: "application/json",
+            "x-api-key": refreshed,
+          },
+        });
+        if (!retry.ok) throw new Error(`OpenSea HTTP ${retry.status}`);
+        return retry.json();
+      }
+    } catch {
+      return null;
+    }
+  }
   if (!res.ok) {
     throw new Error(`OpenSea HTTP ${res.status}`);
   }
@@ -95,9 +123,17 @@ export async function scanPriceChanges(): Promise<PriceChangeAlert[]> {
   if (!state.priceAlertsEnabled || state.watchedPrices.length === 0) {
     return [];
   }
-  if (!config.openseaApiKey) {
+  try {
+    await ensureOpenSeaApiKey();
+  } catch (err) {
     console.warn(
-      "[price] OPENSEA_API_KEY missing — cannot poll NFT prices"
+      `[price] OpenSea API key unavailable — cannot poll NFT prices (${err instanceof Error ? err.message : String(err)})`
+    );
+    return [];
+  }
+  if (!getOpenSeaApiKey()) {
+    console.warn(
+      "[price] OpenSea API key missing — cannot poll NFT prices"
     );
     return [];
   }

@@ -5,6 +5,10 @@ import {
   parseScheduleTime,
   resolveCalldata,
 } from "../robinhood/mintScheduler";
+import {
+  ensureOpenSeaApiKey,
+  getOpenSeaKeyStatus,
+} from "../robinhood/openseaAuth";
 import { resolveScheduleFromOpenSeaLink } from "../robinhood/openseaDrop";
 import { parseOpenSeaUrl } from "../robinhood/openseaUrl";
 import {
@@ -136,6 +140,36 @@ export function createTelegramBot(): Bot {
       }),
       { parse_mode: "HTML" }
     );
+  });
+
+  bot.command("openseakey", async (ctx) => {
+    const force = (ctx.match || "").trim().toLowerCase() === "refresh";
+    try {
+      await ensureOpenSeaApiKey({ forceRefresh: force });
+      const st = getOpenSeaKeyStatus();
+      await ctx.reply(
+        [
+          `<b>OpenSea API key</b>`,
+          `Present: <b>${st.present ? "yes" : "no"}</b>`,
+          `Source: <code>${st.source}</code>`,
+          st.maskedKey ? `Key: <code>${st.maskedKey}</code>` : "",
+          st.name ? `Name: <code>${st.name}</code>` : "",
+          st.expiresAt ? `Expires: <code>${st.expiresAt}</code>` : "",
+          ``,
+          force
+            ? `Refreshed via POST /api/v2/auth/keys`
+            : `Auto-fetched on boot. Use /openseakey refresh to force a new key.`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        { parse_mode: "HTML" }
+      );
+    } catch (err) {
+      await ctx.reply(
+        `OpenSea key failed: ${err instanceof Error ? err.message : String(err)}\n` +
+          `On VPS try: curl -s -X POST https://api.opensea.io/api/v2/auth/keys`
+      );
+    }
   });
 
   bot.command("addkey", async (ctx) => {
@@ -443,7 +477,7 @@ export function createTelegramBot(): Bot {
           "Advanced:",
           "/schedulemint <when> <contract> <mint|mint1|0xcalldata>",
           "",
-          "Needs OPENSEA_API_KEY in .env for auto time.",
+          "Needs OpenSea API key (auto via POST /api/v2/auth/keys, or OPENSEA_API_KEY).",
         ].join("\n")
       );
       return;

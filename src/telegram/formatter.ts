@@ -135,6 +135,8 @@ export function helpText(): string {
     `/unwatchprice &lt;contract&gt; [tokenId] — stop watching`,
     `/pricealerts on|off — toggle price alerts`,
     `/pricepct &lt;percent&gt; — alert when price moves by this %`,
+    `/openseakey — show OpenSea API key status`,
+    `/openseakey refresh — force new instant key (7-day)`,
     `/schedulemint &lt;opensea-url&gt; — auto schedule from OpenSea Drop time`,
     `/schedulemint &lt;when&gt; &lt;opensea-url&gt; — manual time + OpenSea link`,
     `/schedulemint &lt;when&gt; &lt;contract&gt; &lt;mint|mint1|0x...&gt; — advanced`,

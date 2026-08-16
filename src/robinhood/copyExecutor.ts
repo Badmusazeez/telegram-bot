@@ -18,6 +18,7 @@ import {
   prepareOpenSeaFreeMint,
   replaceCalldataQuantity,
 } from "./multiMint";
+import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
 
 /** One copy attempt per whale mint tx (Scatter/721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -186,13 +187,18 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     attempts.push(scatter.reason);
   }
 
-  // 2) OpenSea Drop builder (needs API key) — max_per_wallet
-  if (config.openseaApiKey) {
+  // 2) OpenSea Drop builder — auto-fetches instant API key when needed
+  try {
+    await ensureOpenSeaApiKey();
+  } catch {
+    // continue; mintOpenSea will report failure
+  }
+  if (getOpenSeaApiKey()) {
     const os = await mintOpenSea(purchase, wallets);
     if (os.success) return os;
     attempts.push(os.reason);
   } else if (openSeaLike) {
-    attempts.push("OpenSea path needs OPENSEA_API_KEY");
+    attempts.push("OpenSea path needs API key (auto-fetch failed)");
   }
 
   // 3) Scatter fallback for sites that hide behind Scatter without us seeing selector yet

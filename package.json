@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "opensea-key": "tsx scripts/fetch-opensea-key.ts"
   },
   "engines": {
     "node": ">=20"

@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
 import { parseOpenSeaUrl, type OpenSeaLinkRef } from "./openseaUrl";
 
 export type OpenSeaDropStage = {
@@ -37,19 +38,33 @@ export type ResolvedOpenSeaSchedule = {
 };
 
 async function fetchOpenSeaJson(url: string, init?: RequestInit): Promise<unknown> {
-  if (!config.openseaApiKey) {
+  await ensureOpenSeaApiKey();
+  const key = getOpenSeaApiKey();
+  if (!key) {
     throw new Error(
-      "OPENSEA_API_KEY missing in .env — required to read mint time from OpenSea links."
+      "OpenSea API key missing — set OPENSEA_API_KEY or let the bot auto-create via /api/v2/auth/keys"
     );
   }
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      accept: "application/json",
-      "x-api-key": config.openseaApiKey,
-      ...(init?.headers || {}),
-    },
-  });
+
+  const doFetch = async (apiKey: string) =>
+    fetch(url, {
+      ...init,
+      headers: {
+        accept: "application/json",
+        "x-api-key": apiKey,
+        ...(init?.headers || {}),
+      },
+    });
+
+  let res = await doFetch(key);
+  if (res.status === 401 || res.status === 403) {
+    await ensureOpenSeaApiKey({ forceRefresh: true });
+    const refreshed = getOpenSeaApiKey();
+    if (refreshed && refreshed !== key) {
+      res = await doFetch(refreshed);
+    }
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`OpenSea HTTP ${res.status}${body ? `: ${body.slice(0, 160)}` : ""}`);

@@ -172,7 +172,9 @@ export const config = {
   allowedCollections: splitCsv(env.ALLOWED_COLLECTIONS).map((a) =>
     a.toLowerCase()
   ),
-  openseaApiKey: env.OPENSEA_API_KEY,
+  openseaApiKey: env.OPENSEA_API_KEY.trim(),
+  /** Persisted instant key from POST https://api.opensea.io/api/v2/auth/keys */
+  openseaApiKeyPath: path.join(dataDir, "opensea-api-key.json"),
   priceAlertsEnabled: env.PRICE_ALERTS_ENABLED,
   priceAlertPct:
     Number.isFinite(env.PRICE_ALERT_PCT) && env.PRICE_ALERT_PCT > 0

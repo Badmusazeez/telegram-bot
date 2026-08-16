@@ -2,6 +2,10 @@ import { config } from "./config";
 import { maybeCopyPurchase } from "./robinhood/copyExecutor";
 import { startMintScheduler } from "./robinhood/mintScheduler";
 import { enrichPurchase, startMonitor } from "./robinhood/monitor";
+import {
+  ensureOpenSeaApiKey,
+  getOpenSeaKeyStatus,
+} from "./robinhood/openseaAuth";
 import { startPriceWatcher } from "./robinhood/priceWatcher";
 import { rpcLabels } from "./config";
 import { getAllMintWallets, getMintProvider, getProvider, getWallet } from "./robinhood/provider";
@@ -26,6 +30,22 @@ async function main(): Promise<void> {
   console.log(`Starting robinhood-nft-copy-bot on ${config.chain.name}…`);
   await loadState();
   await loadMintWallets();
+
+  try {
+    await ensureOpenSeaApiKey();
+    const os = getOpenSeaKeyStatus();
+    console.log(
+      `OpenSea API key: ${os.present ? `${os.source} ${os.maskedKey}` : "missing"}` +
+        (os.expiresAt ? ` (expires ${os.expiresAt})` : "")
+    );
+  } catch (err) {
+    console.warn(
+      `OpenSea API key auto-fetch failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+    console.warn(
+      "Tip: on the VPS run: curl -s -X POST https://api.opensea.io/api/v2/auth/keys"
+    );
+  }
 
   const trackProvider = getProvider();
   const mintProvider = getMintProvider();

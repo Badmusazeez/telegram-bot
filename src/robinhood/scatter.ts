@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
 
 const SCATTER_MINT_SELECTOR = "0x4a21a2df";
 const slugCache = new Map<string, string>(); // contract -> scatter slug
@@ -118,10 +119,16 @@ async function openSeaCollectionHints(contract: string): Promise<{
   scatterSlug?: string | null;
 }> {
   try {
+    try {
+      await ensureOpenSeaApiKey();
+    } catch {
+      // continue without key — some OpenSea endpoints may still 401
+    }
     const chain = config.chain.openseaChain;
     const headers: Record<string, string> = { accept: "application/json" };
-    if (config.openseaApiKey) {
-      headers["x-api-key"] = config.openseaApiKey;
+    const key = getOpenSeaApiKey();
+    if (key) {
+      headers["x-api-key"] = key;
     }
     const res = await fetch(
       `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}`,
@@ -136,7 +143,7 @@ async function openSeaCollectionHints(contract: string): Promise<{
     let scatterSlug: string | null = null;
     let name = data.name || null;
 
-    if (slug && config.openseaApiKey) {
+    if (slug && key) {
       try {
         const colRes = await fetch(
           `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`,
