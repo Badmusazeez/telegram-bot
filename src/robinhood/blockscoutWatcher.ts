@@ -152,10 +152,15 @@ async function fetchRecentTxs(address: string): Promise<BsTx[]> {
 
 async function fetchTokenTransfers(address: string): Promise<BsTransfer[]> {
   const base = explorerApiBase();
-  const data = await fetchJson<{ items?: BsTransfer[] }>(
-    `${base}/addresses/${address}/token-transfers?type=ERC-721%2CERC-1155`
+  // Prefer ERC-721 only — combined type filter sometimes 500s on Blockscout.
+  const primary = await fetchJson<{ items?: BsTransfer[] }>(
+    `${base}/addresses/${address}/token-transfers?type=ERC-721`
   );
-  return data?.items ?? [];
+  if (primary?.items) return primary.items;
+  const fallback = await fetchJson<{ items?: BsTransfer[] }>(
+    `${base}/addresses/${address}/token-transfers?type=ERC-1155`
+  );
+  return fallback?.items ?? [];
 }
 
 /**
