@@ -156,13 +156,13 @@ async function main(): Promise<void> {
     }
   };
 
+  // Blockscout FIRST — must not wait on Alchemy catch-up (that was missing signals).
+  const stopBlockscout = await startBlockscoutWatcher(onPurchase);
+
   const stopMonitor = await startMonitor(onPurchase, async (issue) => {
     console.warn(`[rpc] track issue ${issue.kind}: ${issue.message}`);
     await broadcastRpcAlert(bot, formatTrackRpcIssue(issue), issue.kind);
   });
-
-  // Blockscout survives Alchemy getLogs 429s — critical for whale mint signals.
-  const stopBlockscout = await startBlockscoutWatcher(onPurchase);
 
   const stopPrices = await startPriceWatcher(async (alert) => {
     console.log(

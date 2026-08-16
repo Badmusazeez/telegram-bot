@@ -101,6 +101,11 @@ export function formatStatus(params: {
     success: boolean;
     reason: string;
   } | null;
+  blockscout?: {
+    lastOkAt: string | null;
+    lastError: string | null;
+    lastHitTx: string | null;
+  };
 }): string {
   const lag =
     params.tipBlock && params.lastBlock
@@ -125,6 +130,9 @@ export function formatStatus(params: {
     `Last scanned: <code>${params.lastBlock || "—"}</code>`,
     params.tipBlock
       ? `Chain tip: <code>${params.tipBlock}</code>${lag !== null ? ` (behind <b>${lag}</b> blocks)` : ""}`
+      : "",
+    params.blockscout
+      ? `Blockscout: <b>${params.blockscout.lastOkAt ? "ok" : "—"}</b>${params.blockscout.lastOkAt ? ` <code>${escHtml(params.blockscout.lastOkAt)}</code>` : ""}${params.blockscout.lastHitTx ? `\nLast BS hit: <code>${escHtml(params.blockscout.lastHitTx.slice(0, 18))}…</code>` : ""}${params.blockscout.lastError ? `\nBS err: <code>${escHtml(params.blockscout.lastError.slice(0, 120))}</code>` : ""}`
       : "",
     lastCopyLine,
     params.walletAddress

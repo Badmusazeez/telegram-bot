@@ -44,6 +44,7 @@ import {
   helpText,
 } from "./formatter";
 import { getLastCopySummary } from "../robinhood/copyExecutor";
+import { getBlockscoutStatus } from "../robinhood/blockscoutWatcher";
 import type {
   CopyResult,
   NftPurchase,
@@ -146,6 +147,7 @@ export function createTelegramBot(): Bot {
         walletAddress,
         balanceRobinhood,
         lastCopy: getLastCopySummary(),
+        blockscout: getBlockscoutStatus(),
       }),
       { parse_mode: "HTML" }
     );

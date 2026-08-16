@@ -402,7 +402,8 @@ export async function startMonitor(
     }
   };
 
-  await tick();
+  // Non-blocking first tick — Blockscout already covers live detection.
+  void tick();
   // Catch up faster when behind: poll often; scan itself is the rate limiter.
   const timer = setInterval(() => {
     void tick();
