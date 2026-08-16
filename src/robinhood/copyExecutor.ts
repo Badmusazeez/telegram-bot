@@ -79,7 +79,17 @@ export async function maybeCopyPurchase(
       await sleep(1_500);
       result = await executeCopy(purchase);
     }
-    rememberCopyResult(purchase, result);
+    // Don't let intentional paid-skips overwrite Last copy in /status —
+    // that made free-mint hits look like failures.
+    const paidSkip =
+      /skipped paid mint|paid mint\/buy \(free-mints-only/i.test(result.reason);
+    if (!paidSkip) {
+      rememberCopyResult(purchase, result);
+    } else {
+      console.log(
+        `[mint] skip paid ${purchase.txHash.slice(0, 10)}… ${result.reason}`
+      );
+    }
     // Don't permanently cache hard failures — allow a later hit to retry.
     if (!result.success && !result.dryRun) {
       copyBySourceTx.delete(txKey);
