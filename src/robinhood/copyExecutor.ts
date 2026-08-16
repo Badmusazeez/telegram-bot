@@ -8,15 +8,44 @@ import {
   getMintProvider,
   getProvider,
 } from "./provider";
+import {
+  isScatterMintCalldata,
+  prepareScatterFreeMint,
+} from "./scatter";
+
+/** One copy attempt per whale mint tx (Scatter/721A often emit many Transfers). */
+const copyBySourceTx = new Map<string, Promise<CopyResult>>();
 
 /**
  * Free-mint copy executor for Robinhood Chain.
  *
- * Replays whale calldata across ALL configured mint wallets.
+ * - Scatter.art: build fresh mint calldata via Scatter API (max free list qty)
+ * - Other: replay whale calldata across all mint wallets
  */
 export async function maybeCopyPurchase(
   purchase: NftPurchase
 ): Promise<CopyResult> {
+  const txKey = purchase.txHash.toLowerCase();
+  const existing = copyBySourceTx.get(txKey);
+  if (existing) {
+    const result = await existing;
+    return {
+      ...result,
+      reason: `${result.reason} (deduped same mint tx)`,
+    };
+  }
+
+  const pending = executeCopy(purchase);
+  copyBySourceTx.set(txKey, pending);
+  // Bound memory: drop old entries occasionally
+  if (copyBySourceTx.size > 500) {
+    const first = copyBySourceTx.keys().next().value;
+    if (first) copyBySourceTx.delete(first);
+  }
+  return pending;
+}
+
+async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   const state = getState();
 
   if (state.freeMintsOnly) {
@@ -74,8 +103,8 @@ export async function maybeCopyPurchase(
     };
   }
 
-  const provider = getProvider();
-  const sourceTx = await provider.getTransaction(purchase.txHash);
+  const trackProvider = getProvider();
+  const sourceTx = await trackProvider.getTransaction(purchase.txHash);
   if (!sourceTx) {
     return {
       attempted: false,
@@ -123,19 +152,125 @@ export async function maybeCopyPurchase(
     };
   }
 
+  const scatterLike = isScatterMintCalldata(sourceTx.data);
+
   if (state.dryRun) {
     return {
       attempted: true,
       success: true,
       dryRun: true,
-      reason: `DRY RUN — would mint on ${wallets.length} wallet(s) for collection ${purchase.contract} #${purchase.tokenId}.`,
+      reason: scatterLike
+        ? `DRY RUN — Scatter free mint on ${wallets.length} wallet(s) (max list qty) for ${purchase.contract}.`
+        : `DRY RUN — would mint on ${wallets.length} wallet(s) for collection ${purchase.contract} #${purchase.tokenId}.`,
     };
   }
 
+  // Scatter: never replay whale calldata (signatures are wallet-bound).
+  if (scatterLike) {
+    return mintScatter(purchase, wallets, sourceTx.to);
+  }
+
+  // Non-Scatter: try calldata replay first; if all wallet-bound, try Scatter API fallback.
+  const replay = await mintByReplay(
+    wallets,
+    sourceTx.to,
+    sourceTx.data,
+    purchase.buyer
+  );
+  if (replay.success) {
+    return replay;
+  }
+
+  const allBound = replay.reason.includes("wallet-bound");
+  if (allBound) {
+    try {
+      return await mintScatter(purchase, wallets, purchase.contract);
+    } catch (err) {
+      return {
+        attempted: true,
+        success: false,
+        dryRun: false,
+        reason: `${replay.reason} | Scatter fallback: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  }
+
+  return replay;
+}
+
+async function mintScatter(
+  purchase: NftPurchase,
+  wallets: Wallet[],
+  collectionAddress: string
+): Promise<CopyResult> {
   const results = await Promise.all(
-    wallets.map((wallet) =>
-      mintWithWallet(wallet, sourceTx.to!, sourceTx.data, purchase.buyer)
+    wallets.map(async (wallet) => {
+      const address = wallet.address.toLowerCase();
+      try {
+        const prepared = await prepareScatterFreeMint({
+          collectionAddress,
+          minterAddress: wallet.address,
+          collectionName: purchase.collectionName,
+        });
+        const sent = await sendMintTx(wallet, {
+          to: prepared.to,
+          data: prepared.data,
+          valueWei: prepared.valueWei,
+        });
+        if (!sent.ok) {
+          return {
+            address,
+            ok: false as const,
+            error: sent.error || "scatter send failed",
+          };
+        }
+        return {
+          address,
+          ok: true as const,
+          txHash: sent.txHash,
+          detail: `Scatter ${prepared.slug} x${prepared.quantity} (${prepared.listName})`,
+        };
+      } catch (err) {
+        return {
+          address,
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    })
+  );
+
+  const ok = results.filter((r) => r.ok);
+  const summary = results
+    .map((r) =>
+      r.ok
+        ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
+        : `${shortAddr(r.address)} FAIL (${r.error})`
     )
+    .join(" | ");
+
+  return {
+    attempted: true,
+    success: ok.length > 0,
+    dryRun: false,
+    reason:
+      ok.length > 0
+        ? `Scatter minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
+        : `Scatter mint failed on all wallets: ${summary}`,
+    txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
+  };
+}
+
+async function mintByReplay(
+  wallets: Wallet[],
+  to: string,
+  rawData: string,
+  whale: string
+): Promise<CopyResult> {
+  const results = await Promise.all(
+    wallets.map((wallet) => mintWithWallet(wallet, to, rawData, whale))
   );
 
   const ok = results.filter((r) => r.ok);
@@ -145,7 +280,7 @@ export async function maybeCopyPurchase(
       if (r.ok) {
         return `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}…`;
       }
-      return `${shortAddr(r.address)} ${classifyWalletFailure(r.error || "", sourceTx.to!)}`;
+      return `${shortAddr(r.address)} ${classifyWalletFailure(r.error || "", to)}`;
     })
     .join(" | ");
 
@@ -160,7 +295,7 @@ export async function maybeCopyPurchase(
   }
 
   const allWalletBound = fail.every((r) =>
-    isWalletBoundFailure(r.error || "", sourceTx.to!)
+    isWalletBoundFailure(r.error || "", to)
   );
   if (allWalletBound) {
     return {
@@ -181,6 +316,40 @@ export async function maybeCopyPurchase(
   };
 }
 
+async function sendMintTx(
+  wallet: Wallet,
+  params: { to: string; data: string; valueWei: bigint }
+): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
+  const provider = getMintProvider();
+  try {
+    const gasEstimate = await provider.estimateGas({
+      from: wallet.address,
+      to: params.to,
+      data: params.data,
+      value: params.valueWei,
+    });
+    if (gasEstimate > BigInt(config.maxMintGasLimit)) {
+      return {
+        ok: false,
+        error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
+      };
+    }
+    const sent = await wallet.sendTransaction({
+      to: params.to,
+      data: params.data,
+      value: params.valueWei,
+      gasLimit: (gasEstimate * 130n) / 100n,
+    });
+    const receipt = await sent.wait();
+    if (!receipt || receipt.status !== 1) {
+      return { ok: false, error: `reverted ${sent.hash}` };
+    }
+    return { ok: true, txHash: sent.hash };
+  } catch (err) {
+    return { ok: false, error: shortError(err) };
+  }
+}
+
 async function mintWithWallet(
   wallet: Wallet,
   to: string,
@@ -189,36 +358,14 @@ async function mintWithWallet(
 ): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
   const address = wallet.address.toLowerCase();
   const candidates = buildCalldataCandidates(rawData, whale, address);
-  const provider = getMintProvider();
   const errors: string[] = [];
 
   for (const [index, data] of candidates.entries()) {
-    try {
-      const gasEstimate = await provider.estimateGas({
-        from: wallet.address,
-        to,
-        data,
-        value: 0n,
-      });
-      if (gasEstimate > BigInt(config.maxMintGasLimit)) {
-        errors.push(`v${index + 1} gas too high`);
-        continue;
-      }
-      const sent = await wallet.sendTransaction({
-        to,
-        data,
-        value: 0n,
-        gasLimit: (gasEstimate * 120n) / 100n,
-      });
-      const receipt = await sent.wait();
-      if (!receipt || receipt.status !== 1) {
-        errors.push(`v${index + 1} reverted`);
-        continue;
-      }
-      return { address, ok: true, txHash: sent.hash };
-    } catch (err) {
-      errors.push(`v${index + 1} ${shortError(err)}`);
+    const sent = await sendMintTx(wallet, { to, data, valueWei: 0n });
+    if (sent.ok) {
+      return { address, ok: true, txHash: sent.txHash };
     }
+    errors.push(`v${index + 1} ${sent.error}`);
   }
 
   return { address, ok: false, error: errors.join("; ") || "unknown" };
@@ -264,7 +411,10 @@ function shortError(err: unknown): string {
   if (msg.includes("insufficient funds")) {
     return "insufficient funds";
   }
-  return msg.slice(0, 80);
+  if (msg.toLowerCase().includes("fully minted")) {
+    return "sold out";
+  }
+  return msg.slice(0, 120);
 }
 
 function shortAddr(address: string): string {
@@ -279,12 +429,15 @@ function isOpenSeaMinter(to: string): boolean {
   return to.toLowerCase() === "0x00005ea00ac477b1030ce78506496e8c2de24bf5";
 }
 
-/** True when failure looks like allowlist / signature / OpenSea wallet-bound mint. */
 function isWalletBoundFailure(error: string, to: string): boolean {
   if (!error.trim()) {
     return false;
   }
-  if (error.includes("insufficient funds") || error.includes("gas too high")) {
+  if (
+    error.includes("insufficient funds") ||
+    error.includes("gas too high") ||
+    error.includes("sold out")
+  ) {
     return false;
   }
   return isRevertError(error) || isOpenSeaMinter(to);
@@ -296,6 +449,9 @@ function classifyWalletFailure(error: string, to: string): string {
   }
   if (error.includes("gas too high")) {
     return "gas too high";
+  }
+  if (error.includes("sold out")) {
+    return "sold out";
   }
   if (isWalletBoundFailure(error, to)) {
     return "wallet-bound";
