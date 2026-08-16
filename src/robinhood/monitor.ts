@@ -180,15 +180,22 @@ async function logsForTrackedChunk(
         (/query returned more than|too many|response size|payload/i.test(msg) ||
           msg.includes("413"))
       ) {
-        const parts = await Promise.all(
-          buyerTopics.map((t) => logsForTrackedChunk(fromBlock, toBlock, [t]))
-        );
-        return parts.flat();
+        const parts: Log[] = [];
+        for (const t of buyerTopics) {
+          parts.push(
+            ...(await logsForTrackedChunk(fromBlock, toBlock, [t]))
+          );
+        }
+        return parts;
       }
+      const rateLimited = /429|rate limit|capacity|too many requests/i.test(
+        msg
+      );
       console.warn(
         `[monitor] getLogs retry ${attempt}/3 blocks ${fromBlock}-${toBlock}: ${msg}`
       );
-      await sleep(400 * attempt);
+      // Back off hard on Alchemy 429 — Blockscout watcher still detects mints.
+      await sleep(rateLimited ? 2_500 * attempt : 500 * attempt);
     }
   }
 
@@ -210,13 +217,9 @@ async function logsForTrackedWallets(
     ranges.push({ start, end: Math.min(toBlock, start + chunkSize - 1) });
   }
 
-  const concurrency = 4;
-  for (let i = 0; i < ranges.length; i += concurrency) {
-    const batch = ranges.slice(i, i + concurrency);
-    const parts = await Promise.all(
-      batch.map((r) => logsForTrackedChunk(r.start, r.end, buyerTopics))
-    );
-    for (const part of parts) all.push(...part);
+  // Sequential chunks — parallel getLogs burns Alchemy CU and triggers 429s.
+  for (const r of ranges) {
+    all.push(...(await logsForTrackedChunk(r.start, r.end, buyerTopics)));
   }
 
   return all;

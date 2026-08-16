@@ -1,6 +1,7 @@
 import { config } from "./config";
 import { maybeCopyPurchase } from "./robinhood/copyExecutor";
 import { startMintScheduler } from "./robinhood/mintScheduler";
+import { startBlockscoutWatcher } from "./robinhood/blockscoutWatcher";
 import { enrichPurchase, startMonitor } from "./robinhood/monitor";
 import {
   ensureOpenSeaApiKey,
@@ -11,6 +12,7 @@ import { rpcLabels } from "./config";
 import { getAllMintWallets, getMintProvider, getProvider, getWallet } from "./robinhood/provider";
 import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, getState, loadState } from "./store/state";
+import type { NftPurchase } from "./types";
 import {
   formatTrackRpcIssue,
   formatTrackRpcSwitch,
@@ -125,40 +127,42 @@ async function main(): Promise<void> {
     );
   }
 
-  const stopMonitor = await startMonitor(
-    async (purchase) => {
-      console.log(
-        `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
-      );
-      // Copy immediately; enrich metadata in parallel for Telegram (do not delay mint).
-      const [copy, enriched] = await Promise.all([
-        maybeCopyPurchase(purchase),
-        enrichPurchase(purchase),
-      ]);
-      await broadcastPurchase(bot, enriched, copy);
+  const onPurchase = async (purchase: NftPurchase) => {
+    console.log(
+      `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
+    );
+    // Copy immediately; enrich metadata in parallel for Telegram (do not delay mint).
+    const [copy, enriched] = await Promise.all([
+      maybeCopyPurchase(purchase),
+      enrichPurchase(purchase),
+    ]);
+    await broadcastPurchase(bot, enriched, copy);
 
-      if (purchase.isFreeMint && copy.success && !copy.dryRun) {
-        await addWatchedPrice({
-          contract: purchase.contract,
-          tokenId: purchase.tokenId,
-          label:
-            enriched.tokenName ||
-            enriched.collectionName ||
-            `${purchase.contract.slice(0, 6)}…#${purchase.tokenId}`,
-        });
-        await addWatchedPrice({
-          contract: purchase.contract,
-          label:
-            (enriched.collectionName || purchase.contract.slice(0, 10)) +
-            " floor",
-        });
-      }
-    },
-    async (issue) => {
-      console.warn(`[rpc] track issue ${issue.kind}: ${issue.message}`);
-      await broadcastRpcAlert(bot, formatTrackRpcIssue(issue), issue.kind);
+    if (purchase.isFreeMint && copy.success && !copy.dryRun) {
+      await addWatchedPrice({
+        contract: purchase.contract,
+        tokenId: purchase.tokenId,
+        label:
+          enriched.tokenName ||
+          enriched.collectionName ||
+          `${purchase.contract.slice(0, 6)}…#${purchase.tokenId}`,
+      });
+      await addWatchedPrice({
+        contract: purchase.contract,
+        label:
+          (enriched.collectionName || purchase.contract.slice(0, 10)) +
+          " floor",
+      });
     }
-  );
+  };
+
+  const stopMonitor = await startMonitor(onPurchase, async (issue) => {
+    console.warn(`[rpc] track issue ${issue.kind}: ${issue.message}`);
+    await broadcastRpcAlert(bot, formatTrackRpcIssue(issue), issue.kind);
+  });
+
+  // Blockscout survives Alchemy getLogs 429s — critical for whale mint signals.
+  const stopBlockscout = await startBlockscoutWatcher(onPurchase);
 
   const stopPrices = await startPriceWatcher(async (alert) => {
     console.log(
@@ -175,6 +179,7 @@ async function main(): Promise<void> {
   const shutdown = (signal: string) => {
     console.log(`Received ${signal}, shutting down…`);
     stopMonitor();
+    stopBlockscout();
     stopPrices();
     stopSchedules();
     bot.stop();

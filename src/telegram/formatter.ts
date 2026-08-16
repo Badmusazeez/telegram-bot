@@ -118,6 +118,7 @@ export function formatStatus(params: {
     `Price watches: <b>${params.watchedPrices}</b>`,
     `Scheduled mints: <b>${params.pendingSchedules}</b> pending`,
     `Price alerts: <b>${params.priceAlertsEnabled ? "ON" : "OFF"}</b> (≥${params.priceAlertPct}%)`,
+    `Detect: Alchemy getLogs + Blockscout transfers`,
     `Auto-mint: <b>${params.copyEnabled ? "ON" : "OFF"}</b>`,
     `Dry run: <b>${params.dryRun ? "ON" : "OFF"}</b>`,
     `Max buy (ignored for free mints): <b>${params.maxBuyRobinhood}</b>`,
