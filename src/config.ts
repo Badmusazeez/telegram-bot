@@ -51,7 +51,13 @@ const schema = z.object({
   MAX_MINT_GAS_LIMIT: z
     .string()
     .optional()
-    .default("500000")
+    .default("1500000")
+    .transform((v) => Number(v)),
+  /** Always try this many (or stage wallet_limit if lower) on free mints. */
+  MAX_MINT_QUANTITY: z
+    .string()
+    .optional()
+    .default("50")
     .transform((v) => Number(v)),
   POLL_INTERVAL_MS: z.string().optional().default(""),
   LOOKBACK_BLOCKS: z.string().optional().default(""),
@@ -167,6 +173,10 @@ export const config = {
   maxBuyRobinhood,
   maxGasGwei: env.MAX_GAS_GWEI,
   maxMintGasLimit: env.MAX_MINT_GAS_LIMIT,
+  maxMintQuantity:
+    Number.isFinite(env.MAX_MINT_QUANTITY) && env.MAX_MINT_QUANTITY > 0
+      ? Math.min(Math.floor(env.MAX_MINT_QUANTITY), 100)
+      : 50,
   pollIntervalMs: numberOr(env.POLL_INTERVAL_MS, chain.defaultPollIntervalMs),
   lookbackBlocks: numberOr(env.LOOKBACK_BLOCKS, chain.defaultLookbackBlocks),
   allowedCollections: splitCsv(env.ALLOWED_COLLECTIONS).map((a) =>

@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { clampMaxPerWallet, maxMintQuantityLadder } from "./mintQuantity";
 import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
 
 const SCATTER_MINT_SELECTOR = "0x4a21a2df";
@@ -273,7 +274,7 @@ export async function fetchEligibleLists(
   return Array.isArray(data) ? (data as ScatterInviteList[]) : [];
 }
 
-/** Prefer free public list; mint max wallet_limit (Scatter "max as usual"). */
+/** Prefer free public list; mint max wallet_limit (always max). */
 export function pickBestFreeList(
   lists: ScatterInviteList[]
 ): { list: ScatterInviteList; quantity: number } | null {
@@ -284,9 +285,7 @@ export function pickBestFreeList(
   const list = free[0];
   if (!list) return null;
 
-  const walletLimit = Math.max(1, Number(list.wallet_limit) || 1);
-  // Cap absurd limits to keep gas sane while still minting "max"
-  const quantity = Math.min(walletLimit, 50);
+  const quantity = clampMaxPerWallet(list.wallet_limit);
   return { list, quantity };
 }
 
@@ -353,26 +352,38 @@ export async function prepareScatterFreeMint(params: {
     throw new Error("No active free Scatter mint list for this wallet");
   }
 
-  const built = await buildScatterMintTx({
-    collectionAddress: params.collectionAddress,
-    minterAddress: params.minterAddress,
-    listId: picked.list.id,
-    quantity: picked.quantity,
-  });
+  // Always request MAX wallet_limit first; step down only if API rejects.
+  const ladder = maxMintQuantityLadder(picked.quantity).filter(
+    (q) => q <= picked.quantity
+  );
+  let lastErr: Error | null = null;
 
-  if (built.valueWei > 0n) {
-    throw new Error(
-      `Scatter list is paid (${built.valueWei} wei) — free-mint only`
-    );
+  for (const quantity of ladder) {
+    try {
+      const built = await buildScatterMintTx({
+        collectionAddress: params.collectionAddress,
+        minterAddress: params.minterAddress,
+        listId: picked.list.id,
+        quantity,
+      });
+      if (built.valueWei > 0n) {
+        throw new Error(
+          `Scatter list is paid (${built.valueWei} wei) — free-mint only`
+        );
+      }
+      return {
+        ...built,
+        quantity,
+        listId: picked.list.id,
+        listName: picked.list.name || picked.list.id,
+        slug,
+      };
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+    }
   }
 
-  return {
-    ...built,
-    quantity: picked.quantity,
-    listId: picked.list.id,
-    listName: picked.list.name || picked.list.id,
-    slug,
-  };
+  throw lastErr || new Error("Scatter max mint failed");
 }
 
 /** Remember a known Scatter slug (e.g. from a pasted URL). */

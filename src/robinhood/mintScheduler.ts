@@ -4,7 +4,12 @@ import {
   markScheduledMint,
 } from "../store/state";
 import type { ScheduledMint, ScheduledMintResult } from "../types";
-import { buildOpenSeaDropMintTx } from "./openseaDrop";
+import {
+  buildOpenSeaDropMintTx,
+  fetchOpenSeaDrop,
+} from "./openseaDrop";
+import { openSeaStageMaxPerWallet } from "./multiMint";
+import { maxMintQuantityLadder } from "./mintQuantity";
 import {
   gasIsAffordable,
   getAllMintWallets,
@@ -69,6 +74,10 @@ export function resolveCalldata(raw: string, buyer: string): string | null {
       "0000000000000000000000000000000000000000000000000000000000000001"
     );
   }
+  if (lower === "mintmax" || lower === "max") {
+    const q = maxMintQuantityLadder()[0] || 50;
+    return "0xa0712d68" + BigInt(q).toString(16).padStart(64, "0");
+  }
 
   // buyer kept for future address-bound presets
   void buyer;
@@ -128,22 +137,53 @@ async function sendOnWallet(
   }
 }
 
+function stagePriceWei(price?: string): bigint {
+  if (!price) return 0n;
+  try {
+    return BigInt(price);
+  } catch {
+    return 0n;
+  }
+}
+
 async function resolveJobTxForWallet(
   job: ScheduledMint,
   wallet: Wallet
-): Promise<{ to: string; data: string; valueWei: bigint }> {
+): Promise<{ to: string; data: string; valueWei: bigint; quantity?: number }> {
   if (job.openSeaSlug) {
-    const built = await buildOpenSeaDropMintTx({
-      slug: job.openSeaSlug,
-      minter: wallet.address,
-      quantity: 1,
-    });
-    if (built.valueWei > 0n) {
-      throw new Error(
-        `OpenSea mint requires payment (${built.valueWei} wei) — free-mint only.`
-      );
+    const drop = await fetchOpenSeaDrop(job.openSeaSlug);
+    const stage =
+      (drop.is_minting && drop.active_stage) ||
+      drop.stages.find((s) => stagePriceWei(s.price) === 0n) ||
+      drop.active_stage ||
+      null;
+    if (!stage) {
+      throw new Error("No OpenSea drop stage for scheduled mint");
     }
-    return built;
+    if (stagePriceWei(stage.price) > 0n) {
+      throw new Error("OpenSea stage is paid — free-mint only");
+    }
+    const target = openSeaStageMaxPerWallet(stage);
+    const ladder = maxMintQuantityLadder(target).filter((q) => q <= target);
+    let lastErr: Error | null = null;
+    for (const quantity of ladder) {
+      try {
+        const built = await buildOpenSeaDropMintTx({
+          slug: job.openSeaSlug,
+          minter: wallet.address,
+          quantity,
+        });
+        if (built.valueWei > 0n) {
+          throw new Error(
+            `OpenSea mint requires payment (${built.valueWei} wei) — free-mint only.`
+          );
+        }
+        return { ...built, quantity };
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+    throw lastErr || new Error("OpenSea scheduled max mint failed");
   }
   return { to: job.to, data: job.data, valueWei: 0n };
 }
@@ -156,7 +196,7 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     return {
       success: true,
       dryRun: true,
-      reason: `DRY RUN — would mint on ${wallets.length || 0} wallet(s) at ${job.executeAt} to ${job.to}${
+      reason: `DRY RUN — would MAX-mint on ${wallets.length || 0} wallet(s) at ${job.executeAt} to ${job.to}${
         job.openSeaSlug ? ` (OpenSea drop ${job.openSeaSlug})` : ""
       }`,
     };
@@ -182,7 +222,11 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     wallets.map(async (w) => {
       try {
         const tx = await resolveJobTxForWallet(job, w);
-        return sendOnWallet(w, tx);
+        const sent = await sendOnWallet(w, tx);
+        return {
+          ...sent,
+          detail: tx.quantity ? `x${tx.quantity}` : undefined,
+        };
       } catch (err) {
         return {
           address: w.address.toLowerCase(),
@@ -196,18 +240,24 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
   const summary = results
     .map(
       (r) =>
-        `${r.address.slice(0, 6)}…${r.ok ? ` OK ${r.txHash?.slice(0, 10)}…` : ` FAIL (${r.error})`}`
+        `${r.address.slice(0, 6)}…${
+          r.ok
+            ? ` OK ${r.txHash?.slice(0, 10)}…${r.detail ? ` ${r.detail}` : ""}`
+            : ` FAIL (${r.error})`
+        }`
     )
     .join(" | ");
+
+  const firstOk = results.find((r) => r.ok && r.txHash);
 
   return {
     success: ok.length > 0,
     dryRun: false,
     reason:
       ok.length > 0
-        ? `Scheduled mint on ${ok.length}/${wallets.length} wallet(s): ${summary}`
+        ? `Scheduled MAX mint on ${ok.length}/${wallets.length} wallet(s): ${summary}`
         : `Scheduled mint failed on all ${wallets.length} wallet(s): ${summary}`,
-    txHash: ok[0]?.txHash,
+    txHash: firstOk && "txHash" in firstOk ? firstOk.txHash : undefined,
   };
 }
 

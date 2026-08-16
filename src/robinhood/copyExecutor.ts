@@ -19,6 +19,7 @@ import {
   replaceCalldataQuantity,
 } from "./multiMint";
 import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
+import { maxMintQuantityLadder } from "./mintQuantity";
 
 /** One copy attempt per whale mint tx (Scatter/721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -403,7 +404,7 @@ async function mintPublicMax(
           }
           errors.push(`${c.label}:${sent.error}`);
           // If qty too high / wrong ABI, continue; keep probes short for speed
-          if (errors.length > 12) break;
+          if (errors.length > 48) break;
         }
       }
       return {
@@ -555,17 +556,20 @@ function buildCalldataCandidates(
 ): string[] {
   const original = data.toLowerCase();
   const rewritten = replaceAddressInCalldata(original, whale, buyer);
-  const out = [original];
-  if (rewritten !== original) {
-    out.push(rewritten);
-  }
-  // Bump quantity toward max (whale qty * 2, capped)
-  const maxQ = Math.min(Math.max(whaleQty, 1) * 2, 20);
-  for (const q of [maxQ, whaleQty].filter((n, i, a) => a.indexOf(n) === i)) {
-    const bumped = replaceCalldataQuantity(rewritten !== original ? rewritten : original, q);
+  const base = rewritten !== original ? rewritten : original;
+  const out: string[] = [];
+
+  // Always try MAX quantity first on rewritten calldata, then step down.
+  for (const q of maxMintQuantityLadder(whaleQty)) {
+    const bumped = replaceCalldataQuantity(base, q);
     if (bumped && !out.includes(bumped)) {
-      out.unshift(bumped); // try max first
+      out.push(bumped);
     }
+  }
+
+  if (!out.includes(base)) out.push(base);
+  if (rewritten !== original && !out.includes(original)) {
+    out.push(original);
   }
   return out;
 }

@@ -9,6 +9,11 @@ import {
   fetchOpenSeaDrop,
   type OpenSeaDropStage,
 } from "./openseaDrop";
+import {
+  clampMaxPerWallet,
+  hardMaxMintQuantity,
+  maxMintQuantityLadder,
+} from "./mintQuantity";
 
 function stagePriceWei(stage: OpenSeaDropStage | null | undefined): bigint {
   if (!stage?.price) return 0n;
@@ -19,11 +24,10 @@ function stagePriceWei(stage: OpenSeaDropStage | null | undefined): bigint {
   }
 }
 
-function maxPerWallet(stage: OpenSeaDropStage | null | undefined): number {
-  const raw = stage?.max_per_wallet ? String(stage.max_per_wallet) : "1";
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 1) return 1;
-  return Math.min(Math.floor(n), 50);
+export function openSeaStageMaxPerWallet(
+  stage: OpenSeaDropStage | null | undefined
+): number {
+  return clampMaxPerWallet(stage?.max_per_wallet ?? hardMaxMintQuantity());
 }
 
 async function resolveOpenSeaSlug(contract: string): Promise<string | null> {
@@ -97,22 +101,33 @@ export async function prepareOpenSeaFreeMint(params: {
     throw new Error("OpenSea active stage is paid — free-mint only");
   }
 
-  const quantity = maxPerWallet(stage);
-  const built = await buildOpenSeaDropMintTx({
-    slug,
-    minter: params.minterAddress,
-    quantity,
-  });
-  if (built.valueWei > 0n) {
-    throw new Error(`OpenSea mint requires payment (${built.valueWei} wei)`);
+  // Always max for this stage; if builder rejects high qty, step down.
+  const target = openSeaStageMaxPerWallet(stage);
+  const ladder = maxMintQuantityLadder(target).filter((q) => q <= target);
+  let lastErr: Error | null = null;
+
+  for (const quantity of ladder) {
+    try {
+      const built = await buildOpenSeaDropMintTx({
+        slug,
+        minter: params.minterAddress,
+        quantity,
+      });
+      if (built.valueWei > 0n) {
+        throw new Error(`OpenSea mint requires payment (${built.valueWei} wei)`);
+      }
+      return {
+        ...built,
+        quantity,
+        slug,
+        stageLabel: stage.label || stage.stage_type || "drop",
+      };
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+    }
   }
 
-  return {
-    ...built,
-    quantity,
-    slug,
-    stageLabel: stage.label || stage.stage_type || "drop",
-  };
+  throw lastErr || new Error("OpenSea max mint failed");
 }
 
 const MINT_IFACE = new Interface([
@@ -132,25 +147,16 @@ export type PublicMintCandidate = {
 };
 
 /**
- * Build public free-mint calldata candidates (max qty first, tight ladder).
- * Used for direct contract / random-site open mints.
- * Kept small so estimateGas doesn't burn the competitive mint window.
+ * Build public free-mint calldata candidates — MAX qty first, then step down.
  */
 export function buildPublicMaxMintCandidates(params: {
   to: string;
   minter: string;
   whaleQuantity?: number;
 }): PublicMintCandidate[] {
-  const whaleQ = Math.max(1, Math.min(params.whaleQuantity || 1, 50));
-  const maxQ = Math.min(Math.max(whaleQ * 2, whaleQ), 20);
-  // Prefer higher quantities first ("max as usual"), few steps only
-  const qtys = [
-    ...new Set(
-      [maxQ, whaleQ, 10, 5, 3, 2, 1].filter((q) => q >= 1 && q <= maxQ)
-    ),
-  ].sort((a, b) => b - a);
-
+  const qtys = maxMintQuantityLadder(params.whaleQuantity);
   const out: PublicMintCandidate[] = [];
+
   for (const q of qtys) {
     out.push({
       to: params.to,
@@ -200,7 +206,6 @@ export function buildPublicMaxMintCandidates(params: {
 export function decodeWhaleMintQuantity(data: string): number | undefined {
   const raw = data.toLowerCase();
   if (raw.length < 10 + 64) return undefined;
-  // last 32-byte word as qty (common for mint(uint256))
   const word = raw.slice(-64);
   try {
     const q = Number(BigInt(`0x${word}`));
