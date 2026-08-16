@@ -90,7 +90,7 @@ async function main(): Promise<void> {
     `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
   );
   console.log(`Track RPC (Alchemy): ${rpcLabels.track}`);
-  console.log(`Mint  RPC (Alchemy): ${rpcLabels.mint}`);
+  console.log(`Mint  RPC (Chainstack): ${rpcLabels.mint}`);
   if (rpcLabels.trackBackup !== "(none)") {
     console.log(`Track RPC (backup): ${rpcLabels.trackBackup}`);
   }
