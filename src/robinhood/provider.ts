@@ -12,7 +12,7 @@ export function getProvider(): JsonRpcProvider {
   return getTrackProvider();
 }
 
-/** Mint RPC — send txs / gas estimates (Alchemy primary). */
+/** Mint RPC — send txs / gas estimates (Chainstack primary). */
 export function getMintProvider(): JsonRpcProvider {
   if (!mintProvider) {
     mintProvider = new JsonRpcProvider(config.mintRpcUrl);
@@ -20,7 +20,7 @@ export function getMintProvider(): JsonRpcProvider {
   return mintProvider;
 }
 
-/** Mint backup RPC (Chainstack) when configured. */
+/** Mint backup RPC (Alchemy) when configured. */
 export function getMintBackupProvider(): JsonRpcProvider | null {
   if (!config.mintBackupRpcUrl) return null;
   return new JsonRpcProvider(config.mintBackupRpcUrl);

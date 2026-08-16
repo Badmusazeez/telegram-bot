@@ -12,14 +12,14 @@ const schema = z.object({
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
   /** robinhood */
   CHAIN: z.string().optional().default("robinhood"),
-  /** Primary tracker RPC (Alchemy — testnet or mainnet). */
+  /** Primary tracker RPC (Alchemy mainnet). */
   ROBINHOOD_RPC_URL: z.string().optional().default(""),
   TRACK_RPC_URL: z.string().optional().default(""),
-  /** Backup tracker RPC (Chainstack) — used when primary is slow/down. */
+  /** Backup tracker RPC (Chainstack) — used when Alchemy is slow/down. */
   TRACK_RPC_BACKUP_URL: z.string().optional().default(""),
-  /** Mint / send-tx RPC (Alchemy mainnet recommended). Falls back to tracker RPC. */
+  /** Mint / send-tx RPC (Chainstack). Falls back to tracker RPC if empty. */
   MINT_RPC_URL: z.string().optional().default(""),
-  /** Optional mint backup (Chainstack). Falls back to TRACK_RPC_BACKUP_URL. */
+  /** Optional mint backup (Alchemy). Falls back to TRACK_RPC_URL if unset. */
   MINT_RPC_BACKUP_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
@@ -99,10 +99,15 @@ const trackRpcUrl =
   chain.defaultRpcUrl;
 const trackBackupRpcUrl = env.TRACK_RPC_BACKUP_URL.trim();
 const mintRpcUrl = env.MINT_RPC_URL.trim() || trackRpcUrl;
-const mintBackupRaw =
-  env.MINT_RPC_BACKUP_URL.trim() || trackBackupRpcUrl;
+// Mint backup: explicit → Alchemy track URL → track backup (never same as mint primary)
+const mintBackupCandidate =
+  env.MINT_RPC_BACKUP_URL.trim() ||
+  (trackRpcUrl.includes("alchemy.com") ? trackRpcUrl : "") ||
+  trackBackupRpcUrl;
 const mintBackupRpcUrl =
-  mintBackupRaw && mintBackupRaw !== mintRpcUrl ? mintBackupRaw : "";
+  mintBackupCandidate && mintBackupCandidate !== mintRpcUrl
+    ? mintBackupCandidate
+    : "";
 
 if (!trackRpcUrl.startsWith("http")) {
   throw new Error("TRACK_RPC_URL / ROBINHOOD_RPC_URL must be a valid RPC URL");
@@ -113,7 +118,7 @@ if (trackBackupRpcUrl && !trackBackupRpcUrl.startsWith("http")) {
 if (!mintRpcUrl.startsWith("http")) {
   throw new Error("MINT_RPC_URL must be a valid RPC URL");
 }
-if (mintBackupRaw && !mintBackupRaw.startsWith("http")) {
+if (mintBackupCandidate && !mintBackupCandidate.startsWith("http")) {
   throw new Error("MINT_RPC_BACKUP_URL must be a valid RPC URL");
 }
 if (trackBackupRpcUrl && trackBackupRpcUrl === trackRpcUrl) {
