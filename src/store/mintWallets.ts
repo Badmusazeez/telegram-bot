@@ -20,7 +20,7 @@ function walletsPath(): string {
 }
 
 function provider(): JsonRpcProvider {
-  // Mint wallets must send txs on the mint RPC (Chainstack primary).
+  // Mint wallets send txs on the mint RPC (Alchemy).
   if (!sharedProvider) {
     sharedProvider = new JsonRpcProvider(config.mintRpcUrl);
   }

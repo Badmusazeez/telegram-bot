@@ -87,11 +87,13 @@ async function main(): Promise<void> {
   console.log(
     `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
   );
-  console.log(`Track RPC (primary Alchemy): ${rpcLabels.track}`);
-  console.log(`Track RPC (backup Chainstack): ${rpcLabels.trackBackup}`);
-  console.log(`Mint  RPC (primary Chainstack): ${rpcLabels.mint}`);
+  console.log(`Track RPC (Alchemy): ${rpcLabels.track}`);
+  console.log(`Mint  RPC (Alchemy): ${rpcLabels.mint}`);
+  if (rpcLabels.trackBackup !== "(none)") {
+    console.log(`Track RPC (backup): ${rpcLabels.trackBackup}`);
+  }
   if (rpcLabels.mintBackup !== "(none)") {
-    console.log(`Mint  RPC (backup Alchemy): ${rpcLabels.mintBackup}`);
+    console.log(`Mint  RPC (backup): ${rpcLabels.mintBackup}`);
   }
 
   setTrackRpcSwitchHandler(async (event) => {

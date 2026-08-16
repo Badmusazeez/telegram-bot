@@ -151,7 +151,7 @@ export async function maybeRecoverPrimary(): Promise<void> {
 
 /**
  * Run a tracker call on the active RPC.
- * On slow/fail of primary (Alchemy) → Chainstack backup.
+ * On slow/fail of primary → optional TRACK_RPC_BACKUP_URL.
  * While on backup, periodically try primary again.
  */
 export async function withTrackRpc<T>(

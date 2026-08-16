@@ -12,14 +12,14 @@ const schema = z.object({
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
   /** robinhood */
   CHAIN: z.string().optional().default("robinhood"),
-  /** Primary tracker RPC (Alchemy mainnet). */
+  /** Primary tracker RPC (Alchemy). */
   ROBINHOOD_RPC_URL: z.string().optional().default(""),
   TRACK_RPC_URL: z.string().optional().default(""),
-  /** Backup tracker RPC (Chainstack) — used when Alchemy is slow/down. */
+  /** Optional backup tracker RPC. Leave empty for Alchemy-only. */
   TRACK_RPC_BACKUP_URL: z.string().optional().default(""),
-  /** Mint / send-tx RPC (Chainstack). Falls back to tracker RPC if empty. */
+  /** Mint / send-tx RPC (Alchemy). Falls back to tracker RPC if empty. */
   MINT_RPC_URL: z.string().optional().default(""),
-  /** Optional mint backup (Alchemy). Falls back to TRACK_RPC_URL if unset. */
+  /** Optional mint backup RPC. Leave empty for Alchemy-only. */
   MINT_RPC_BACKUP_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
@@ -99,11 +99,7 @@ const trackRpcUrl =
   chain.defaultRpcUrl;
 const trackBackupRpcUrl = env.TRACK_RPC_BACKUP_URL.trim();
 const mintRpcUrl = env.MINT_RPC_URL.trim() || trackRpcUrl;
-// Mint backup: explicit → Alchemy track URL → track backup (never same as mint primary)
-const mintBackupCandidate =
-  env.MINT_RPC_BACKUP_URL.trim() ||
-  (trackRpcUrl.includes("alchemy.com") ? trackRpcUrl : "") ||
-  trackBackupRpcUrl;
+const mintBackupCandidate = env.MINT_RPC_BACKUP_URL.trim();
 const mintBackupRpcUrl =
   mintBackupCandidate && mintBackupCandidate !== mintRpcUrl
     ? mintBackupCandidate

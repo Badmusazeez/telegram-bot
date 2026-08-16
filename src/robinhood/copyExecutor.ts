@@ -589,7 +589,7 @@ async function sendMintTx(
     }
   };
 
-  const primary = await trySend(getMintProvider(), "chainstack");
+  const primary = await trySend(getMintProvider(), "alchemy");
   if (primary.ok) return primary;
 
   const backup = getMintBackupProvider();
@@ -599,10 +599,8 @@ async function sendMintTx(
       err
     );
   if (backup && networkish) {
-    console.warn(
-      `[mint] Chainstack mint RPC failed (${err}) — trying Alchemy backup`
-    );
-    return trySend(backup, "alchemy-backup");
+    console.warn(`[mint] primary mint RPC failed (${err}) — trying backup`);
+    return trySend(backup, "backup");
   }
   return primary;
 }
