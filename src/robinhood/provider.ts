@@ -12,7 +12,7 @@ export function getProvider(): JsonRpcProvider {
   return getTrackProvider();
 }
 
-/** Mint RPC — send txs / gas estimates (Chainstack). */
+/** Mint RPC — send txs / gas estimates (Alchemy). */
 export function getMintProvider(): JsonRpcProvider {
   if (!mintProvider) {
     mintProvider = new JsonRpcProvider(config.mintRpcUrl);
