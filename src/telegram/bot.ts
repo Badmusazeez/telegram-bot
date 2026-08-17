@@ -847,3 +847,23 @@ export async function broadcastRpcAlert(
     }
   }
 }
+
+/** Unthrottled HTML broadcast (heartbeat / status pulses). */
+export async function broadcastHtml(bot: Bot, text: string): Promise<void> {
+  const state = getState();
+  const targets =
+    state.notifyChatIds.length > 0
+      ? state.notifyChatIds
+      : [...config.allowedChatIds];
+
+  for (const id of targets) {
+    try {
+      await bot.api.sendMessage(id, text, {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
+    } catch (err) {
+      console.error(`[telegram] failed broadcast to ${id}:`, err);
+    }
+  }
+}

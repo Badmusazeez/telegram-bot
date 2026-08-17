@@ -1,22 +1,13 @@
-import { formatEther } from "ethers";
 import { config } from "../config";
 import { getState, rememberTxFast } from "../store/state";
 import type { NftPurchase } from "../types";
+import {
+  ZERO_ADDRESS,
+  decodeNftFromMintCalldata,
+  isMintLikeCalldata,
+  valueFromWei,
+} from "./mintDetect";
 import type { PurchaseHandler } from "./monitor";
-
-const ZERO = "0x0000000000000000000000000000000000000000";
-
-/** SeaDrop / common free-mint selectors seen on Robinhood. */
-const MINT_SELECTORS = new Set([
-  "0x161ac21f", // SeaDrop mintPublic (RH)
-  "0x9b4f3f25", // SeaDrop mintPublic (legacy)
-  "0x26db764c",
-  "0xa0712d68", // mint(uint256)
-  "0x94bf804d",
-  "0x40c10f19",
-  "0x1249c58b", // mint()
-  "0x2db11544",
-]);
 
 type BsAddress = { hash?: string };
 type BsTx = {
@@ -47,12 +38,14 @@ export function getBlockscoutStatus(): {
   lastError: string | null;
   lastHitTx: string | null;
   tracked: number;
+  tickCount: number;
 } {
   return {
     lastOkAt,
     lastError,
     lastHitTx,
     tracked: getState().trackedWallets.length,
+    tickCount,
   };
 }
 
@@ -62,25 +55,59 @@ function explorerApiBase(): string {
   return `${origin}/api/v2`;
 }
 
-async function fetchJson<T>(url: string): Promise<T | null> {
+async function fetchJsonOnce<T>(url: string): Promise<{
+  ok: boolean;
+  status: number;
+  data: T | null;
+  err?: string;
+}> {
   try {
     const res = await fetch(url, {
       headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(6_000),
     });
     if (!res.ok) {
-      lastError = `${res.status}`;
-      console.warn(`[blockscout] ${res.status} ${url.slice(0, 120)}`);
+      return { ok: false, status: res.status, data: null, err: `${res.status}` };
+    }
+    return { ok: true, status: res.status, data: (await res.json()) as T };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      data: null,
+      err: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/** Retry on 5xx / timeout — Blockscout flaps under load. */
+async function fetchJson<T>(url: string): Promise<T | null> {
+  const attempts = 3;
+  for (let i = 0; i < attempts; i++) {
+    const result = await fetchJsonOnce<T>(url);
+    if (result.ok && result.data) {
+      lastOkAt = new Date().toISOString();
+      lastError = null;
+      return result.data;
+    }
+    lastError = result.err || `status ${result.status}`;
+    const retryable =
+      result.status === 0 ||
+      result.status === 429 ||
+      result.status >= 500;
+    if (!retryable || i === attempts - 1) {
+      if (i === 0 || !retryable) {
+        console.warn(`[blockscout] ${lastError} ${url.slice(0, 100)}`);
+      }
       return null;
     }
-    lastOkAt = new Date().toISOString();
-    lastError = null;
-    return (await res.json()) as T;
-  } catch (err) {
-    lastError = err instanceof Error ? err.message : String(err);
-    console.warn(`[blockscout] fetch failed: ${lastError}`);
-    return null;
+    await sleep(150 * (i + 1));
   }
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function parseIsoMs(iso?: string): number {
@@ -89,41 +116,17 @@ function parseIsoMs(iso?: string): number {
   return Number.isFinite(t) ? t : 0;
 }
 
-function valueRobinhood(raw?: string): number {
-  if (!raw || raw === "0") return 0;
-  try {
-    return Number(formatEther(BigInt(raw)));
-  } catch {
-    return 0;
-  }
-}
-
-function decodeNftFromCalldata(input?: string): string | null {
-  const data = (input || "").toLowerCase();
-  if (data.length < 10 + 64) return null;
-  const selector = data.slice(0, 10);
-  if (selector === "0x161ac21f" || selector === "0x9b4f3f25") {
-    return `0x${data.slice(10 + 24, 10 + 64)}`;
-  }
-  return null;
-}
-
 function isMintLikeTx(tx: BsTx): boolean {
   const status = (tx.status || "").toLowerCase();
   const result = (tx.result || "").toLowerCase();
   if (status && status !== "ok" && status !== "success") return false;
   if (result && result !== "success" && result !== "ok") return false;
 
-  const method = (tx.method || "").toLowerCase();
-  if (
-    method.includes("mint") ||
-    method.includes("claim") ||
-    method.includes("drop")
-  ) {
-    return true;
-  }
-  const sel = (tx.raw_input || "").slice(0, 10).toLowerCase();
-  return MINT_SELECTORS.has(sel);
+  return isMintLikeCalldata(
+    tx.to?.hash,
+    tx.raw_input,
+    tx.method
+  );
 }
 
 async function fetchRecentTxs(address: string): Promise<BsTx[]> {
@@ -166,23 +169,23 @@ export async function scanBlockscoutMints(): Promise<NftPurchase[]> {
         if (from && from !== buyer) continue;
         if (!isMintLikeTx(tx)) continue;
 
-        const value = valueRobinhood(tx.value);
+        const value = valueFromWei(tx.value);
         if (state.freeMintsOnly && value > 0) continue;
 
         const txHash = (tx.hash || "").toLowerCase();
         const input = (tx.raw_input || "").toLowerCase();
         const to = (tx.to?.hash || "").toLowerCase();
-        const nft = decodeNftFromCalldata(input) || to || ZERO;
+        const nft = decodeNftFromMintCalldata(input) || to || ZERO_ADDRESS;
         if (!txHash) continue;
 
-        // Shared dedupe key with Alchemy monitor (one hit per mint tx).
+        // Shared dedupe key with Alchemy / pending / tip-scan (one hit per mint tx).
         const dedupeKey = `${txHash}:${nft}:mint`;
         if (!rememberTxFast(dedupeKey)) continue;
 
         found.push({
           txHash,
           buyer,
-          seller: ZERO,
+          seller: ZERO_ADDRESS,
           contract: nft,
           tokenId: "0",
           valueRobinhood: value,
@@ -267,7 +270,7 @@ export async function startBlockscoutWatcher(
   }, intervalMs);
 
   console.log(
-    `[blockscout] FAST watcher ${explorerApiBase()} every ${intervalMs}ms (lookback ${BOOT_LOOKBACK_MS / 1000}s)`
+    `[blockscout] FAST watcher ${explorerApiBase()} every ${intervalMs}ms (lookback ${BOOT_LOOKBACK_MS / 1000}s, retries=3)`
   );
 
   return () => {

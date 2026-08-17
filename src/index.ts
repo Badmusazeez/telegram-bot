@@ -2,7 +2,10 @@ import { config } from "./config";
 import { maybeCopyPurchase } from "./robinhood/copyExecutor";
 import { startMintScheduler } from "./robinhood/mintScheduler";
 import { startBlockscoutWatcher } from "./robinhood/blockscoutWatcher";
+import { startHeartbeat } from "./robinhood/heartbeat";
 import { enrichPurchase, startMonitor } from "./robinhood/monitor";
+import { startPendingWatcher } from "./robinhood/pendingWatcher";
+import { startTipScanWatcher } from "./robinhood/tipScanWatcher";
 import {
   ensureOpenSeaApiKey,
   getOpenSeaApiKey,
@@ -18,10 +21,12 @@ import type { NftPurchase } from "./types";
 import {
   formatRpcLimitAlert,
   formatTrackRpcSwitch,
+  type TrackRpcIssue,
 } from "./robinhood/rpcHealth";
 import { setTrackRpcSwitchHandler } from "./robinhood/trackRpc";
 import { setMintRpcIssueHandler } from "./robinhood/mintRpcAlerts";
 import {
+  broadcastHtml,
   broadcastPriceAlert,
   broadcastPurchase,
   broadcastRpcAlert,
@@ -193,17 +198,21 @@ async function main(): Promise<void> {
     }
   };
 
-  // Blockscout FIRST — must not wait on Alchemy catch-up (that was missing signals).
-  const stopBlockscout = await startBlockscoutWatcher(onPurchase);
-
-  const stopMonitor = await startMonitor(onPurchase, async (issue) => {
+  const onTrackRpcIssue = async (issue: TrackRpcIssue) => {
     console.warn(`[rpc] track/Alchemy issue ${issue.kind}: ${issue.message}`);
     await broadcastRpcAlert(
       bot,
       formatRpcLimitAlert("track", issue),
       `track:${issue.kind}`
     );
-  });
+  };
+
+  // Fastest → confirmed backups. Shared rememberTxFast dedupes across paths.
+  const stopPending = await startPendingWatcher(onPurchase, onTrackRpcIssue);
+  const stopBlockscout = await startBlockscoutWatcher(onPurchase);
+  const stopTipScan = await startTipScanWatcher(onPurchase, onTrackRpcIssue);
+
+  const stopMonitor = await startMonitor(onPurchase, onTrackRpcIssue);
 
   const stopPrices = await startPriceWatcher(async (alert) => {
     console.log(
@@ -217,12 +226,19 @@ async function main(): Promise<void> {
     await broadcastScheduleResult(bot, job, result);
   });
 
+  const stopHeartbeat = startHeartbeat(async (html) => {
+    await broadcastHtml(bot, html);
+  });
+
   const shutdown = (signal: string) => {
     console.log(`Received ${signal}, shutting down…`);
+    stopPending();
     stopMonitor();
     stopBlockscout();
+    stopTipScan();
     stopPrices();
     stopSchedules();
+    stopHeartbeat();
     bot.stop();
   };
   process.once("SIGINT", () => shutdown("SIGINT"));
