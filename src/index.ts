@@ -131,28 +131,26 @@ async function main(): Promise<void> {
     console.log(
       `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
     );
-    // Copy immediately; enrich metadata in parallel for Telegram (do not delay mint).
-    const [copy, enriched] = await Promise.all([
-      maybeCopyPurchase(purchase),
-      enrichPurchase(purchase),
-    ]);
+    // Copy FIRST — do not wait on NFT metadata enrichment.
+    const copy = await maybeCopyPurchase(purchase);
+    const enriched = await enrichPurchase(purchase).catch(() => purchase);
     await broadcastPurchase(bot, enriched, copy);
 
     if (purchase.isFreeMint && copy.success && !copy.dryRun) {
-      await addWatchedPrice({
+      void addWatchedPrice({
         contract: purchase.contract,
         tokenId: purchase.tokenId,
         label:
           enriched.tokenName ||
           enriched.collectionName ||
           `${purchase.contract.slice(0, 6)}…#${purchase.tokenId}`,
-      });
-      await addWatchedPrice({
+      }).catch(() => undefined);
+      void addWatchedPrice({
         contract: purchase.contract,
         label:
           (enriched.collectionName || purchase.contract.slice(0, 10)) +
           " floor",
-      });
+      }).catch(() => undefined);
     }
   };
 

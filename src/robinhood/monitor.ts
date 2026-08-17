@@ -288,15 +288,13 @@ export async function scanForPurchases(
     string,
     { valueRobinhood: number; marketplace?: string }
   >();
+  /** One free-mint signal per source tx (not per token). */
+  const freeMintTxSeen = new Set<string>();
 
   for (const log of logs) {
     const decoded = decodeTransfer(log);
     if (!decoded) continue;
     if (!buyerSet.has(decoded.to)) continue;
-
-    const dedupeKey = `${log.transactionHash}:${decoded.contract}:${decoded.tokenId}`;
-    const isNew = rememberTxFast(dedupeKey);
-    if (!isNew) continue;
 
     const txKey = log.transactionHash.toLowerCase();
     let valued = valueCache.get(txKey);
@@ -311,6 +309,18 @@ export async function scanForPurchases(
 
     if (state.freeMintsOnly && !isFreeMint) {
       continue;
+    }
+
+    if (isFreeMint) {
+      // Align with Blockscout dedupe — one copy attempt per mint tx.
+      const mintKey = `${txKey}:${decoded.contract}:mint`;
+      if (freeMintTxSeen.has(mintKey) || !rememberTxFast(mintKey)) {
+        continue;
+      }
+      freeMintTxSeen.add(mintKey);
+    } else {
+      const dedupeKey = `${log.transactionHash}:${decoded.contract}:${decoded.tokenId}`;
+      if (!rememberTxFast(dedupeKey)) continue;
     }
 
     purchases.push({
@@ -357,26 +367,20 @@ export async function startMonitor(
 ): Promise<() => void> {
   let stopped = false;
   let scanning = false;
-  /** Handlers run in background so mint/Telegram never block the next scan. */
-  let handleTail: Promise<void> = Promise.resolve();
-
+  /** Handlers run in parallel so one mint never blocks another. */
   const enqueuePurchases = (purchases: NftPurchase[]) => {
     for (const purchase of purchases) {
-      handleTail = handleTail
-        .then(async () => {
-          if (stopped) return;
-          try {
-            await onPurchase(purchase);
-          } catch (err) {
-            console.error(
-              `[monitor] handler failed for ${purchase.txHash}:`,
-              err instanceof Error ? err.message : err
-            );
-          }
-        })
-        .catch(() => {
-          // keep queue alive
-        });
+      void (async () => {
+        if (stopped) return;
+        try {
+          await onPurchase(purchase);
+        } catch (err) {
+          console.error(
+            `[monitor] handler failed for ${purchase.txHash}:`,
+            err instanceof Error ? err.message : err
+          );
+        }
+      })();
     }
   };
 

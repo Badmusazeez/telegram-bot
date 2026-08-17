@@ -10,12 +10,13 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 const MINT_SELECTORS = new Set([
   "0x161ac21f", // SeaDrop mintPublic (RH)
   "0x9b4f3f25", // SeaDrop mintPublic (legacy)
-  "0x26db764c", // mint{value,to,qty} variants
+  "0x26db764c",
   "0xa0712d68", // mint(uint256)
-  "0x94bf804d", // mint(uint256,address)
-  "0x40c10f19", // mint(address,uint256)
+  "0x94bf804d",
+  "0x40c10f19",
   "0x1249c58b", // mint()
-  "0x2db11544", // claim variants
+  "0x2db11544",
+  "0x4a21a2df", // Scatter
 ]);
 
 type BsAddress = { hash?: string };
@@ -32,30 +33,15 @@ type BsTx = {
   block?: number | null;
   block_number?: number | null;
 };
-type BsToken = {
-  address_hash?: string;
-  address?: string;
-  name?: string;
-};
-type BsTransfer = {
-  transaction_hash?: string;
-  block_number?: number;
-  timestamp?: string;
-  type?: string;
-  from?: BsAddress;
-  to?: BsAddress;
-  token?: BsToken;
-  total?: { token_id?: string; value?: string };
-};
 
 /** Per-wallet high-water mark (ms). */
 const lastSeenTsByWallet = new Map<string, number>();
-/** Boot lookback — long enough to catch mints during slow Alchemy startup. */
-const BOOT_LOOKBACK_MS = 20 * 60_000;
+const BOOT_LOOKBACK_MS = 30 * 60_000;
 
 let lastOkAt: string | null = null;
 let lastError: string | null = null;
 let lastHitTx: string | null = null;
+let tickCount = 0;
 
 export function getBlockscoutStatus(): {
   lastOkAt: string | null;
@@ -81,11 +67,11 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   try {
     const res = await fetch(url, {
       headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) {
-      lastError = `${res.status} ${url}`;
-      console.warn(`[blockscout] ${lastError}`);
+      lastError = `${res.status}`;
+      console.warn(`[blockscout] ${res.status} ${url.slice(0, 120)}`);
       return null;
     }
     lastOkAt = new Date().toISOString();
@@ -117,7 +103,6 @@ function decodeNftFromCalldata(input?: string): string | null {
   const data = (input || "").toLowerCase();
   if (data.length < 10 + 64) return null;
   const selector = data.slice(0, 10);
-  // SeaDrop mintPublic(nftContract, ...) — first arg is the collection.
   if (selector === "0x161ac21f" || selector === "0x9b4f3f25") {
     return `0x${data.slice(10 + 24, 10 + 64)}`;
   }
@@ -150,21 +135,9 @@ async function fetchRecentTxs(address: string): Promise<BsTx[]> {
   return data?.items ?? [];
 }
 
-async function fetchTokenTransfers(address: string): Promise<BsTransfer[]> {
-  const base = explorerApiBase();
-  // Prefer ERC-721 only — combined type filter sometimes 500s on Blockscout.
-  const primary = await fetchJson<{ items?: BsTransfer[] }>(
-    `${base}/addresses/${address}/token-transfers?type=ERC-721`
-  );
-  if (primary?.items) return primary.items;
-  const fallback = await fetchJson<{ items?: BsTransfer[] }>(
-    `${base}/addresses/${address}/token-transfers?type=ERC-1155`
-  );
-  return fallback?.items ?? [];
-}
-
 /**
- * Prefer one purchase per mint tx (not per token) so copy/Telegram fire once, fast.
+ * Fast path: poll all tracked wallets' recent txs in parallel.
+ * One purchase per mint tx (not per token).
  */
 export async function scanBlockscoutMints(): Promise<NftPurchase[]> {
   const state = getState();
@@ -172,118 +145,67 @@ export async function scanBlockscoutMints(): Promise<NftPurchase[]> {
     return [];
   }
 
-  const purchases: NftPurchase[] = [];
   const wallets = state.trackedWallets.map((w) => w.address.toLowerCase());
+  const purchases: NftPurchase[] = [];
 
-  for (const buyer of wallets) {
-    const since =
-      lastSeenTsByWallet.get(buyer) ?? Date.now() - BOOT_LOOKBACK_MS;
-    let maxSeen = since;
-    const seenTxThisScan = new Set<string>();
+  const results = await Promise.all(
+    wallets.map(async (buyer) => {
+      const since =
+        lastSeenTsByWallet.get(buyer) ?? Date.now() - BOOT_LOOKBACK_MS;
+      let maxSeen = since;
+      const found: NftPurchase[] = [];
 
-    // 1) Primary: wallet transactions (catches SeaDrop mintPublic immediately)
-    const txs = await fetchRecentTxs(buyer);
-    for (const tx of txs) {
-      const tsMs = parseIsoMs(tx.timestamp);
-      if (tsMs > 0) {
-        if (tsMs > maxSeen) maxSeen = tsMs;
-        if (tsMs <= since) continue;
+      const txs = await fetchRecentTxs(buyer);
+      for (const tx of txs) {
+        const tsMs = parseIsoMs(tx.timestamp);
+        if (tsMs > 0) {
+          if (tsMs > maxSeen) maxSeen = tsMs;
+          if (tsMs <= since) continue;
+        }
+
+        const from = (tx.from?.hash || "").toLowerCase();
+        if (from && from !== buyer) continue;
+        if (!isMintLikeTx(tx)) continue;
+
+        const value = valueRobinhood(tx.value);
+        if (state.freeMintsOnly && value > 0) continue;
+
+        const txHash = (tx.hash || "").toLowerCase();
+        const input = (tx.raw_input || "").toLowerCase();
+        const to = (tx.to?.hash || "").toLowerCase();
+        const nft = decodeNftFromCalldata(input) || to || ZERO;
+        if (!txHash) continue;
+
+        // Shared dedupe key with Alchemy monitor (one hit per mint tx).
+        const dedupeKey = `${txHash}:${nft}:mint`;
+        if (!rememberTxFast(dedupeKey)) continue;
+
+        found.push({
+          txHash,
+          buyer,
+          seller: ZERO,
+          contract: nft,
+          tokenId: "0",
+          valueRobinhood: value,
+          blockNumber: Number(tx.block ?? tx.block_number ?? 0),
+          timestamp: tsMs
+            ? Math.floor(tsMs / 1000)
+            : Math.floor(Date.now() / 1000),
+          marketplace: "free-mint",
+          isFreeMint: true,
+          isPaid: value > 0,
+          sourceTo: to || undefined,
+          sourceData: input || undefined,
+        });
+        lastHitTx = txHash;
       }
 
-      const from = (tx.from?.hash || "").toLowerCase();
-      if (from && from !== buyer) continue;
-      if (!isMintLikeTx(tx)) continue;
+      lastSeenTsByWallet.set(buyer, maxSeen);
+      return found;
+    })
+  );
 
-      const value = valueRobinhood(tx.value);
-      if (state.freeMintsOnly && value > 0) continue;
-
-      const txHash = (tx.hash || "").toLowerCase();
-      if (!txHash || seenTxThisScan.has(txHash)) continue;
-      seenTxThisScan.add(txHash);
-
-      const nft =
-        decodeNftFromCalldata(tx.raw_input) ||
-        (tx.to?.hash || "").toLowerCase() ||
-        ZERO;
-
-      // Dedupe with Alchemy monitor (token-level keys still unique via :0)
-      const dedupeKey = `${txHash}:${nft}:mint`;
-      if (!rememberTxFast(dedupeKey)) continue;
-
-      const blockNumber = Number(tx.block ?? tx.block_number ?? 0);
-      purchases.push({
-        txHash,
-        buyer,
-        seller: ZERO,
-        contract: nft,
-        tokenId: "0",
-        valueRobinhood: value,
-        blockNumber,
-        timestamp: tsMs
-          ? Math.floor(tsMs / 1000)
-          : Math.floor(Date.now() / 1000),
-        marketplace: "free-mint",
-        isFreeMint: true,
-        isPaid: value > 0,
-      });
-      lastHitTx = txHash;
-    }
-
-    // 2) Backup: token mint transfers (covers mints not labeled mint* in method)
-    const transfers = await fetchTokenTransfers(buyer);
-    for (const item of transfers) {
-      const tsMs = parseIsoMs(item.timestamp);
-      if (tsMs > 0) {
-        if (tsMs > maxSeen) maxSeen = tsMs;
-        if (tsMs <= since) continue;
-      }
-
-      const from = (item.from?.hash || "").toLowerCase();
-      const to = (item.to?.hash || "").toLowerCase();
-      const isMint =
-        from === ZERO || (item.type || "").toLowerCase() === "token_minting";
-      if (!isMint || to !== buyer) continue;
-
-      const txHash = (item.transaction_hash || "").toLowerCase();
-      const contract = (
-        item.token?.address_hash ||
-        item.token?.address ||
-        ""
-      ).toLowerCase();
-      if (!txHash || !contract) continue;
-      if (seenTxThisScan.has(txHash)) continue;
-      seenTxThisScan.add(txHash);
-
-      // Skip if tx-path already reserved this mint
-      if (!rememberTxFast(`${txHash}:${contract}:mint`)) continue;
-
-      if (state.freeMintsOnly) {
-        // Assume free when Transfer from zero; paid mints still mint from zero
-        // but tx path above already filtered value>0 when method is mint-like.
-      }
-
-      purchases.push({
-        txHash,
-        buyer,
-        seller: ZERO,
-        contract,
-        tokenId: item.total?.token_id ?? "0",
-        valueRobinhood: 0,
-        blockNumber: Number(item.block_number || 0),
-        timestamp: tsMs
-          ? Math.floor(tsMs / 1000)
-          : Math.floor(Date.now() / 1000),
-        marketplace: "free-mint",
-        collectionName: item.token?.name,
-        isFreeMint: true,
-        isPaid: false,
-      });
-      lastHitTx = txHash;
-    }
-
-    lastSeenTsByWallet.set(buyer, maxSeen);
-  }
-
+  for (const batch of results) purchases.push(...batch);
   return purchases;
 }
 
@@ -292,7 +214,6 @@ export async function startBlockscoutWatcher(
 ): Promise<() => void> {
   let stopped = false;
   let scanning = false;
-  let handleTail: Promise<void> = Promise.resolve();
 
   const wallets = getState().trackedWallets;
   console.log(
@@ -302,29 +223,25 @@ export async function startBlockscoutWatcher(
         : " ⚠️ NONE — use /track 0x…")
   );
 
-  const enqueue = (purchases: NftPurchase[]) => {
-    for (const purchase of purchases) {
-      handleTail = handleTail
-        .then(async () => {
-          if (stopped) return;
-          try {
-            await onPurchase(purchase);
-          } catch (err) {
-            console.error(
-              `[blockscout] handler failed for ${purchase.txHash}:`,
-              err instanceof Error ? err.message : err
-            );
-          }
-        })
-        .catch(() => {
-          // keep queue alive
-        });
-    }
+  const fire = (purchase: NftPurchase) => {
+    // Parallel — never serialize free-mint copies behind each other.
+    void (async () => {
+      if (stopped) return;
+      try {
+        await onPurchase(purchase);
+      } catch (err) {
+        console.error(
+          `[blockscout] handler failed for ${purchase.txHash}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    })();
   };
 
   const tick = async () => {
     if (stopped || scanning) return;
     scanning = true;
+    tickCount += 1;
     try {
       const purchases = await scanBlockscoutMints();
       if (purchases.length > 0) {
@@ -333,7 +250,7 @@ export async function startBlockscoutWatcher(
             .map((p) => p.txHash.slice(0, 10))
             .join(", ")}`
         );
-        enqueue(purchases);
+        for (const p of purchases) fire(p);
       }
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
@@ -343,15 +260,15 @@ export async function startBlockscoutWatcher(
     }
   };
 
-  // Do NOT block bot startup on the first scan.
   void tick();
-  const intervalMs = Math.max(2_500, Math.min(config.pollIntervalMs, 5_000));
+  // Aggressive poll — RH free mints sell out in seconds.
+  const intervalMs = 1_500;
   const timer = setInterval(() => {
     void tick();
   }, intervalMs);
 
   console.log(
-    `[blockscout] watcher on ${explorerApiBase()} every ${intervalMs}ms (lookback ${BOOT_LOOKBACK_MS / 1000}s)`
+    `[blockscout] FAST watcher ${explorerApiBase()} every ${intervalMs}ms (lookback ${BOOT_LOOKBACK_MS / 1000}s)`
   );
 
   return () => {

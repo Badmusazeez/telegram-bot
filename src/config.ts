@@ -59,7 +59,7 @@ const schema = z.object({
   MAX_MINT_QUANTITY: z
     .string()
     .optional()
-    .default("50")
+    .default("100")
     .transform((v) => Number(v)),
   POLL_INTERVAL_MS: z.string().optional().default(""),
   LOOKBACK_BLOCKS: z.string().optional().default(""),
@@ -189,7 +189,7 @@ export const config = {
   maxMintQuantity:
     Number.isFinite(env.MAX_MINT_QUANTITY) && env.MAX_MINT_QUANTITY > 0
       ? Math.min(Math.floor(env.MAX_MINT_QUANTITY), 100)
-      : 50,
+      : 100,
   pollIntervalMs: numberOr(env.POLL_INTERVAL_MS, chain.defaultPollIntervalMs),
   lookbackBlocks: numberOr(env.LOOKBACK_BLOCKS, chain.defaultLookbackBlocks),
   allowedCollections: splitCsv(env.ALLOWED_COLLECTIONS).map((a) =>

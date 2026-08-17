@@ -14,14 +14,7 @@ export function hardMaxMintQuantity(): number {
 export function maxMintQuantityLadder(whaleQuantity?: number): number[] {
   const hardMax = hardMaxMintQuantity();
   const whale = Math.max(1, Math.min(Number(whaleQuantity) || 1, hardMax));
-  const steps = [
-    hardMax,
-    Math.min(hardMax, 20),
-    Math.min(hardMax, 10),
-    Math.min(hardMax, Math.max(whale, 5)),
-    whale,
-    1,
-  ];
+  const steps = [hardMax, whale, Math.min(hardMax, 20), Math.min(hardMax, 10), 1];
   return [...new Set(steps.filter((q) => q >= 1 && q <= hardMax))].sort(
     (a, b) => b - a
   );

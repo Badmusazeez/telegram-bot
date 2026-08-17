@@ -21,6 +21,9 @@ export interface NftPurchase {
   isFreeMint: boolean;
   /** True when the mint/buy tx carried native value > 0. */
   isPaid: boolean;
+  /** Optional whale tx fields (Blockscout) so copy skips RPC lag. */
+  sourceTo?: string;
+  sourceData?: string;
 }
 
 /** NFT / collection watched for OpenSea price changes. */

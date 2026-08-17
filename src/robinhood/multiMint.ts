@@ -30,14 +30,19 @@ export function openSeaStageMaxPerWallet(
   return clampMaxPerWallet(stage?.max_per_wallet ?? hardMaxMintQuantity());
 }
 
+const slugCache = new Map<string, string>();
+
 async function resolveOpenSeaSlug(contract: string): Promise<string | null> {
+  const key = contract.toLowerCase();
+  const cached = slugCache.get(key);
+  if (cached) return cached;
   try {
     await ensureOpenSeaApiKey();
   } catch {
     return null;
   }
-  const key = getOpenSeaApiKey();
-  if (!key) return null;
+  const apiKey = getOpenSeaApiKey();
+  if (!apiKey) return null;
   try {
     const chain = config.chain.openseaChain;
     const res = await fetch(
@@ -45,13 +50,18 @@ async function resolveOpenSeaSlug(contract: string): Promise<string | null> {
       {
         headers: {
           accept: "application/json",
-          "x-api-key": key,
+          "x-api-key": apiKey,
         },
+        signal: AbortSignal.timeout(8_000),
       }
     );
     if (!res.ok) return null;
     const data = (await res.json()) as { collection?: string };
-    return data.collection || null;
+    if (data.collection) {
+      slugCache.set(key, data.collection);
+      return data.collection;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -202,12 +212,41 @@ export function buildPublicMaxMintCandidates(params: {
   return out;
 }
 
-/** If whale calldata is mint(uint256)-like, return quantity. */
+/** If whale calldata encodes a quantity, return it (SeaDrop-aware). */
 export function decodeWhaleMintQuantity(data: string): number | undefined {
   const raw = data.toLowerCase();
   if (raw.length < 10 + 64) return undefined;
-  const word = raw.slice(-64);
+  const sel = raw.slice(0, 10);
+
+  // SeaDrop mintPublic(nft, feeRecipient, minterIfNotPayer, quantity, ...)
+  // quantity is the 4th ABI word (index 3).
+  if (
+    (sel === "0x161ac21f" || sel === "0x9b4f3f25") &&
+    raw.length >= 10 + 64 * 4
+  ) {
+    try {
+      const word = raw.slice(10 + 64 * 3, 10 + 64 * 4);
+      const q = Number(BigInt(`0x${word}`));
+      if (Number.isFinite(q) && q >= 1 && q <= 100) return q;
+    } catch {
+      // fall through
+    }
+  }
+
+  // mint(uint256) / claim(uint256) — single arg
+  if (raw.length === 10 + 64 || sel === "0xa0712d68" || sel === "0x2db11544") {
+    try {
+      const word = raw.slice(10, 10 + 64);
+      const q = Number(BigInt(`0x${word}`));
+      if (Number.isFinite(q) && q >= 1 && q <= 100) return q;
+    } catch {
+      // ignore
+    }
+  }
+
+  // Fallback: trailing word (many mint ABIs)
   try {
+    const word = raw.slice(-64);
     const q = Number(BigInt(`0x${word}`));
     if (Number.isFinite(q) && q >= 1 && q <= 100) return q;
   } catch {

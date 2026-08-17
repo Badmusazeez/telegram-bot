@@ -31,15 +31,11 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       `https://robinhoodchain.blockscout.com/address/${addr}`,
     openseaChain: "robinhood",
     alchemyNftNetwork: "robinhood-mainnet",
-    // RH ≈ 100ms/block (~10 blk/s). Keep Alchemy CU low (Free tier 429s).
-    // Blockscout watcher covers detection when getLogs is rate-limited.
-    // 400 blocks/tick ≈ ~40s of chain; poll every 5s → catch-up under load.
-    maxScanBlocks: 400,
+    // Blockscout is the live free-mint detector (1.5s). Alchemy is backup catch-up.
+    maxScanBlocks: 300,
     getLogsMaxBlocks: 10,
-    // Fresh start / restart lookback (~90s).
-    defaultLookbackBlocks: 900,
-    // Gentler Alchemy polling — Blockscout is the fast path for signals.
-    defaultPollIntervalMs: 5_000,
+    defaultLookbackBlocks: 600,
+    defaultPollIntervalMs: 4_000,
   },
 };
 

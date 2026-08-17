@@ -153,17 +153,11 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
-  const affordableGas = await gasIsAffordable();
-  if (!affordableGas) {
-    return {
-      attempted: false,
-      success: false,
-      dryRun: state.dryRun,
-      reason: `Gas above MAX_GAS_GWEI (${config.maxGasGwei}).`,
-    };
-  }
+  // Never skip free mints due to gas price — RH spikes briefly during drops.
+  // (Paid buys still respect MAX_GAS_GWEI elsewhere if re-enabled.)
+  void gasIsAffordable;
 
-  const sourceTx = await loadSourceTx(purchase.txHash);
+  const sourceTx = await loadSourceTx(purchase);
   if (!sourceTx) {
     return {
       attempted: false,
@@ -239,18 +233,40 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   const collection = purchase.contract;
 
   console.log(
-    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} scatter=${scatterLike} opensea=${openSeaLike}`
+    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} scatter=${scatterLike} opensea=${openSeaLike} whaleQty≈${whaleQty}`
   );
 
-  // 1) Scatter first when detected (signature-bound — must rebuild via API)
-  if (scatterLike) {
+  // FAST PATH: OpenSea SeaDrop first (most RH free mints). Skip slow Scatter probes.
+  if (openSeaLike) {
+    try {
+      await ensureOpenSeaApiKey();
+    } catch {
+      // continue
+    }
+    if (getOpenSeaApiKey()) {
+      const os = await mintOpenSea(purchase, wallets);
+      if (os.success) return os;
+      attempts.push(os.reason);
+    } else {
+      attempts.push("OpenSea path needs API key (auto-fetch failed)");
+    }
+    // Fall through to public/replay if OpenSea builder fails
+  } else if (scatterLike) {
     const scatter = await mintScatter(purchase, wallets, collection);
     if (scatter.success) return scatter;
     attempts.push(scatter.reason);
-  }
-
-  // 2) Scatter for unknown sites (many RH free mints are Scatter under the hood)
-  if (!scatterLike) {
+  } else {
+    // Unknown site: try OpenSea slug resolve, then Scatter, then public
+    try {
+      await ensureOpenSeaApiKey();
+    } catch {
+      // continue
+    }
+    if (getOpenSeaApiKey()) {
+      const os = await mintOpenSea(purchase, wallets);
+      if (os.success) return os;
+      attempts.push(os.reason);
+    }
     try {
       const scatter = await mintScatter(purchase, wallets, collection);
       if (scatter.success) return scatter;
@@ -262,30 +278,16 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     }
   }
 
-  // 3) OpenSea Drop builder — max_per_wallet
-  try {
-    await ensureOpenSeaApiKey();
-  } catch {
-    // continue
-  }
-  if (getOpenSeaApiKey()) {
-    const os = await mintOpenSea(purchase, wallets);
-    if (os.success) return os;
-    attempts.push(os.reason);
-  } else if (openSeaLike) {
-    attempts.push("OpenSea path needs API key (auto-fetch failed)");
-  }
-
-  // 4) Public contract max-mint probes
+  // Public contract max-mint probes (short ladder)
   const publicTry = await mintPublicMax(
     wallets,
-    [collection, sourceTx.to],
+    openSeaLike ? [sourceTx.to] : [collection, sourceTx.to],
     whaleQty
   );
   if (publicTry.success) return publicTry;
   attempts.push(publicTry.reason);
 
-  // 5) Replay whale calldata (rewrite address + bump qty) — last resort
+  // Replay whale calldata (rewrite address + bump qty) — last resort
   const replay = await mintByReplay(
     wallets,
     sourceTx.to,
@@ -373,18 +375,40 @@ async function mintOpenSea(
   purchase: NftPurchase,
   wallets: Wallet[]
 ): Promise<CopyResult> {
+  // Resolve slug + stage once, then mint all wallets in parallel at max qty.
+  let shared: Awaited<ReturnType<typeof prepareOpenSeaFreeMint>> | null = null;
+  try {
+    shared = await prepareOpenSeaFreeMint({
+      collectionAddress: purchase.contract,
+      minterAddress: wallets[0]!.address,
+    });
+  } catch (err) {
+    return {
+      attempted: true,
+      success: false,
+      dryRun: false,
+      reason: `OpenSea prepare failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
   const results = await Promise.all(
     wallets.map(async (wallet) => {
       const address = wallet.address.toLowerCase();
       try {
-        const prepared = await prepareOpenSeaFreeMint({
-          collectionAddress: purchase.contract,
-          minterAddress: wallet.address,
-        });
+        // Rebuild per-wallet (signature / minter bound) but reuse max quantity.
+        const prepared =
+          wallet.address.toLowerCase() === wallets[0]!.address.toLowerCase()
+            ? shared!
+            : await prepareOpenSeaFreeMint({
+                collectionAddress: purchase.contract,
+                minterAddress: wallet.address,
+              });
         const sent = await sendMintTx(wallet, {
           to: prepared.to,
           data: prepared.data,
           valueWei: prepared.valueWei,
+          skipEstimate: true,
+          gasLimitHint: 900_000n,
         });
         if (!sent.ok) {
           return {
@@ -557,29 +581,95 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** RH is fast — logs can arrive before getTransaction is indexed. Retry both RPCs. */
-async function loadSourceTx(txHash: string) {
-  for (let attempt = 0; attempt < 6; attempt++) {
+/** Prefer Blockscout-provided calldata; else RPC / explorer with short retries. */
+async function loadSourceTx(purchase: NftPurchase): Promise<{
+  to: string;
+  data: string;
+  value: bigint;
+  from: string;
+} | null> {
+  if (
+    purchase.sourceTo &&
+    purchase.sourceData &&
+    purchase.sourceData.length >= 10
+  ) {
+    return {
+      to: purchase.sourceTo,
+      data: purchase.sourceData,
+      value: 0n,
+      from: purchase.buyer,
+    };
+  }
+
+  const txHash = purchase.txHash;
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const tx = await getProvider().getTransaction(txHash);
-      if (tx?.to && tx.data && tx.data !== "0x") return tx;
+      if (tx?.to && tx.data && tx.data !== "0x") {
+        return {
+          to: tx.to,
+          data: tx.data,
+          value: tx.value,
+          from: tx.from,
+        };
+      }
     } catch {
       // try mint rpc
     }
     try {
       const tx = await getMintProvider().getTransaction(txHash);
-      if (tx?.to && tx.data && tx.data !== "0x") return tx;
+      if (tx?.to && tx.data && tx.data !== "0x") {
+        return {
+          to: tx.to,
+          data: tx.data,
+          value: tx.value,
+          from: tx.from,
+        };
+      }
     } catch {
       // continue
     }
-    await sleep(350 * (attempt + 1));
+    try {
+      const res = await fetch(
+        `https://robinhoodchain.blockscout.com/api/v2/transactions/${txHash}`,
+        { signal: AbortSignal.timeout(6_000) }
+      );
+      if (res.ok) {
+        const j = (await res.json()) as {
+          from?: { hash?: string };
+          to?: { hash?: string };
+          raw_input?: string;
+          value?: string;
+        };
+        const to = (j.to?.hash || "").toLowerCase();
+        const data = (j.raw_input || "").toLowerCase();
+        const from = (j.from?.hash || "").toLowerCase();
+        if (to && data && data !== "0x") {
+          return {
+            to,
+            data,
+            value: j.value ? BigInt(j.value) : 0n,
+            from: from || purchase.buyer,
+          };
+        }
+      }
+    } catch {
+      // continue
+    }
+    await sleep(200 * (attempt + 1));
   }
   return null;
 }
 
 async function sendMintTx(
   wallet: Wallet,
-  params: { to: string; data: string; valueWei: bigint }
+  params: {
+    to: string;
+    data: string;
+    valueWei: bigint;
+    skipEstimate?: boolean;
+    gasLimitHint?: bigint;
+  }
 ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
   const trySend = async (
     provider: ReturnType<typeof getMintProvider>,
@@ -588,12 +678,17 @@ async function sendMintTx(
     const connected = wallet.connect(provider);
     try {
       const from = await connected.getAddress();
-      const gasEstimate = await provider.estimateGas({
-        from,
-        to: params.to,
-        data: params.data,
-        value: params.valueWei,
-      });
+      let gasEstimate: bigint;
+      if (params.skipEstimate && params.gasLimitHint) {
+        gasEstimate = params.gasLimitHint;
+      } else {
+        gasEstimate = await provider.estimateGas({
+          from,
+          to: params.to,
+          data: params.data,
+          value: params.valueWei,
+        });
+      }
       if (gasEstimate > BigInt(config.maxMintGasLimit)) {
         return {
           ok: false,
@@ -602,7 +697,9 @@ async function sendMintTx(
       }
 
       const fee = await provider.getFeeData();
-      const gasLimit = (gasEstimate * 130n) / 100n;
+      const gasLimit = params.skipEstimate
+        ? gasEstimate
+        : (gasEstimate * 130n) / 100n;
       const txRequest: {
         to: string;
         data: string;
@@ -620,10 +717,11 @@ async function sendMintTx(
         chainId: Number(config.chain.chainId),
       };
       if (fee.maxFeePerGas != null) {
-        txRequest.maxFeePerGas = fee.maxFeePerGas;
-        txRequest.maxPriorityFeePerGas = fee.maxPriorityFeePerGas ?? 0n;
+        txRequest.maxFeePerGas = (fee.maxFeePerGas * 120n) / 100n;
+        txRequest.maxPriorityFeePerGas =
+          ((fee.maxPriorityFeePerGas ?? 0n) * 120n) / 100n;
       } else if (fee.gasPrice != null) {
-        txRequest.gasPrice = fee.gasPrice;
+        txRequest.gasPrice = (fee.gasPrice * 120n) / 100n;
       }
 
       console.log(
@@ -632,16 +730,8 @@ async function sendMintTx(
       const sent = await connected.sendTransaction(txRequest);
       console.log(`[mint] broadcast ${sent.hash}`);
 
-      const receipt = await Promise.race([
-        sent.wait(),
-        sleep(90_000).then(() => null),
-      ]);
-      if (!receipt) {
-        return { ok: true, txHash: sent.hash };
-      }
-      if (receipt.status !== 1) {
-        return { ok: false, error: `reverted ${sent.hash}` };
-      }
+      // Don't block other wallets on receipt — treat broadcast as success.
+      void sent.wait().catch(() => undefined);
       return { ok: true, txHash: sent.hash };
     } catch (err) {
       return { ok: false, error: shortError(err) };
