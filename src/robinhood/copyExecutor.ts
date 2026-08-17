@@ -24,6 +24,7 @@ import {
 } from "./seaDrop";
 import { reportMintRpcIssue } from "./mintRpcAlerts";
 import { classifyRpcError } from "./rpcHealth";
+import { mintSelectorLabel, resolveMintGasLimit } from "./mintGas";
 
 /** One copy attempt per whale mint tx (721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -382,7 +383,6 @@ async function mintSeaDropPublic(
   }
 
   const qtys = maxMintQuantityLadder(whaleQty);
-  const gasHint = 1_200_000n;
   const byAddr = new Map<
     string,
     {
@@ -432,8 +432,8 @@ async function mintSeaDropPublic(
           to: built.to,
           data: built.data,
           valueWei: 0n,
-          skipEstimate: true,
-          gasLimitHint: gasHint,
+          strategy: `SeaDrop.mintPublic(x${q})`,
+          contract: built.nftContract || built.to,
         });
         if (sent.ok) {
           byAddr.set(address, {
@@ -479,8 +479,8 @@ async function mintSeaDropPublic(
             to: built.to,
             data: built.data,
             valueWei: 0n,
-            skipEstimate: true,
-            gasLimitHint: gasHint,
+            strategy: `SeaDrop.mintPublic(x${q}/rps-retry)`,
+            contract: built.nftContract || built.to,
           });
           if (sent.ok) {
             byAddr.set(address, {
@@ -568,8 +568,8 @@ async function mintOpenSea(
           to: prepared.to,
           data: prepared.data,
           valueWei: prepared.valueWei,
-          skipEstimate: true,
-          gasLimitHint: 1_200_000n,
+          strategy: `OpenSeaDrop(${prepared.slug},x${prepared.quantity})`,
+          contract: purchase.contract,
         });
         if (!sent.ok) {
           return {
@@ -645,8 +645,8 @@ async function mintPublicMax(
             to: c.to,
             data: c.data,
             valueWei: 0n,
-            skipEstimate: true,
-            gasLimitHint: 1_200_000n,
+            strategy: `public:${c.label}`,
+            contract: to,
           });
           if (sent.ok) {
             return {
@@ -849,8 +849,10 @@ async function sendMintTx(
     to: string;
     data: string;
     valueWei: bigint;
-    skipEstimate?: boolean;
-    gasLimitHint?: bigint;
+    /** Optional diagnostics for logs */
+    strategy?: string;
+    tracker?: string;
+    contract?: string;
   }
 ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
   const trySend = async (
@@ -862,28 +864,36 @@ async function sendMintTx(
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const from = await connected.getAddress();
-        let gasEstimate: bigint;
-        if (params.skipEstimate && params.gasLimitHint) {
-          gasEstimate = params.gasLimitHint;
-        } else {
-          gasEstimate = await provider.estimateGas({
-            from,
-            to: params.to,
-            data: params.data,
-            value: params.valueWei,
-          });
-        }
-        if (gasEstimate > BigInt(config.maxMintGasLimit)) {
-          return {
-            ok: false,
-            error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
-          };
+        // ALWAYS use real eth_estimateGas — never a blind hardcoded hint.
+        const estimated = await provider.estimateGas({
+          from,
+          to: params.to,
+          data: params.data,
+          value: params.valueWei,
+        });
+
+        const resolved = resolveMintGasLimit({
+          estimated,
+          ceiling: config.maxMintGasLimit,
+          marginPct: 20,
+        });
+
+        console.log(
+          `[mint:gas] strategy=${params.strategy || "?"} tracker=${(params.tracker || "").slice(0, 10) || "?"} ` +
+            `contract=${(params.contract || params.to).slice(0, 12)}… ` +
+            `fn=${mintSelectorLabel(params.data)} value=${params.valueWei} ` +
+            `estimateGas=${estimated} ceiling=${resolved.ceiling} ` +
+            `margin=${resolved.marginPct}% gasLimit=${resolved.ok ? resolved.gasLimit : 0} via=${label}`
+        );
+
+        if (!resolved.ok) {
+          console.warn(
+            `[mint:gas] REJECTED ${resolved.reason} strategy=${params.strategy || "?"}`
+          );
+          return { ok: false, error: resolved.reason };
         }
 
         const fee = await provider.getFeeData();
-        const gasLimit = params.skipEstimate
-          ? gasEstimate
-          : (gasEstimate * 130n) / 100n;
         const txRequest: {
           to: string;
           data: string;
@@ -897,7 +907,7 @@ async function sendMintTx(
           to: params.to,
           data: params.data,
           value: params.valueWei,
-          gasLimit,
+          gasLimit: resolved.gasLimit,
           chainId: Number(config.chain.chainId),
         };
         if (fee.maxFeePerGas != null) {
@@ -909,12 +919,12 @@ async function sendMintTx(
         }
 
         console.log(
-          `[mint] sending via ${label} from=${from.slice(0, 8)}… to=${params.to.slice(0, 10)}… gas=${gasLimit}`
+          `[mint] sending via ${label} strategy=${params.strategy || "?"} from=${from.slice(0, 8)}… ` +
+            `to=${params.to.slice(0, 10)}… gasLimit=${resolved.gasLimit} (est ${estimated})`
         );
         const sent = await connected.sendTransaction(txRequest);
         console.log(`[mint] broadcast ${sent.hash}`);
 
-        // Don't block other wallets on receipt — treat broadcast as success.
         void sent.wait().catch(() => undefined);
         return { ok: true, txHash: sent.hash };
       } catch (err) {
@@ -926,7 +936,6 @@ async function sendMintTx(
           await sleep(waitMs);
           continue;
         }
-        // Only alert after retries exhausted for real rate-limit/quota.
         if (classifyRpcError(err) && waitMs == null) {
           void reportMintRpcIssue(err);
         } else if (classifyRpcError(err) && attempt === maxAttempts - 1) {
@@ -994,9 +1003,9 @@ async function mintWithWallet(
         to,
         data,
         valueWei: 0n,
-        // Always skip estimate — fire raw, paid stages revert with value=0.
-        skipEstimate: true,
-        gasLimitHint: 1_200_000n,
+        strategy: `replay:v${index + 1}`,
+        tracker: whale,
+        contract: to,
       });
       if (sent.ok) {
         return { address, ok: true, txHash: sent.txHash };

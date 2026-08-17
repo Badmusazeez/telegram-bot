@@ -53,7 +53,9 @@ const schema = z.object({
   MAX_MINT_GAS_LIMIT: z
     .string()
     .optional()
-    .default("1500000")
+    // Absolute safety ceiling for eth_estimateGas (not a blind send gasLimit).
+    // Allows legitimate complex SeaDrop/multicall max-mints (~1.2M) with margin.
+    .default("2500000")
     .transform((v) => Number(v)),
   /** Always try this many (or stage wallet_limit if lower) on free mints. */
   MAX_MINT_QUANTITY: z

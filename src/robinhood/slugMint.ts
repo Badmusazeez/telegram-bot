@@ -18,6 +18,7 @@ import {
 } from "./provider";
 import { reportMintRpcIssue } from "./mintRpcAlerts";
 import { classifyRpcError } from "./rpcHealth";
+import { mintSelectorLabel, resolveMintGasLimit } from "./mintGas";
 
 export type SlugMintWalletResult = {
   address: string;
@@ -139,28 +140,37 @@ async function buildMaxMintForWallet(
 
 async function sendMint(
   wallet: Wallet,
-  params: { to: string; data: string; valueWei: bigint }
+  params: { to: string; data: string; valueWei: bigint; strategy?: string }
 ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
   const provider = getMintProvider();
   const connected = wallet.connect(provider);
   try {
-    const gasEstimate = await provider.estimateGas({
+    const estimated = await provider.estimateGas({
       from: wallet.address,
       to: params.to,
       data: params.data,
       value: params.valueWei,
     });
-    if (gasEstimate > BigInt(config.maxMintGasLimit)) {
-      return { ok: false, error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT` };
+    const resolved = resolveMintGasLimit({
+      estimated,
+      ceiling: config.maxMintGasLimit,
+      marginPct: 20,
+    });
+    console.log(
+      `[mintslug:gas] strategy=${params.strategy || "OpenSeaDrop"} ` +
+        `fn=${mintSelectorLabel(params.data)} estimateGas=${estimated} ` +
+        `ceiling=${resolved.ceiling} gasLimit=${resolved.ok ? resolved.gasLimit : 0}`
+    );
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.reason };
     }
     const sent = await connected.sendTransaction({
       to: params.to,
       data: params.data,
       value: params.valueWei,
-      gasLimit: (gasEstimate * 130n) / 100n,
+      gasLimit: resolved.gasLimit,
       chainId: Number(config.chain.chainId),
     });
-    // Don't wait — fire all wallets fast.
     void sent.wait().catch(() => undefined);
     return { ok: true, txHash: sent.hash };
   } catch (err) {

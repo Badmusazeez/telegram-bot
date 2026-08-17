@@ -10,6 +10,7 @@ import {
 } from "./openseaDrop";
 import { openSeaStageMaxPerWallet } from "./multiMint";
 import { maxMintQuantityLadder } from "./mintQuantity";
+import { resolveMintGasLimit, mintSelectorLabel } from "./mintGas";
 import {
   gasIsAffordable,
   getAllMintWallets,
@@ -96,26 +97,31 @@ async function sendOnWallet(
   const provider = getMintProvider();
   const value = params.valueWei ?? 0n;
   try {
-    const gasEstimate = await provider.estimateGas({
+    const estimated = await provider.estimateGas({
       from: wallet.address,
       to: params.to,
       data: params.data,
       value,
     });
 
-    if (gasEstimate > BigInt(config.maxMintGasLimit)) {
-      return {
-        address,
-        ok: false,
-        error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
-      };
+    const resolved = resolveMintGasLimit({
+      estimated,
+      ceiling: config.maxMintGasLimit,
+      marginPct: 20,
+    });
+    console.log(
+      `[schedule:gas] fn=${mintSelectorLabel(params.data)} estimateGas=${estimated} ` +
+        `ceiling=${resolved.ceiling} gasLimit=${resolved.ok ? resolved.gasLimit : 0}`
+    );
+    if (!resolved.ok) {
+      return { address, ok: false, error: resolved.reason };
     }
 
     const sent = await wallet.sendTransaction({
       to: params.to,
       data: params.data,
       value,
-      gasLimit: (gasEstimate * 120n) / 100n,
+      gasLimit: resolved.gasLimit,
     });
     const receipt = await sent.wait();
     if (!receipt || receipt.status !== 1) {
