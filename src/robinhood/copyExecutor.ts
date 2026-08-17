@@ -11,10 +11,6 @@ import {
   getProvider,
 } from "./provider";
 import {
-  isScatterMintCalldata,
-  prepareScatterFreeMint,
-} from "./scatter";
-import {
   buildPublicMaxMintCandidates,
   decodeWhaleMintQuantity,
   prepareOpenSeaFreeMint,
@@ -23,7 +19,7 @@ import {
 import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
 import { maxMintQuantityLadder } from "./mintQuantity";
 
-/** One copy attempt per whale mint tx (Scatter/721A often emit many Transfers). */
+/** One copy attempt per whale mint tx (721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
 
 /** Last copy attempt — shown in /status for debugging. */
@@ -50,11 +46,10 @@ function rememberCopyResult(purchase: NftPurchase, result: CopyResult): void {
 /**
  * Free-mint copy executor for Robinhood Chain.
  *
- * Strategies (max qty when possible):
- * 1) Scatter.art API
- * 2) OpenSea Drop API
- * 3) Public contract mint/claim variants at max qty
- * 4) Whale calldata replay (+ address rewrite / qty bump)
+ * Strategies (max qty when possible) — NO Scatter:
+ * 1) OpenSea Drop API (max_per_wallet)
+ * 2) Public contract mint/claim variants at max qty
+ * 3) Whale calldata replay (+ address rewrite / qty bump)
  */
 export async function maybeCopyPurchase(
   purchase: NftPurchase
@@ -216,7 +211,6 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   }
 
   const wallets = funded;
-  const scatterLike = isScatterMintCalldata(sourceTx.data);
   const openSeaLike = isOpenSeaMinter(sourceTx.to);
   const whaleQty = decodeWhaleMintQuantity(sourceTx.data) || 1;
 
@@ -225,7 +219,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
       attempted: true,
       success: false,
       dryRun: true,
-      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try scatter=${scatterLike} opensea=${openSeaLike} whaleQty≈${whaleQty} on ${wallets.length} funded wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
+      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try opensea=${openSeaLike} whaleQty≈${whaleQty} on ${wallets.length} funded wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
     };
   }
 
@@ -233,52 +227,29 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   const collection = purchase.contract;
 
   console.log(
-    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} scatter=${scatterLike} opensea=${openSeaLike} whaleQty≈${whaleQty}`
+    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} opensea=${openSeaLike} whaleQty≈${whaleQty}`
   );
 
-  // FAST PATH: OpenSea SeaDrop first (most RH free mints). Skip slow Scatter probes.
-  if (openSeaLike) {
-    try {
-      await ensureOpenSeaApiKey();
-    } catch {
-      // continue
-    }
-    if (getOpenSeaApiKey()) {
-      const os = await mintOpenSea(purchase, wallets);
-      if (os.success) return os;
+  // 1) OpenSea Drop first (max_per_wallet) — all funded wallets in parallel
+  try {
+    await ensureOpenSeaApiKey();
+  } catch {
+    // continue
+  }
+  if (getOpenSeaApiKey()) {
+    const os = await mintOpenSea(purchase, wallets);
+    if (os.success) return os;
+    // Don't spam status with OpenSea slug noise unless it was the only path
+    if (openSeaLike || /slug|drop|stage|mint/i.test(os.reason)) {
       attempts.push(os.reason);
     } else {
-      attempts.push("OpenSea path needs API key (auto-fetch failed)");
-    }
-    // Fall through to public/replay if OpenSea builder fails
-  } else if (scatterLike) {
-    const scatter = await mintScatter(purchase, wallets, collection);
-    if (scatter.success) return scatter;
-    attempts.push(scatter.reason);
-  } else {
-    // Unknown site: try OpenSea slug resolve, then Scatter, then public
-    try {
-      await ensureOpenSeaApiKey();
-    } catch {
-      // continue
-    }
-    if (getOpenSeaApiKey()) {
-      const os = await mintOpenSea(purchase, wallets);
-      if (os.success) return os;
       attempts.push(os.reason);
     }
-    try {
-      const scatter = await mintScatter(purchase, wallets, collection);
-      if (scatter.success) return scatter;
-      attempts.push(scatter.reason);
-    } catch (err) {
-      attempts.push(
-        `Scatter: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
+  } else {
+    attempts.push("OpenSea API key missing");
   }
 
-  // Public contract max-mint probes (short ladder)
+  // 2) Public contract max-mint probes
   const publicTry = await mintPublicMax(
     wallets,
     openSeaLike ? [sourceTx.to] : [collection, sourceTx.to],
@@ -287,7 +258,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   if (publicTry.success) return publicTry;
   attempts.push(publicTry.reason);
 
-  // Replay whale calldata (rewrite address + bump qty) — last resort
+  // 3) Replay whale calldata (rewrite address + bump qty)
   const replay = await mintByReplay(
     wallets,
     sourceTx.to,
@@ -298,76 +269,15 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   if (replay.success) return replay;
   attempts.push(replay.reason);
 
-  console.warn(`[mint] all strategies failed for ${purchase.txHash}: ${attempts.join(" || ")}`);
+  console.warn(
+    `[mint] all strategies failed for ${purchase.txHash}: ${attempts.join(" || ")}`
+  );
 
   return {
     attempted: true,
     success: false,
     dryRun: false,
     reason: `All mint strategies failed: ${attempts.join(" || ")}`,
-  };
-}
-
-async function mintScatter(
-  purchase: NftPurchase,
-  wallets: Wallet[],
-  collectionAddress: string
-): Promise<CopyResult> {
-  const results = await Promise.all(
-    wallets.map(async (wallet) => {
-      const address = wallet.address.toLowerCase();
-      try {
-        const prepared = await prepareScatterFreeMint({
-          collectionAddress,
-          minterAddress: wallet.address,
-          collectionName: purchase.collectionName,
-        });
-        const sent = await sendMintTx(wallet, {
-          to: prepared.to,
-          data: prepared.data,
-          valueWei: prepared.valueWei,
-        });
-        if (!sent.ok) {
-          return {
-            address,
-            ok: false as const,
-            error: sent.error || "scatter send failed",
-          };
-        }
-        return {
-          address,
-          ok: true as const,
-          txHash: sent.txHash,
-          detail: `Scatter ${prepared.slug} x${prepared.quantity} (${prepared.listName})`,
-        };
-      } catch (err) {
-        return {
-          address,
-          ok: false as const,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-    })
-  );
-
-  const ok = results.filter((r) => r.ok);
-  const summary = results
-    .map((r) =>
-      r.ok
-        ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
-        : `${shortAddr(r.address)} FAIL (${r.error})`
-    )
-    .join(" | ");
-
-  return {
-    attempted: true,
-    success: ok.length > 0,
-    dryRun: false,
-    reason:
-      ok.length > 0
-        ? `Scatter minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
-        : `Scatter mint failed on all wallets: ${summary}`,
-    txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
   };
 }
 

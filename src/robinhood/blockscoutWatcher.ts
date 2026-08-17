@@ -16,7 +16,6 @@ const MINT_SELECTORS = new Set([
   "0x40c10f19",
   "0x1249c58b", // mint()
   "0x2db11544",
-  "0x4a21a2df", // Scatter
 ]);
 
 type BsAddress = { hash?: string };
