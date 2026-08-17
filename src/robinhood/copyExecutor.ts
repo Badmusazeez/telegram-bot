@@ -761,7 +761,7 @@ async function sendMintTx(
     }
   };
 
-  const primary = await trySend(getMintProvider(), "alchemy");
+  const primary = await trySend(getMintProvider(), "chainstack");
   if (primary.ok) return primary;
 
   const backup = getMintBackupProvider();

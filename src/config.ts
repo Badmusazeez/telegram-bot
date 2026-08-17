@@ -17,7 +17,7 @@ const schema = z.object({
   TRACK_RPC_URL: z.string().optional().default(""),
   /** Optional backup tracker RPC. */
   TRACK_RPC_BACKUP_URL: z.string().optional().default(""),
-  /** Mint / send-tx RPC (Alchemy). Falls back to tracker RPC if empty. */
+  /** Mint / send-tx RPC (Chainstack). Falls back to tracker RPC if empty. */
   MINT_RPC_URL: z.string().optional().default(""),
   /** Optional mint backup RPC. */
   MINT_RPC_BACKUP_URL: z.string().optional().default(""),
