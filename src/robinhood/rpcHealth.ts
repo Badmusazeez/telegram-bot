@@ -9,10 +9,37 @@ export type RpcIssue = {
 
 export type RpcRole = "track" | "mint";
 
+/**
+ * Strip raw tx hex dumps before classifying — otherwise substrings like
+ * "402" inside RLP/calldata falsely look like HTTP 402 / quota errors.
+ */
+function sanitizeRpcMessage(raw: string): string {
+  return raw
+    .replace(/transaction=["']?0x[0-9a-fA-F]+["']?/gi, "transaction=<hex>")
+    .replace(/data=["']?0x[0-9a-fA-F]+["']?/gi, "data=<hex>")
+    .replace(/0x[0-9a-fA-F]{64,}/g, "0x…")
+    .slice(0, 400);
+}
+
 /** Detect Alchemy / Chainstack / RPC "full" or throttled errors. */
 export function classifyRpcError(err: unknown): RpcIssue | null {
-  const msg = err instanceof Error ? err.message : String(err);
+  const raw = err instanceof Error ? err.message : String(err);
+  const msg = sanitizeRpcMessage(raw);
   const lower = msg.toLowerCase();
+
+  // Normal mint/tx failures — never treat as RPC quota.
+  if (
+    lower.includes("nonce has already been used") ||
+    lower.includes("nonce too low") ||
+    lower.includes("already known") ||
+    lower.includes("replacement transaction underpriced") ||
+    lower.includes("execution reverted") ||
+    /\breverted\b/.test(lower) ||
+    lower.includes("insufficient funds") ||
+    lower.includes("intrinsic gas too low")
+  ) {
+    return null;
+  }
 
   // Don't treat the known 10-block free-tier range rule as "RPC full".
   if (lower.includes("10 block") || lower.includes("block range")) {
@@ -28,33 +55,36 @@ export function classifyRpcError(err: unknown): RpcIssue | null {
     lower.includes("capacity limit") ||
     lower.includes("quota") ||
     lower.includes("payment required") ||
-    lower.includes("402") ||
-    lower.includes("credit") ||
-    lower.includes("insufficient funds for") && lower.includes("plan")
+    /\bhttp\s*402\b/.test(lower) ||
+    /\bstatus(?:\s*code)?\s*402\b/.test(lower) ||
+    lower.includes("out of credits") ||
+    lower.includes("no credits") ||
+    (lower.includes("insufficient funds for") && lower.includes("plan"))
   ) {
-    return { kind: "quota", message: msg.slice(0, 280) };
+    return { kind: "quota", message: msg.slice(0, 220) };
   }
 
   if (
-    lower.includes("429") ||
+    /\b429\b/.test(lower) ||
     lower.includes("too many requests") ||
     lower.includes("rate limit") ||
     lower.includes("rate exceeded") ||
     lower.includes("request limit") ||
     lower.includes("limit exceeded") ||
-    lower.includes("over rate")
+    lower.includes("over rate") ||
+    lower.includes("try_again_in")
   ) {
-    return { kind: "rate_limit", message: msg.slice(0, 280) };
+    return { kind: "rate_limit", message: msg.slice(0, 220) };
   }
 
   if (
-    lower.includes("503") ||
-    lower.includes("502") ||
+    /\b503\b/.test(lower) ||
+    /\b502\b/.test(lower) ||
     lower.includes("overloaded") ||
     lower.includes("temporarily unavailable") ||
     lower.includes("service unavailable")
   ) {
-    return { kind: "unavailable", message: msg.slice(0, 280) };
+    return { kind: "unavailable", message: msg.slice(0, 220) };
   }
 
   return null;

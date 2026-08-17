@@ -45,12 +45,13 @@ export function formatPurchaseAlert(
     ? `\n<b>Our tx:</b> <a href="${config.chain.explorerTxUrl(copy.txHash)}">explorer</a>`
     : "";
 
+  const reason = escHtml((copy.reason || "").slice(0, 280));
   const mintLine =
     copy.success && !copy.dryRun
-      ? `<b>Auto-mint:</b> ✅ MINTED — ${escHtml(copy.reason)}${copyTx}`
+      ? `<b>Auto-mint:</b> ✅ MINTED — ${reason}${copyTx}`
       : copy.dryRun
-        ? `<b>Auto-mint:</b> ⚠️ ${escHtml(copy.reason)}`
-        : `<b>Auto-mint:</b> ❌ ${escHtml(copy.reason)}${copyTx}`;
+        ? `<b>Auto-mint:</b> ⚠️ ${reason}`
+        : `<b>Auto-mint:</b> ❌ ${reason}${copyTx}`;
 
   const via =
     purchase.marketplace === "free-mint"

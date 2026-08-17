@@ -870,16 +870,27 @@ function replaceAddressInCalldata(
 
 function shortError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
   if (msg.includes("execution reverted") || /\breverted\b/i.test(msg)) {
     return "reverted";
+  }
+  if (lower.includes("nonce has already been used") || lower.includes("already known")) {
+    return "nonce already used (tx likely already broadcast)";
+  }
+  if (lower.includes("nonce too low")) {
+    return "nonce too low";
   }
   if (msg.includes("insufficient funds")) {
     return "insufficient funds";
   }
-  if (msg.toLowerCase().includes("fully minted")) {
+  if (lower.includes("fully minted") || lower.includes("sold out")) {
     return "sold out";
   }
-  return msg.slice(0, 120);
+  // Never dump raw tx hex into Telegram reasons.
+  return msg
+    .replace(/transaction=["']?0x[0-9a-fA-F]+["']?/gi, "transaction=<hex>")
+    .replace(/0x[0-9a-fA-F]{48,}/g, "0x…")
+    .slice(0, 140);
 }
 
 function shortAddr(address: string): string {
