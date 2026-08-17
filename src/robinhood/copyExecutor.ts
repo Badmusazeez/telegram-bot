@@ -4,7 +4,6 @@ import { getState } from "../store/state";
 import type { CopyResult, NftPurchase } from "../types";
 import {
   getAllMintWallets,
-  getFundedMintWallets,
   getMintBackupProvider,
   getMintProvider,
   getProvider,
@@ -25,6 +24,18 @@ import {
 import { reportMintRpcIssue } from "./mintRpcAlerts";
 import { classifyRpcError } from "./rpcHealth";
 import { mintSelectorLabel, resolveMintGasLimit } from "./mintGas";
+import { PipelineTimer } from "./latency";
+import {
+  getCachedMintStrategy,
+  rememberMintStrategy,
+  type StrategyKind,
+} from "./strategyCache";
+import {
+  invalidateWalletNonce,
+  withWalletNonce,
+} from "./nonceManager";
+import { checkMintWalletReadiness } from "./walletReady";
+import { classifyMintCalldata } from "./mintDetect";
 
 /** One copy attempt per whale mint tx (721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -72,15 +83,18 @@ export async function maybeCopyPurchase(
   }
 
   const pending = (async () => {
-    let result = await executeCopy(purchase);
+    const timer = new PipelineTimer(purchase.detectedAtMs);
+    let result = await executeCopy(purchase, timer);
     // Retry once on RPC indexing lag — common on fast RH blocks.
     if (
       !result.success &&
       /RPC lag|Could not load source mint/i.test(result.reason)
     ) {
       await sleep(1_500);
-      result = await executeCopy(purchase);
+      result = await executeCopy(purchase, timer);
     }
+    timer.mark("done");
+    console.log(timer.summary(result.success && !result.dryRun));
     // Don't let intentional paid-skips overwrite Last copy in /status —
     // that made free-mint hits look like failures.
     const paidSkip =
@@ -107,7 +121,10 @@ export async function maybeCopyPurchase(
   return pending;
 }
 
-async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
+async function executeCopy(
+  purchase: NftPurchase,
+  timer: PipelineTimer = new PipelineTimer(purchase.detectedAtMs)
+): Promise<CopyResult> {
   const state = getState();
 
   if (!state.copyEnabled) {
@@ -134,6 +151,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   // Load calldata FIRST (prefer pending/Blockscout sourceData) — do not wait on
   // free/paid classification from Transfer logs.
   const sourceTx = await loadSourceTx(purchase);
+  timer.mark("decode");
   if (!sourceTx) {
     return {
       attempted: false,
@@ -142,6 +160,27 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
       reason: "Could not load source mint transaction (RPC lag). Will retry next hit.",
     };
   }
+
+  // Safety: only copy confident mint txs (skip transfers/approvals/unknown).
+  const classified = classifyMintCalldata(
+    sourceTx.to,
+    sourceTx.data,
+    undefined,
+    sourceTx.value
+  );
+  if (!classified.isMint) {
+    return {
+      attempted: false,
+      success: false,
+      dryRun: state.dryRun,
+      reason: `Skipped non-mint tx (${classified.reason}).`,
+    };
+  }
+  console.log(
+    `[mint:decode] tracker=${purchase.buyer.slice(0, 10)}… fn=${classified.functionLabel} ` +
+      `conf=${classified.confidence} nft=${(classified.nftContract || purchase.contract).slice(0, 12)}… ` +
+      `value=${sourceTx.value}`
+  );
 
   // Paid whale tx (value > 0): skip — we never send native value. Sending value=0
   // against a paid stage simply reverts on-chain (no spend).
@@ -186,15 +225,14 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   }
 
   // ALWAYS mint on EVERY configured wallet (user wants 20/20, not 1/20).
-  // Still log empty ones, but do not drop wallets from the blast list.
-  const { funded, skippedEmpty } = await getFundedMintWallets(allWallets);
-  const wallets = allWallets;
-  if (skippedEmpty > 0) {
+  // Readiness is logged; we still blast all wallets (preserves 20/20 behavior).
+  const readiness = await checkMintWalletReadiness(allWallets);
+  if (readiness.notReady.length > 0) {
     console.warn(
-      `[mint] ${skippedEmpty}/${allWallets.length} wallet(s) look low-gas — still blasting all ${wallets.length}`
+      `[mint] readiness: ${readiness.notReady.length}/${allWallets.length} low-gas — still blasting all`
     );
   }
-  void funded;
+  const wallets = allWallets;
 
   const openSeaLike =
     isSeaDropAddress(sourceTx.to) || isSeaDropMintPublic(sourceTx.data);
@@ -208,12 +246,19 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     ),
   ];
 
+  const cached = getCachedMintStrategy(collection);
+  if (cached) {
+    console.log(
+      `[mint:cache] HIT contract=${collection.slice(0, 12)}… kind=${cached.kind} qty=${cached.quantity ?? "?"} hits=${cached.hits}`
+    );
+  }
+
   if (state.dryRun) {
     return {
       attempted: true,
       success: false,
       dryRun: true,
-      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try seadrop=${openSeaLike} replay→${mintTargets.length} target(s) whaleQty≈${whaleQty} on ${wallets.length}/${allWallets.length} wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
+      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try seadrop=${openSeaLike} replay→${mintTargets.length} target(s) whaleQty≈${whaleQty} on ${wallets.length}/${allWallets.length} wallet(s) (lowGasWarn=${readiness.notReady.length}).`,
     };
   }
 
@@ -279,48 +324,58 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     `[mint] FAST start ${purchase.txHash.slice(0, 10)}… contract=${collection} wallets=${wallets.length}/${allWallets.length} seadrop=${openSeaLike} whaleQty≈${whaleQty} targets=${mintTargets.length} (goal ${wallets.length}/${wallets.length} MAX)`
   );
 
-  // --- Path A: SeaDrop mintPublic rebuild (NO OpenSea API) ---
-  if (openSeaLike && isSeaDropMintPublic(sourceTx.data)) {
-    const sd = await mintSeaDropPublic(remaining(), sourceTx.data, whaleQty);
-    mergeHits(sd.hits);
-    const s = summarize("SeaDrop");
-    console.log(`[mint] after SeaDrop ${s.okCount}/${s.total}`);
+  timer.mark("strategy");
+
+  const preferReplayFirst =
+    !openSeaLike &&
+    cached &&
+    (cached.kind === "replay" || cached.kind === "public");
+
+  const finishIfComplete = (label: StrategyKind | string, kind?: StrategyKind) => {
+    const s = summarize(String(label));
+    console.log(`[mint] after ${label} ${s.okCount}/${s.total}`);
+    if (s.okCount > 0 && kind) {
+      rememberMintStrategy({
+        contract: collection,
+        kind,
+        quantity: whaleQty,
+        to: sourceTx.to,
+      });
+    }
     if (s.okCount === s.total) {
+      timer.mark("broadcast");
       return {
-        attempted: true,
-        success: true,
-        dryRun: false,
+        attempted: true as const,
+        success: true as const,
+        dryRun: false as const,
         reason: s.reason,
         txHash: s.txHash,
       };
     }
+    return null;
+  };
+
+  // --- Path A: SeaDrop mintPublic rebuild (UNCHANGED blast-all logic) ---
+  if (openSeaLike && isSeaDropMintPublic(sourceTx.data)) {
+    timer.mark("simulate");
+    const sd = await mintSeaDropPublic(remaining(), sourceTx.data, whaleQty);
+    mergeHits(sd.hits);
+    const done = finishIfComplete("SeaDrop", "seadrop");
+    if (done) return done;
     // Partial — keep filling remaining wallets via OpenSea / other paths.
   }
 
-  // --- Path B: OpenSea Drop API for wallets still missing ---
-  try {
-    await ensureOpenSeaApiKey();
-  } catch {
-    // ignore
-  }
-  if (getOpenSeaApiKey() && remaining().length > 0) {
+  const runOpenSea = async () => {
+    if (!getOpenSeaApiKey() || remaining().length === 0) return null;
+    timer.mark("simulate");
     const os = await mintOpenSea(purchase, remaining());
     mergeHits(os.hits);
-    const s = summarize("OpenSea");
-    console.log(`[mint] after OpenSea ${s.okCount}/${s.total}`);
-    if (s.okCount === s.total) {
-      return {
-        attempted: true,
-        success: true,
-        dryRun: false,
-        reason: s.reason,
-        txHash: s.txHash,
-      };
-    }
-  }
+    return finishIfComplete("OpenSea", "opensea");
+  };
 
-  // --- Path C: Replay whale website/contract mint tx ---
-  if (remaining().length > 0) {
+  const runReplay = async () => {
+    if (remaining().length === 0) return null;
+    timer.mark("simulate");
     const replay = await mintByReplay(
       remaining(),
       mintTargets,
@@ -329,27 +384,55 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
       whaleQty
     );
     mergeHits(replay.hits);
-    const s = summarize("Replay");
-    console.log(`[mint] after Replay ${s.okCount}/${s.total}`);
-    if (s.okCount === s.total) {
-      return {
-        attempted: true,
-        success: true,
-        dryRun: false,
-        reason: s.reason,
-        txHash: s.txHash,
-      };
-    }
-  }
+    return finishIfComplete("Replay", "replay");
+  };
 
-  // --- Path D: Public ABI probes ---
-  if (remaining().length > 0 && !(openSeaLike && isSeaDropMintPublic(sourceTx.data))) {
+  const runPublic = async () => {
+    if (remaining().length === 0) return null;
+    if (openSeaLike && isSeaDropMintPublic(sourceTx.data)) return null;
+    timer.mark("simulate");
     const publicTry = await mintPublicMax(remaining(), mintTargets, whaleQty);
     mergeHits(publicTry.hits);
+    return finishIfComplete("Public", "public");
+  };
+
+  // Ensure OpenSea key once (non-SeaDrop / leftover fill).
+  try {
+    await ensureOpenSeaApiKey();
+  } catch {
+    // ignore
+  }
+
+  // Fast-path: if cache says replay/public worked last time, try those before OpenSea API.
+  if (preferReplayFirst) {
+    const a = await runReplay();
+    if (a) return a;
+    const b = await runOpenSea();
+    if (b) return b;
+    const c = await runPublic();
+    if (c) return c;
+  } else {
+    const b = await runOpenSea();
+    if (b) return b;
+    const a = await runReplay();
+    if (a) return a;
+    const c = await runPublic();
+    if (c) return c;
   }
 
   const final = summarize("All paths");
+  timer.mark("broadcast");
   console.log(`[mint] FINAL ${final.okCount}/${final.total} for ${purchase.txHash.slice(0, 10)}…`);
+
+  if (final.okCount > 0) {
+    // Partial success still caches the best available path hint.
+    rememberMintStrategy({
+      contract: collection,
+      kind: openSeaLike ? "seadrop" : "replay",
+      quantity: whaleQty,
+      to: sourceTx.to,
+    });
+  }
 
   return {
     attempted: true,
@@ -922,12 +1005,21 @@ async function sendMintTx(
           `[mint] sending via ${label} strategy=${params.strategy || "?"} from=${from.slice(0, 8)}… ` +
             `to=${params.to.slice(0, 10)}… gasLimit=${resolved.gasLimit} (est ${estimated})`
         );
-        const sent = await connected.sendTransaction(txRequest);
+        const sent = await withWalletNonce({
+          address: from,
+          provider,
+          fn: async (nonce) =>
+            connected.sendTransaction({ ...txRequest, nonce }),
+        });
         console.log(`[mint] broadcast ${sent.hash}`);
 
         void sent.wait().catch(() => undefined);
         return { ok: true, txHash: sent.hash };
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (/nonce|already known|replacement/i.test(errMsg)) {
+          invalidateWalletNonce(wallet.address);
+        }
         const waitMs = parseTryAgainMs(err);
         if (waitMs != null && attempt < maxAttempts - 1) {
           console.warn(

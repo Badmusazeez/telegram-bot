@@ -198,6 +198,7 @@ export async function scanBlockscoutMints(): Promise<NftPurchase[]> {
           isPaid: value > 0,
           sourceTo: to || undefined,
           sourceData: input || undefined,
+          detectedAtMs: Date.now(),
         });
         lastHitTx = txHash;
       }

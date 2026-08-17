@@ -24,6 +24,8 @@ export interface NftPurchase {
   /** Optional whale tx fields (Blockscout) so copy skips RPC lag. */
   sourceTo?: string;
   sourceData?: string;
+  /** ms epoch when detection fired (pending/blockscout/monitor). */
+  detectedAtMs?: number;
 }
 
 /** NFT / collection watched for OpenSea price changes. */

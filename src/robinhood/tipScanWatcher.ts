@@ -105,6 +105,7 @@ export async function startTipScanWatcher(
             isPaid: valueRobinhood > 0,
             sourceTo: to || undefined,
             sourceData: input || undefined,
+            detectedAtMs: Date.now(),
           });
         }
       }

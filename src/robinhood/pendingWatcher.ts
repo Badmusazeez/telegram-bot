@@ -3,9 +3,8 @@ import type { NftPurchase } from "../types";
 import type { PurchaseHandler, RpcIssueHandler } from "./monitor";
 import {
   ZERO_ADDRESS,
-  decodeNftFromMintCalldata,
   httpRpcToWss,
-  isMintLikeCalldata,
+  classifyMintCalldata,
   valueFromWei,
 } from "./mintDetect";
 import { config } from "../config";
@@ -63,9 +62,12 @@ export async function startPendingWatcher(
 
     const to = (tx.to || "").toLowerCase();
     const input = (tx.input || "").toLowerCase();
-    if (!isMintLikeCalldata(to, input)) return;
-
     const valueRobinhood = valueFromWei(tx.value);
+    const valueWei =
+      tx.value && tx.value !== "0" ? BigInt(tx.value) : 0n;
+    const classified = classifyMintCalldata(to, input, undefined, valueWei);
+    if (!classified.isMint) return;
+
     // Fire immediately on mint-like calldata. Paid (value>0) skipped only when
     // free-mints-only is on — value=0 attempts revert on-chain if stage is paid.
     if (state.freeMintsOnly && valueRobinhood > 0) return;
@@ -73,13 +75,14 @@ export async function startPendingWatcher(
     const txHash = (tx.hash || "").toLowerCase();
     if (!txHash) return;
 
-    const nft = decodeNftFromMintCalldata(input) || to || ZERO_ADDRESS;
+    const nft = classified.nftContract || to || ZERO_ADDRESS;
     // Dedupe by tx only so we don't wait for contract decode — fastest path.
     const dedupeKey = `${txHash}:${nft}:mint`;
     if (!rememberTxFast(dedupeKey)) return;
 
     console.log(
-      `[pending] INSTANT hit ${txHash.slice(0, 12)}… from=${from.slice(0, 8)}… to=${to.slice(0, 10)}… wallets will blast`
+      `[pending] INSTANT hit ${txHash.slice(0, 12)}… from=${from.slice(0, 8)}… ` +
+        `fn=${classified.functionLabel} conf=${classified.confidence}`
     );
 
     fire({
@@ -92,11 +95,11 @@ export async function startPendingWatcher(
       blockNumber: 0,
       timestamp: Math.floor(Date.now() / 1000),
       marketplace: "free-mint",
-      // Treat as free-mint candidate immediately (value=0). Paid stages revert.
       isFreeMint: valueRobinhood <= 0,
       isPaid: valueRobinhood > 0,
       sourceTo: to || undefined,
       sourceData: input || undefined,
+      detectedAtMs: Date.now(),
     });
   };
 
