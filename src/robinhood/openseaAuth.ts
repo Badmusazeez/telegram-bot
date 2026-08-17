@@ -171,6 +171,7 @@ export async function ensureOpenSeaApiKey(options?: {
       invalidateOpenSeaApiKey("force-refresh");
     }
 
+    // Explicit .env key wins (unless force-refresh / banned).
     const envKey = (process.env.OPENSEA_API_KEY || "").trim();
     if (envKey && !force && !bannedKeys.has(envKey)) {
       memory = {
@@ -180,6 +181,8 @@ export async function ensureOpenSeaApiKey(options?: {
         source: "env",
         fetched_at: new Date().toISOString(),
       };
+      // Persist so restarts under pm2 keep the working key even if .env is missed.
+      void writeStored(memory).catch(() => undefined);
       return applyKey(envKey);
     }
 
