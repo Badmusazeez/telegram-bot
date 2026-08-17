@@ -46,10 +46,11 @@ function rememberCopyResult(purchase: NftPurchase, result: CopyResult): void {
 /**
  * Free-mint copy executor for Robinhood Chain.
  *
- * Strategies (max qty when possible) — NO Scatter:
- * 1) OpenSea Drop API (max_per_wallet)
- * 2) Public contract mint/claim variants at max qty
- * 3) Whale calldata replay (+ address rewrite / qty bump)
+ * Works for OpenSea AND arbitrary mint websites:
+ * 1) OpenSea Drop API — only when whale used SeaDrop
+ * 2) Whale calldata replay — primary path for website / any-site mints
+ *    (same tx the whale sent, buyer address swapped, qty bumped to MAX)
+ * 3) Public contract mint/claim probes at max qty
  */
 export async function maybeCopyPurchase(
   purchase: NftPurchase
@@ -213,61 +214,77 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   const wallets = funded;
   const openSeaLike = isOpenSeaMinter(sourceTx.to);
   const whaleQty = decodeWhaleMintQuantity(sourceTx.data) || 1;
+  const collection = purchase.contract;
+  const mintTargets = [
+    ...new Set(
+      [sourceTx.to, collection]
+        .map((a) => (a || "").toLowerCase())
+        .filter((a) => a.startsWith("0x") && a.length === 42)
+    ),
+  ];
 
   if (state.dryRun) {
     return {
       attempted: true,
       success: false,
       dryRun: true,
-      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try opensea=${openSeaLike} whaleQty≈${whaleQty} on ${wallets.length} funded wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
+      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try opensea=${openSeaLike} replay→${mintTargets.length} target(s) whaleQty≈${whaleQty} on ${wallets.length} funded wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
     };
   }
 
   const attempts: string[] = [];
-  const collection = purchase.contract;
 
   console.log(
-    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} opensea=${openSeaLike} whaleQty≈${whaleQty}`
+    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} opensea=${openSeaLike} whaleQty≈${whaleQty} targets=${mintTargets.length}`
   );
 
-  // 1) OpenSea Drop first (max_per_wallet) — all funded wallets in parallel
-  try {
-    await ensureOpenSeaApiKey();
-  } catch {
-    // continue
-  }
-  if (getOpenSeaApiKey()) {
-    const os = await mintOpenSea(purchase, wallets);
-    if (os.success) return os;
-    // Don't spam status with OpenSea slug noise unless it was the only path
-    if (openSeaLike || /slug|drop|stage|mint/i.test(os.reason)) {
+  // --- Path A: OpenSea SeaDrop (whale minted via OpenSea) ---
+  if (openSeaLike) {
+    try {
+      await ensureOpenSeaApiKey();
+    } catch {
+      // continue
+    }
+    if (getOpenSeaApiKey()) {
+      const os = await mintOpenSea(purchase, wallets);
+      if (os.success) return os;
       attempts.push(os.reason);
     } else {
-      attempts.push(os.reason);
+      attempts.push("OpenSea API key missing");
     }
-  } else {
-    attempts.push("OpenSea API key missing");
   }
 
-  // 2) Public contract max-mint probes
-  const publicTry = await mintPublicMax(
-    wallets,
-    openSeaLike ? [sourceTx.to] : [collection, sourceTx.to],
-    whaleQty
-  );
-  if (publicTry.success) return publicTry;
-  attempts.push(publicTry.reason);
-
-  // 3) Replay whale calldata (rewrite address + bump qty)
+  // --- Path B: Replay whale website/contract mint tx (ANY site) ---
+  // This is how we copy mints that never touch OpenSea — same calldata the
+  // tracked wallet sent, with our address + max qty.
   const replay = await mintByReplay(
     wallets,
-    sourceTx.to,
+    mintTargets,
     sourceTx.data,
     purchase.buyer,
     whaleQty
   );
   if (replay.success) return replay;
   attempts.push(replay.reason);
+
+  // --- Path C: Public ABI max-mint probes on mint router + NFT ---
+  const publicTry = await mintPublicMax(wallets, mintTargets, whaleQty);
+  if (publicTry.success) return publicTry;
+  attempts.push(publicTry.reason);
+
+  // --- Path D: OpenSea slug resolve (website may still be an OS drop) ---
+  if (!openSeaLike) {
+    try {
+      await ensureOpenSeaApiKey();
+    } catch {
+      // continue
+    }
+    if (getOpenSeaApiKey()) {
+      const os = await mintOpenSea(purchase, wallets);
+      if (os.success) return os;
+      attempts.push(os.reason);
+    }
+  }
 
   console.warn(
     `[mint] all strategies failed for ${purchase.txHash}: ${attempts.join(" || ")}`
@@ -433,25 +450,34 @@ async function mintPublicMax(
 
 async function mintByReplay(
   wallets: Wallet[],
-  to: string,
+  targets: string | string[],
   rawData: string,
   whale: string,
   whaleQty: number
 ): Promise<CopyResult> {
+  const tos = [
+    ...new Set(
+      (Array.isArray(targets) ? targets : [targets])
+        .map((t) => t.toLowerCase())
+        .filter(Boolean)
+    ),
+  ];
+
   const results = await Promise.all(
     wallets.map((wallet) =>
-      mintWithWallet(wallet, to, rawData, whale, whaleQty)
+      mintWithWallet(wallet, tos, rawData, whale, whaleQty)
     )
   );
 
   const ok = results.filter((r) => r.ok);
   const fail = results.filter((r) => !r.ok);
+  const primaryTo = tos[0] || "";
   const summary = results
     .map((r) => {
       if (r.ok) {
         return `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}…`;
       }
-      return `${shortAddr(r.address)} ${classifyWalletFailure(r.error || "", to)}`;
+      return `${shortAddr(r.address)} ${classifyWalletFailure(r.error || "", primaryTo)}`;
     })
     .join(" | ");
 
@@ -460,13 +486,13 @@ async function mintByReplay(
       attempted: true,
       success: true,
       dryRun: false,
-      reason: `Replay minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`,
+      reason: `Website/tx replay minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`,
       txHash: ok[0]?.txHash,
     };
   }
 
   const allWalletBound = fail.every((r) =>
-    isWalletBoundFailure(r.error || "", to)
+    isWalletBoundFailure(r.error || "", primaryTo)
   );
   if (allWalletBound) {
     return {
@@ -474,8 +500,8 @@ async function mintByReplay(
       success: false,
       dryRun: false,
       reason:
-        `Wallet-bound free mint — skipped (allowlist / OpenSea drop / signature). ` +
-        `Cannot copy into your wallet(s). (${wallets.length} wallet(s))`,
+        `Wallet-bound website mint (allowlist / signature tied to whale). ` +
+        `Cannot copy without that site's mint API. (${wallets.length} wallet(s))`,
     };
   }
 
@@ -483,7 +509,7 @@ async function mintByReplay(
     attempted: true,
     success: false,
     dryRun: false,
-    reason: `Replay failed on all wallets: ${summary}`,
+    reason: `Website/tx replay failed on all wallets: ${summary}`,
   };
 }
 
@@ -666,7 +692,7 @@ async function sendMintTx(
 
 async function mintWithWallet(
   wallet: Wallet,
-  to: string,
+  targets: string[],
   rawData: string,
   whale: string,
   whaleQty: number
@@ -675,12 +701,31 @@ async function mintWithWallet(
   const candidates = buildCalldataCandidates(rawData, whale, address, whaleQty);
   const errors: string[] = [];
 
-  for (const [index, data] of candidates.entries()) {
-    const sent = await sendMintTx(wallet, { to, data, valueWei: 0n });
-    if (sent.ok) {
-      return { address, ok: true, txHash: sent.txHash };
+  // Cap probes so we stay inside the mint window (website free mints sell out fast).
+  const maxAttempts = Math.min(candidates.length * targets.length, 12);
+  let tried = 0;
+
+  for (const to of targets) {
+    for (const [index, data] of candidates.entries()) {
+      if (tried >= maxAttempts) break;
+      tried += 1;
+      const sent = await sendMintTx(wallet, {
+        to,
+        data,
+        valueWei: 0n,
+        // First attempt: skip estimate for speed on known-good whale calldata.
+        skipEstimate: index === 0,
+        gasLimitHint: 1_200_000n,
+      });
+      if (sent.ok) {
+        return { address, ok: true, txHash: sent.txHash };
+      }
+      errors.push(`${shortAddr(to)} v${index + 1} ${sent.error}`);
+      // If clearly wallet-bound / signature, don't burn the window on more qty bumps.
+      if (isWalletBoundFailure(sent.error || "", to) && index >= 1) {
+        break;
+      }
     }
-    errors.push(`v${index + 1} ${sent.error}`);
   }
 
   return { address, ok: false, error: errors.join("; ") || "unknown" };
