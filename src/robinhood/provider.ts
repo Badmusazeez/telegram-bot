@@ -75,7 +75,13 @@ export async function getFundedMintWallets(
       try {
         const bal = await provider.getBalance(w.address);
         return { w, bal };
-      } catch {
+      } catch (err) {
+        try {
+          const { reportMintRpcIssue } = await import("./mintRpcAlerts");
+          await reportMintRpcIssue(err);
+        } catch {
+          // ignore
+        }
         return { w, bal: 0n };
       }
     })

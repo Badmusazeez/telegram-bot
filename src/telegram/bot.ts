@@ -812,8 +812,8 @@ export async function broadcastScheduleResult(
   }
 }
 
-/** Avoid spamming Telegram when Alchemy keeps returning quota errors. */
-const RPC_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
+/** Avoid spamming Telegram when RPC keeps returning quota errors. */
+const RPC_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 let lastRpcAlertAt = 0;
 let lastRpcAlertKind = "";
 
@@ -823,6 +823,7 @@ export async function broadcastRpcAlert(
   kind = "quota"
 ): Promise<void> {
   const now = Date.now();
+  // Separate cooldowns per kind so Alchemy + Chainstack can both alert.
   if (kind === lastRpcAlertKind && now - lastRpcAlertAt < RPC_ALERT_COOLDOWN_MS) {
     return;
   }

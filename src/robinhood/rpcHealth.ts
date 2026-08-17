@@ -1,10 +1,16 @@
-export type TrackRpcIssue = {
-  kind: "quota" | "rate_limit" | "unavailable";
+import { config } from "../config";
+
+export type RpcIssueKind = "quota" | "rate_limit" | "unavailable";
+
+export type RpcIssue = {
+  kind: RpcIssueKind;
   message: string;
 };
 
-/** Detect Alchemy / RPC "full" or throttled tracker errors. */
-export function classifyTrackRpcError(err: unknown): TrackRpcIssue | null {
+export type RpcRole = "track" | "mint";
+
+/** Detect Alchemy / Chainstack / RPC "full" or throttled errors. */
+export function classifyRpcError(err: unknown): RpcIssue | null {
   const msg = err instanceof Error ? err.message : String(err);
   const lower = msg.toLowerCase();
 
@@ -22,7 +28,9 @@ export function classifyTrackRpcError(err: unknown): TrackRpcIssue | null {
     lower.includes("capacity limit") ||
     lower.includes("quota") ||
     lower.includes("payment required") ||
-    lower.includes("402")
+    lower.includes("402") ||
+    lower.includes("credit") ||
+    lower.includes("insufficient funds for") && lower.includes("plan")
   ) {
     return { kind: "quota", message: msg.slice(0, 280) };
   }
@@ -32,7 +40,9 @@ export function classifyTrackRpcError(err: unknown): TrackRpcIssue | null {
     lower.includes("too many requests") ||
     lower.includes("rate limit") ||
     lower.includes("rate exceeded") ||
-    lower.includes("request limit")
+    lower.includes("request limit") ||
+    lower.includes("limit exceeded") ||
+    lower.includes("over rate")
   ) {
     return { kind: "rate_limit", message: msg.slice(0, 280) };
   }
@@ -50,22 +60,57 @@ export function classifyTrackRpcError(err: unknown): TrackRpcIssue | null {
   return null;
 }
 
-export function formatTrackRpcIssue(issue: TrackRpcIssue): string {
-  const title =
-    issue.kind === "quota"
-      ? "Tracker RPC quota / capacity full"
-      : issue.kind === "rate_limit"
-        ? "Tracker RPC rate-limited"
-        : "Tracker RPC unavailable";
+/** @deprecated use classifyRpcError */
+export function classifyTrackRpcError(err: unknown): RpcIssue | null {
+  return classifyRpcError(err);
+}
+
+export type TrackRpcIssue = RpcIssue;
+
+function providerNameForRole(role: RpcRole): "ALCHEMY" | "CHAINSTACK" | "RPC" {
+  const url =
+    role === "track" ? config.trackRpcUrl : config.mintRpcUrl;
+  const lower = url.toLowerCase();
+  if (lower.includes("alchemy")) return "ALCHEMY";
+  if (lower.includes("chainstack")) return "CHAINSTACK";
+  return "RPC";
+}
+
+/**
+ * Clear Telegram alert when Alchemy / Chainstack hits its limit.
+ * Example: CHANGE YOUR ALCHEMY RPC, IT HAS REACHED ITS LIMIT
+ */
+export function formatRpcLimitAlert(
+  role: RpcRole,
+  issue: RpcIssue
+): string {
+  const provider = providerNameForRole(role);
+  const roleLabel = role === "track" ? "TRACKING (Alchemy)" : "MINTING (Chainstack)";
 
   return [
-    `<b>⚠️ ${title}</b>`,
+    `<b>🚨 CHANGE YOUR ${provider} RPC, IT HAS REACHED ITS LIMIT</b>`,
     ``,
-    `Whale tracking may miss free mints until this clears.`,
+    `<b>Which:</b> ${roleLabel}`,
+    `<b>Problem:</b> ${
+      issue.kind === "quota"
+        ? "quota / capacity / CU limit"
+        : issue.kind === "rate_limit"
+          ? "rate limit (429)"
+          : "RPC unavailable / overloaded"
+    }`,
     `<b>Detail:</b> <code>${escapeHtml(issue.message)}</code>`,
     ``,
-    `If TRACK_RPC_BACKUP_URL is set, bot will failover then return to Alchemy when healthy.`,
+    role === "track"
+      ? `Update <code>TRACK_RPC_URL</code> / <code>ALCHEMY_API_KEY</code> in VPS <code>.env</code>, then: <code>pm2 restart robinhood-nft-bot --update-env</code>`
+      : `Update <code>MINT_RPC_URL</code> in VPS <code>.env</code>, then: <code>pm2 restart robinhood-nft-bot --update-env</code>`,
+    ``,
+    `Blockscout detection may still catch free mints while you swap the RPC.`,
   ].join("\n");
+}
+
+/** @deprecated use formatRpcLimitAlert("track", issue) */
+export function formatTrackRpcIssue(issue: RpcIssue): string {
+  return formatRpcLimitAlert("track", issue);
 }
 
 export function formatTrackRpcSwitch(event: {

@@ -16,10 +16,11 @@ import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, getState, loadState } from "./store/state";
 import type { NftPurchase } from "./types";
 import {
-  formatTrackRpcIssue,
+  formatRpcLimitAlert,
   formatTrackRpcSwitch,
 } from "./robinhood/rpcHealth";
 import { setTrackRpcSwitchHandler } from "./robinhood/trackRpc";
+import { setMintRpcIssueHandler } from "./robinhood/mintRpcAlerts";
 import {
   broadcastPriceAlert,
   broadcastPurchase,
@@ -133,6 +134,16 @@ async function main(): Promise<void> {
       `switch:${event.to}`
     );
   });
+
+  setMintRpcIssueHandler(async (issue) => {
+    console.warn(`[rpc] mint/Chainstack issue ${issue.kind}: ${issue.message}`);
+    await broadcastRpcAlert(
+      bot,
+      formatRpcLimitAlert("mint", issue),
+      `mint:${issue.kind}`
+    );
+  });
+
   console.log(
     `poll=${config.pollIntervalMs}ms lookback=${config.lookbackBlocks} maxScan=${config.chain.maxScanBlocks}`
   );
@@ -186,8 +197,12 @@ async function main(): Promise<void> {
   const stopBlockscout = await startBlockscoutWatcher(onPurchase);
 
   const stopMonitor = await startMonitor(onPurchase, async (issue) => {
-    console.warn(`[rpc] track issue ${issue.kind}: ${issue.message}`);
-    await broadcastRpcAlert(bot, formatTrackRpcIssue(issue), issue.kind);
+    console.warn(`[rpc] track/Alchemy issue ${issue.kind}: ${issue.message}`);
+    await broadcastRpcAlert(
+      bot,
+      formatRpcLimitAlert("track", issue),
+      `track:${issue.kind}`
+    );
   });
 
   const stopPrices = await startPriceWatcher(async (alert) => {

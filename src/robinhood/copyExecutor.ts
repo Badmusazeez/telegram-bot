@@ -23,6 +23,8 @@ import {
   isSeaDropAddress,
   isSeaDropMintPublic,
 } from "./seaDrop";
+import { reportMintRpcIssue } from "./mintRpcAlerts";
+import { classifyRpcError } from "./rpcHealth";
 
 /** One copy attempt per whale mint tx (721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -757,6 +759,10 @@ async function sendMintTx(
       void sent.wait().catch(() => undefined);
       return { ok: true, txHash: sent.hash };
     } catch (err) {
+      // Alert on Chainstack / mint RPC rate-limit or quota (Telegram).
+      if (classifyRpcError(err)) {
+        void reportMintRpcIssue(err);
+      }
       return { ok: false, error: shortError(err) };
     }
   };
