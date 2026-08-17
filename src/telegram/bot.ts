@@ -279,7 +279,7 @@ export function createTelegramBot(): Bot {
     const wallet = await addTrackedWallet(address, label);
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      `Tracking <b>${escape(wallet.label)}</b>\n<code>${wallet.address}</code>`,
+      `👀 <b>Tracking ${escape(wallet.label)}</b>\n<code>${wallet.address}</code>\n\nYou'll get <b>Mint Detected (${escape(wallet.label)})</b> when this wallet free-mints.`,
       { parse_mode: "HTML" }
     );
   });

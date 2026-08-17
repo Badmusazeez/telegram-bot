@@ -1,6 +1,5 @@
 import { config } from "../config";
-import { describeWallet } from "../robinhood/monitor";
-import { shortAddress } from "../store/state";
+import { getState, shortAddress } from "../store/state";
 import type {
   CopyResult,
   NftPurchase,
@@ -16,10 +15,20 @@ function escHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+/** Label for a tracked whale wallet (e.g. "davin"), else short address. */
+export function trackedWalletLabel(address: string): string {
+  const normalized = address.toLowerCase();
+  const wallet = getState().trackedWallets.find(
+    (w) => w.address.toLowerCase() === normalized
+  );
+  return wallet?.label?.trim() || shortAddress(normalized);
+}
+
 export function formatPurchaseAlert(
   purchase: NftPurchase,
   copy: CopyResult
 ): string {
+  const label = trackedWalletLabel(purchase.buyer);
   const title = purchase.tokenName || `Token #${purchase.tokenId}`;
   const collection = purchase.collectionName || shortAddress(purchase.contract);
   const kind = purchase.isFreeMint
@@ -29,6 +38,9 @@ export function formatPurchaseAlert(
       : "TRANSFER";
   const txUrl = config.chain.explorerTxUrl(purchase.txHash);
   const openSeaUrl = `https://opensea.io/assets/${config.chain.openseaChain}/${purchase.contract}/${purchase.tokenId}`;
+  const buyerUrl = config.chain.explorerAddressUrl(purchase.buyer);
+  const contractUrl = config.chain.explorerAddressUrl(purchase.contract);
+
   const copyTx = copy.txHash
     ? `\n<b>Our tx:</b> <a href="${config.chain.explorerTxUrl(copy.txHash)}">explorer</a>`
     : "";
@@ -40,16 +52,24 @@ export function formatPurchaseAlert(
         ? `<b>Auto-mint:</b> ⚠️ ${escHtml(copy.reason)}`
         : `<b>Auto-mint:</b> ❌ ${escHtml(copy.reason)}${copyTx}`;
 
+  const via =
+    purchase.marketplace === "free-mint"
+      ? "free mint"
+      : escHtml(purchase.marketplace || "on-chain");
+
   return [
-    `<b>robinhood-nft-copy-bot alert</b>`,
-    `<b>Chain:</b> ${escHtml(config.chain.name)}`,
+    `<b>Mint Detected (${escHtml(label)})</b>`,
     `<b>Type:</b> ${kind}`,
     ``,
-    `<b>Wallet:</b> ${escHtml(describeWallet(purchase.buyer))}`,
+    `<b>Tracked wallet:</b> <b>${escHtml(label)}</b>`,
+    `👛 <code>${escHtml(purchase.buyer)}</code>`,
+    `<a href="${buyerUrl}">view wallet</a>`,
+    ``,
     `<b>Collection:</b> ${escHtml(collection)}`,
     `<b>Item:</b> ${escHtml(title)}`,
-    `<b>Token ID:</b> <code>${escHtml(purchase.tokenId)}</code>`,
-    `<b>Contract:</b> <code>${escHtml(purchase.contract)}</code>`,
+    `📄 <b>Contract:</b> <code>${escHtml(purchase.contract)}</code>`,
+    `<a href="${contractUrl}">view contract</a>`,
+    `<b>Via:</b> ${via}`,
     `<b>Whale tx:</b> <a href="${txUrl}">explorer</a>`,
     `<b>OpenSea:</b> <a href="${openSeaUrl}">view</a>`,
     ``,
