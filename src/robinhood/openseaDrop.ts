@@ -1,5 +1,9 @@
 import { config } from "../config";
-import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
+import {
+  ensureOpenSeaApiKey,
+  getOpenSeaApiKey,
+  invalidateOpenSeaApiKey,
+} from "./openseaAuth";
 import { parseOpenSeaUrl, type OpenSeaLinkRef } from "./openseaUrl";
 
 export type OpenSeaDropStage = {
@@ -58,15 +62,28 @@ async function fetchOpenSeaJson(url: string, init?: RequestInit): Promise<unknow
 
   let res = await doFetch(key);
   if (res.status === 401 || res.status === 403) {
-    await ensureOpenSeaApiKey({ forceRefresh: true });
-    const refreshed = getOpenSeaApiKey();
-    if (refreshed && refreshed !== key) {
-      res = await doFetch(refreshed);
+    invalidateOpenSeaApiKey(`HTTP ${res.status}`);
+    try {
+      await ensureOpenSeaApiKey({ forceRefresh: true });
+    } catch (err) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `OpenSea HTTP ${res.status}${body ? `: ${body.slice(0, 120)}` : ""}` +
+          ` (key refresh failed: ${err instanceof Error ? err.message : String(err)})`
+      );
     }
+    const refreshed = getOpenSeaApiKey();
+    if (!refreshed) {
+      throw new Error(`OpenSea HTTP ${res.status}: no usable API key after refresh`);
+    }
+    res = await doFetch(refreshed);
   }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    if (res.status === 401 || res.status === 403) {
+      invalidateOpenSeaApiKey(`HTTP ${res.status} retry`);
+    }
     throw new Error(`OpenSea HTTP ${res.status}${body ? `: ${body.slice(0, 160)}` : ""}`);
   }
   return res.json();

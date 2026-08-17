@@ -18,6 +18,11 @@ import {
 } from "./multiMint";
 import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
 import { maxMintQuantityLadder } from "./mintQuantity";
+import {
+  buildSeaDropMintPublicTx,
+  isSeaDropAddress,
+  isSeaDropMintPublic,
+} from "./seaDrop";
 
 /** One copy attempt per whale mint tx (721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -46,11 +51,10 @@ function rememberCopyResult(purchase: NftPurchase, result: CopyResult): void {
 /**
  * Free-mint copy executor for Robinhood Chain.
  *
- * Works for OpenSea AND arbitrary mint websites:
- * 1) OpenSea Drop API — only when whale used SeaDrop
- * 2) Whale calldata replay — primary path for website / any-site mints
- *    (same tx the whale sent, buyer address swapped, qty bumped to MAX)
- * 3) Public contract mint/claim probes at max qty
+ * 1) SeaDrop mintPublic rebuild (no OpenSea API needed) — most RH free mints
+ * 2) OpenSea Drop API (max_per_wallet) when key works
+ * 3) Whale calldata replay for website / any-site mints
+ * 4) Public contract mint/claim probes (skipped for SeaDrop)
  */
 export async function maybeCopyPurchase(
   purchase: NftPurchase
@@ -212,7 +216,8 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   }
 
   const wallets = funded;
-  const openSeaLike = isOpenSeaMinter(sourceTx.to);
+  const openSeaLike =
+    isSeaDropAddress(sourceTx.to) || isSeaDropMintPublic(sourceTx.data);
   const whaleQty = decodeWhaleMintQuantity(sourceTx.data) || 1;
   const collection = purchase.contract;
   const mintTargets = [
@@ -228,35 +233,41 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
       attempted: true,
       success: false,
       dryRun: true,
-      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try opensea=${openSeaLike} replay→${mintTargets.length} target(s) whaleQty≈${whaleQty} on ${wallets.length} funded wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
+      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try seadrop=${openSeaLike} replay→${mintTargets.length} target(s) whaleQty≈${whaleQty} on ${wallets.length} funded wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
     };
   }
 
   const attempts: string[] = [];
 
   console.log(
-    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} opensea=${openSeaLike} whaleQty≈${whaleQty} targets=${mintTargets.length}`
+    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} seadrop=${openSeaLike} whaleQty≈${whaleQty} targets=${mintTargets.length}`
   );
 
-  // --- Path A: OpenSea SeaDrop (whale minted via OpenSea) ---
-  if (openSeaLike) {
-    try {
-      await ensureOpenSeaApiKey();
-    } catch {
-      // continue
-    }
-    if (getOpenSeaApiKey()) {
-      const os = await mintOpenSea(purchase, wallets);
-      if (os.success) return os;
-      attempts.push(os.reason);
-    } else {
-      attempts.push("OpenSea API key missing");
-    }
+  // --- Path A: SeaDrop mintPublic rebuild (NO OpenSea API) ---
+  // Public free SeaDrop stages work by rebuilding calldata with our minter + max qty.
+  if (openSeaLike && isSeaDropMintPublic(sourceTx.data)) {
+    const sd = await mintSeaDropPublic(
+      wallets,
+      sourceTx.data,
+      whaleQty
+    );
+    if (sd.success) return sd;
+    attempts.push(sd.reason);
   }
 
-  // --- Path B: Replay whale website/contract mint tx (ANY site) ---
-  // This is how we copy mints that never touch OpenSea — same calldata the
-  // tracked wallet sent, with our address + max qty.
+  // --- Path B: OpenSea Drop API (needs valid key; auto-refreshes on 401) ---
+  try {
+    await ensureOpenSeaApiKey();
+  } catch {
+    // continue — SeaDrop path above may already have worked / will retry later
+  }
+  if (getOpenSeaApiKey()) {
+    const os = await mintOpenSea(purchase, wallets);
+    if (os.success) return os;
+    attempts.push(os.reason);
+  }
+
+  // --- Path C: Replay whale website/contract mint tx (ANY site) ---
   const replay = await mintByReplay(
     wallets,
     mintTargets,
@@ -267,23 +278,11 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   if (replay.success) return replay;
   attempts.push(replay.reason);
 
-  // --- Path C: Public ABI max-mint probes on mint router + NFT ---
-  const publicTry = await mintPublicMax(wallets, mintTargets, whaleQty);
-  if (publicTry.success) return publicTry;
-  attempts.push(publicTry.reason);
-
-  // --- Path D: OpenSea slug resolve (website may still be an OS drop) ---
+  // --- Path D: Public ABI probes — skip on SeaDrop (always reverts, wastes the window) ---
   if (!openSeaLike) {
-    try {
-      await ensureOpenSeaApiKey();
-    } catch {
-      // continue
-    }
-    if (getOpenSeaApiKey()) {
-      const os = await mintOpenSea(purchase, wallets);
-      if (os.success) return os;
-      attempts.push(os.reason);
-    }
+    const publicTry = await mintPublicMax(wallets, mintTargets, whaleQty);
+    if (publicTry.success) return publicTry;
+    attempts.push(publicTry.reason);
   }
 
   console.warn(
@@ -295,6 +294,75 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     success: false,
     dryRun: false,
     reason: `All mint strategies failed: ${attempts.join(" || ")}`,
+  };
+}
+
+async function mintSeaDropPublic(
+  wallets: Wallet[],
+  whaleData: string,
+  whaleQty: number
+): Promise<CopyResult> {
+  const qtys = maxMintQuantityLadder(whaleQty);
+  const results = await Promise.all(
+    wallets.map(async (wallet) => {
+      const address = wallet.address.toLowerCase();
+      const errors: string[] = [];
+      for (const q of qtys) {
+        const built = buildSeaDropMintPublicTx({
+          whaleData,
+          minter: wallet.address,
+          quantity: q,
+        });
+        if (!built) {
+          return {
+            address,
+            ok: false as const,
+            error: "could not decode SeaDrop mintPublic",
+          };
+        }
+        const sent = await sendMintTx(wallet, {
+          to: built.to,
+          data: built.data,
+          valueWei: 0n,
+          skipEstimate: true,
+          gasLimitHint: 900_000n,
+        });
+        if (sent.ok) {
+          return {
+            address,
+            ok: true as const,
+            txHash: sent.txHash,
+            detail: `SeaDrop mintPublic x${q}`,
+          };
+        }
+        errors.push(`x${q}:${sent.error}`);
+      }
+      return {
+        address,
+        ok: false as const,
+        error: errors.slice(0, 4).join("; ") || "SeaDrop mint failed",
+      };
+    })
+  );
+
+  const ok = results.filter((r) => r.ok);
+  const summary = results
+    .map((r) =>
+      r.ok
+        ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
+        : `${shortAddr(r.address)} FAIL (${r.error})`
+    )
+    .join(" | ");
+
+  return {
+    attempted: true,
+    success: ok.length > 0,
+    dryRun: false,
+    reason:
+      ok.length > 0
+        ? `SeaDrop minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
+        : `SeaDrop mintPublic failed: ${summary}`,
+    txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
   };
 }
 
@@ -793,26 +861,13 @@ function shortAddr(address: string): string {
   return `${address.slice(0, 6)}…`;
 }
 
-function isRevertError(error: string): boolean {
-  return /\breverted\b/i.test(error) || /execution reverted/i.test(error);
-}
-
-function isOpenSeaMinter(to: string): boolean {
-  return to.toLowerCase() === "0x00005ea00ac477b1030ce78506496e8c2de24bf5";
-}
-
-function isWalletBoundFailure(error: string, to: string): boolean {
+function isWalletBoundFailure(error: string, _to: string): boolean {
   if (!error.trim()) {
     return false;
   }
-  if (
-    error.includes("insufficient funds") ||
-    error.includes("gas too high") ||
-    error.includes("sold out")
-  ) {
-    return false;
-  }
-  return isRevertError(error) || isOpenSeaMinter(to);
+  return /allowlist|not.?eligible|invalid.?proof|invalid.?signature|unauthorized|not.?on.?list/i.test(
+    error
+  );
 }
 
 function classifyWalletFailure(error: string, to: string): string {

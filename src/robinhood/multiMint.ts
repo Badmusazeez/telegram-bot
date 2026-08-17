@@ -3,6 +3,7 @@ import { config } from "../config";
 import {
   ensureOpenSeaApiKey,
   getOpenSeaApiKey,
+  invalidateOpenSeaApiKey,
 } from "./openseaAuth";
 import {
   buildOpenSeaDropMintTx,
@@ -36,35 +37,53 @@ async function resolveOpenSeaSlug(contract: string): Promise<string | null> {
   const key = contract.toLowerCase();
   const cached = slugCache.get(key);
   if (cached) return cached;
-  try {
-    await ensureOpenSeaApiKey();
-  } catch {
-    return null;
-  }
-  const apiKey = getOpenSeaApiKey();
-  if (!apiKey) return null;
-  try {
-    const chain = config.chain.openseaChain;
-    const res = await fetch(
-      `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}`,
-      {
-        headers: {
-          accept: "application/json",
-          "x-api-key": apiKey,
-        },
-        signal: AbortSignal.timeout(8_000),
-      }
-    );
-    if (!res.ok) return null;
-    const data = (await res.json()) as { collection?: string };
-    if (data.collection) {
-      slugCache.set(key, data.collection);
-      return data.collection;
+
+  const tryOnce = async (): Promise<string | null> => {
+    try {
+      await ensureOpenSeaApiKey();
+    } catch {
+      return null;
     }
-    return null;
-  } catch {
-    return null;
+    const apiKey = getOpenSeaApiKey();
+    if (!apiKey) return null;
+    try {
+      const chain = config.chain.openseaChain;
+      const res = await fetch(
+        `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}`,
+        {
+          headers: {
+            accept: "application/json",
+            "x-api-key": apiKey,
+          },
+          signal: AbortSignal.timeout(8_000),
+        }
+      );
+      if (res.status === 401 || res.status === 403) {
+        invalidateOpenSeaApiKey(`slug HTTP ${res.status}`);
+        return null;
+      }
+      if (!res.ok) return null;
+      const data = (await res.json()) as { collection?: string };
+      if (data.collection) {
+        slugCache.set(key, data.collection);
+        return data.collection;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  let slug = await tryOnce();
+  if (!slug) {
+    try {
+      await ensureOpenSeaApiKey({ forceRefresh: true });
+    } catch {
+      return null;
+    }
+    slug = await tryOnce();
   }
+  return slug;
 }
 
 /** Build a live free OpenSea Drop mint at max_per_wallet for our minter. */

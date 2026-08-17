@@ -24,6 +24,8 @@ type StoredKey = OpenSeaInstantKey;
 
 let memory: StoredKey | null = null;
 let inflight: Promise<string> | null = null;
+/** Env / cached keys that returned 401 — never reuse this process. */
+const bannedKeys = new Set<string>();
 
 function keyPath(): string {
   return (
@@ -39,7 +41,8 @@ function applyKey(key: string): string {
 
 function isUsable(stored: StoredKey | null, now = Date.now()): boolean {
   if (!stored?.api_key) return false;
-  if (!stored.expires_at) return true; // env keys may have no expiry
+  if (bannedKeys.has(stored.api_key)) return false;
+  if (!stored.expires_at) return true;
   const exp = Date.parse(stored.expires_at);
   if (Number.isNaN(exp)) return true;
   return exp - now > REFRESH_BEFORE_MS;
@@ -60,6 +63,17 @@ async function writeStored(stored: StoredKey): Promise<void> {
   const dir = path.dirname(keyPath());
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(keyPath(), `${JSON.stringify(stored, null, 2)}\n`, "utf8");
+}
+
+/** Mark a key invalid (401) so we stop using env/cached garbage. */
+export function invalidateOpenSeaApiKey(reason = "invalid"): void {
+  const key = (config.openseaApiKey || memory?.api_key || "").trim();
+  if (key) {
+    bannedKeys.add(key);
+    console.warn(`[opensea] API key invalidated (${reason}): ${key.slice(0, 4)}…${key.slice(-4)}`);
+  }
+  memory = null;
+  config.openseaApiKey = "";
 }
 
 /**
@@ -143,7 +157,7 @@ export function getOpenSeaKeyStatus(): OpenSeaKeyStatus {
 
 /**
  * Ensure a usable OpenSea API key is loaded into config.openseaApiKey.
- * Order: env override → cached instant key → POST /api/v2/auth/keys
+ * Order: env (if not banned) → cached instant → POST /api/v2/auth/keys
  */
 export async function ensureOpenSeaApiKey(options?: {
   forceRefresh?: boolean;
@@ -153,9 +167,12 @@ export async function ensureOpenSeaApiKey(options?: {
   inflight = (async () => {
     const force = options?.forceRefresh === true;
 
-    // Explicit .env key wins unless force-refresh requested
+    if (force) {
+      invalidateOpenSeaApiKey("force-refresh");
+    }
+
     const envKey = (process.env.OPENSEA_API_KEY || "").trim();
-    if (envKey && !force) {
+    if (envKey && !force && !bannedKeys.has(envKey)) {
       memory = {
         api_key: envKey,
         name: "env",
@@ -175,11 +192,6 @@ export async function ensureOpenSeaApiKey(options?: {
         memory = stored;
         return applyKey(stored.api_key);
       }
-      // Use expired cached key as last resort until refresh succeeds
-      if (stored?.api_key && !force) {
-        memory = stored;
-        applyKey(stored.api_key);
-      }
     }
 
     try {
@@ -190,11 +202,13 @@ export async function ensureOpenSeaApiKey(options?: {
       return created.api_key;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (config.openseaApiKey) {
+      // Never fall back to a banned/invalid key.
+      const fallback = (config.openseaApiKey || "").trim();
+      if (fallback && !bannedKeys.has(fallback)) {
         console.warn(
           `[opensea] Instant key refresh failed (${msg}); using existing key`
         );
-        return config.openseaApiKey;
+        return fallback;
       }
       throw err;
     }
@@ -209,5 +223,7 @@ export async function ensureOpenSeaApiKey(options?: {
 
 /** Sync getter (may be empty before ensureOpenSeaApiKey). */
 export function getOpenSeaApiKey(): string {
-  return (config.openseaApiKey || "").trim();
+  const key = (config.openseaApiKey || "").trim();
+  if (key && bannedKeys.has(key)) return "";
+  return key;
 }

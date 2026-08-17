@@ -5,7 +5,9 @@ import { startBlockscoutWatcher } from "./robinhood/blockscoutWatcher";
 import { enrichPurchase, startMonitor } from "./robinhood/monitor";
 import {
   ensureOpenSeaApiKey,
+  getOpenSeaApiKey,
   getOpenSeaKeyStatus,
+  invalidateOpenSeaApiKey,
 } from "./robinhood/openseaAuth";
 import { startPriceWatcher } from "./robinhood/priceWatcher";
 import { rpcLabels } from "./config";
@@ -52,12 +54,38 @@ async function main(): Promise<void> {
       `OpenSea API key: ${os.present ? `${os.source} ${os.maskedKey}` : "missing"}` +
         (os.expiresAt ? ` (expires ${os.expiresAt})` : "")
     );
+    if (os.present) {
+      const key = getOpenSeaApiKey();
+      if (key) {
+        const probe = await fetch(
+          `https://api.opensea.io/api/v2/chain/${config.chain.openseaChain}/contract/0x00005ea00ac477b1030ce78506496e8c2de24bf5`,
+          {
+            headers: { accept: "application/json", "x-api-key": key },
+            signal: AbortSignal.timeout(8_000),
+          }
+        );
+        if (probe.status === 401 || probe.status === 403) {
+          invalidateOpenSeaApiKey(`boot probe ${probe.status}`);
+          try {
+            await ensureOpenSeaApiKey({ forceRefresh: true });
+            const st = getOpenSeaKeyStatus();
+            console.log(
+              `[opensea] refreshed after boot 401 → ${st.source} ${st.maskedKey || ""}`
+            );
+          } catch (err) {
+            console.warn(
+              `[opensea] boot key refresh failed: ${err instanceof Error ? err.message : String(err)} — SeaDrop public mints still work without API`
+            );
+          }
+        }
+      }
+    }
   } catch (err) {
     console.warn(
       `OpenSea API key auto-fetch failed: ${err instanceof Error ? err.message : String(err)}`
     );
     console.warn(
-      "Tip: on the VPS run: curl -s -X POST https://api.opensea.io/api/v2/auth/keys"
+      "Tip: SeaDrop public free mints work without OpenSea API. Or: curl -s -X POST https://api.opensea.io/api/v2/auth/keys"
     );
   }
 
