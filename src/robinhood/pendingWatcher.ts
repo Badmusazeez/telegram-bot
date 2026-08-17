@@ -66,17 +66,20 @@ export async function startPendingWatcher(
     if (!isMintLikeCalldata(to, input)) return;
 
     const valueRobinhood = valueFromWei(tx.value);
+    // Fire immediately on mint-like calldata. Paid (value>0) skipped only when
+    // free-mints-only is on — value=0 attempts revert on-chain if stage is paid.
     if (state.freeMintsOnly && valueRobinhood > 0) return;
 
     const txHash = (tx.hash || "").toLowerCase();
     if (!txHash) return;
 
     const nft = decodeNftFromMintCalldata(input) || to || ZERO_ADDRESS;
+    // Dedupe by tx only so we don't wait for contract decode — fastest path.
     const dedupeKey = `${txHash}:${nft}:mint`;
     if (!rememberTxFast(dedupeKey)) return;
 
     console.log(
-      `[pending] FAST hit ${txHash.slice(0, 12)}… from=${from.slice(0, 8)}… to=${to.slice(0, 10)}…`
+      `[pending] INSTANT hit ${txHash.slice(0, 12)}… from=${from.slice(0, 8)}… to=${to.slice(0, 10)}… wallets will blast`
     );
 
     fire({
@@ -89,7 +92,8 @@ export async function startPendingWatcher(
       blockNumber: 0,
       timestamp: Math.floor(Date.now() / 1000),
       marketplace: "free-mint",
-      isFreeMint: true,
+      // Treat as free-mint candidate immediately (value=0). Paid stages revert.
+      isFreeMint: valueRobinhood <= 0,
       isPaid: valueRobinhood > 0,
       sourceTo: to || undefined,
       sourceData: input || undefined,

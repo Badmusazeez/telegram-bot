@@ -3,7 +3,6 @@ import { config } from "../config";
 import { getState } from "../store/state";
 import type { CopyResult, NftPurchase } from "../types";
 import {
-  gasIsAffordable,
   getAllMintWallets,
   getFundedMintWallets,
   getMintBackupProvider,
@@ -110,21 +109,6 @@ export async function maybeCopyPurchase(
 async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   const state = getState();
 
-  if (state.freeMintsOnly) {
-    if (
-      !purchase.isFreeMint ||
-      purchase.isPaid ||
-      purchase.valueRobinhood > 0
-    ) {
-      return {
-        attempted: false,
-        success: false,
-        dryRun: state.dryRun,
-        reason: "Skipped — paid mint/buy (free-mints-only mode).",
-      };
-    }
-  }
-
   if (!state.copyEnabled) {
     return {
       attempted: false,
@@ -146,19 +130,8 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
-  if (!purchase.isFreeMint) {
-    return {
-      attempted: false,
-      success: false,
-      dryRun: state.dryRun,
-      reason: "Not a free mint — skipped.",
-    };
-  }
-
-  // Never skip free mints due to gas price — RH spikes briefly during drops.
-  // (Paid buys still respect MAX_GAS_GWEI elsewhere if re-enabled.)
-  void gasIsAffordable;
-
+  // Load calldata FIRST (prefer pending/Blockscout sourceData) — do not wait on
+  // free/paid classification from Transfer logs.
   const sourceTx = await loadSourceTx(purchase);
   if (!sourceTx) {
     return {
@@ -169,13 +142,17 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
-  if (sourceTx.value > 0n) {
-    return {
-      attempted: false,
-      success: false,
-      dryRun: state.dryRun,
-      reason: `Skipped paid mint (${formatEther(sourceTx.value)} native).`,
-    };
+  // Paid whale tx (value > 0): skip — we never send native value. Sending value=0
+  // against a paid stage simply reverts on-chain (no spend).
+  if (sourceTx.value > 0n || purchase.valueRobinhood > 0 || purchase.isPaid) {
+    if (state.freeMintsOnly) {
+      return {
+        attempted: false,
+        success: false,
+        dryRun: state.dryRun,
+        reason: `Skipped paid mint (${formatEther(sourceTx.value || 0n)} native).`,
+      };
+    }
   }
 
   if (!sourceTx.to || !sourceTx.data || sourceTx.data === "0x") {
@@ -208,7 +185,9 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   }
 
   const { funded, skippedEmpty } = await getFundedMintWallets(allWallets);
-  if (funded.length === 0) {
+  // Prefer ALL wallets if funded filter was too aggressive / RPC-flaky.
+  const wallets = funded.length > 0 ? funded : allWallets;
+  if (wallets.length === 0) {
     return {
       attempted: false,
       success: false,
@@ -217,7 +196,6 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
-  const wallets = funded;
   const openSeaLike =
     isSeaDropAddress(sourceTx.to) || isSeaDropMintPublic(sourceTx.data);
   const whaleQty = decodeWhaleMintQuantity(sourceTx.data) || 1;
@@ -235,14 +213,14 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
       attempted: true,
       success: false,
       dryRun: true,
-      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try seadrop=${openSeaLike} replay→${mintTargets.length} target(s) whaleQty≈${whaleQty} on ${wallets.length} funded wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
+      reason: `NOT MINTED — dry-run is ON. Use /golive. Would try seadrop=${openSeaLike} replay→${mintTargets.length} target(s) whaleQty≈${whaleQty} on ${wallets.length}/${allWallets.length} wallet(s)${skippedEmpty ? ` (skipped ${skippedEmpty} empty)` : ""}.`,
     };
   }
 
   const attempts: string[] = [];
 
   console.log(
-    `[mint] start ${purchase.txHash.slice(0, 10)}… contract=${collection} funded=${wallets.length}/${allWallets.length} seadrop=${openSeaLike} whaleQty≈${whaleQty} targets=${mintTargets.length}`
+    `[mint] FAST start ${purchase.txHash.slice(0, 10)}… contract=${collection} wallets=${wallets.length}/${allWallets.length} seadrop=${openSeaLike} whaleQty≈${whaleQty} targets=${mintTargets.length}`
   );
 
   // --- Path A: SeaDrop mintPublic rebuild (NO OpenSea API) ---
@@ -251,14 +229,12 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     if (sd.success) return sd;
     attempts.push(sd.reason);
 
-    // Optional: OpenSea Drop API only if we already have a good key (never force 401 spam).
     if (getOpenSeaApiKey()) {
       const os = await mintOpenSea(purchase, wallets);
       if (os.success) return os;
       attempts.push(os.reason);
     }
 
-    // Do NOT fall through to public mint(100) spam — always reverts on SeaDrop.
     console.warn(
       `[mint] SeaDrop path exhausted for ${purchase.txHash}: ${attempts.join(" || ")}`
     );
@@ -273,7 +249,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
-  // --- Path B: OpenSea Drop API for non-SeaDrop only when key present ---
+  // --- Path B: OpenSea Drop API ---
   try {
     await ensureOpenSeaApiKey();
   } catch {
@@ -296,7 +272,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   if (replay.success) return replay;
   attempts.push(replay.reason);
 
-  // --- Path D: Public ABI probes (non-SeaDrop only) ---
+  // --- Path D: Public ABI probes ---
   const publicTry = await mintPublicMax(wallets, mintTargets, whaleQty);
   if (publicTry.success) return publicTry;
   attempts.push(publicTry.reason);
@@ -309,7 +285,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     attempted: true,
     success: false,
     dryRun: false,
-    reason: `All mint strategies failed: ${attempts.join(" || ")}`,
+    reason: `All mint strategies failed: ${attempts.join(" || ")}`.slice(0, 500),
   };
 }
 
@@ -318,123 +294,106 @@ async function mintSeaDropPublic(
   whaleData: string,
   whaleQty: number
 ): Promise<CopyResult> {
-  // Short ladder — hard max → whale qty → 1 (avoids Chainstack RPS meltdown).
   const qtys = maxMintQuantityLadder(whaleQty);
+  const gasHint = 1_200_000n;
+  const byAddr = new Map<
+    string,
+    {
+      address: string;
+      ok: boolean;
+      txHash?: string;
+      detail?: string;
+      error?: string;
+    }
+  >();
 
-  // Probe once on the first funded wallet to learn a working qty + gas.
-  const probeWallet = wallets[0]!;
-  let bestQty: number | null = null;
-  let gasHint: bigint | null = null;
-  const probeErrors: string[] = [];
-
-  for (const q of qtys) {
-    const built = buildSeaDropMintPublicTx({
-      whaleData,
-      minter: probeWallet.address,
-      quantity: q,
+  for (const w of wallets) {
+    byAddr.set(w.address.toLowerCase(), {
+      address: w.address.toLowerCase(),
+      ok: false,
+      error: "pending",
     });
-    if (!built) {
-      return {
-        attempted: true,
-        success: false,
-        dryRun: false,
-        reason: "SeaDrop mintPublic: could not decode whale calldata",
-      };
-    }
-    const sent = await sendMintTx(probeWallet, {
-      to: built.to,
-      data: built.data,
-      valueWei: 0n,
-      skipEstimate: false,
-    });
-    if (sent.ok) {
-      bestQty = q;
-      // Remaining wallets can skip estimate with a safe gas ceiling.
-      gasHint = 900_000n;
-      const rest = wallets.slice(1);
-      if (rest.length === 0) {
-        return {
-          attempted: true,
-          success: true,
-          dryRun: false,
-          reason: `SeaDrop minted on 1/${wallets.length} wallet(s): ${shortAddr(probeWallet.address)} OK ${sent.txHash.slice(0, 10)}… SeaDrop mintPublic x${q}`,
-          txHash: sent.txHash,
-        };
-      }
-      const results = await Promise.all(
-        rest.map(async (wallet) => {
-          const address = wallet.address.toLowerCase();
-          const tx = buildSeaDropMintPublicTx({
-            whaleData,
-            minter: wallet.address,
-            quantity: q,
-          });
-          if (!tx) {
-            return { address, ok: false as const, error: "decode failed" };
-          }
-          const r = await sendMintTx(wallet, {
-            to: tx.to,
-            data: tx.data,
-            valueWei: 0n,
-            skipEstimate: true,
-            gasLimitHint: gasHint!,
-          });
-          if (r.ok) {
-            return {
-              address,
-              ok: true as const,
-              txHash: r.txHash,
-              detail: `SeaDrop mintPublic x${q}`,
-            };
-          }
-          return { address, ok: false as const, error: r.error || "send failed" };
-        })
-      );
-      results.unshift({
-        address: probeWallet.address.toLowerCase(),
-        ok: true as const,
-        txHash: sent.txHash,
-        detail: `SeaDrop mintPublic x${q}`,
-      });
-      const ok = results.filter((r) => r.ok);
-      const summary = results
-        .map((r) =>
-          r.ok
-            ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
-            : `${shortAddr(r.address)} FAIL (${r.error})`
-        )
-        .join(" | ");
-      return {
-        attempted: true,
-        success: ok.length > 0,
-        dryRun: false,
-        reason:
-          ok.length > 0
-            ? `SeaDrop minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`.slice(0, 900)
-            : `SeaDrop mintPublic failed: ${summary}`.slice(0, 500),
-        txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
-      };
-    }
-    probeErrors.push(`x${q}:${sent.error}`);
-    // True stage death — don't burn RPS on lower qtys that will also revert.
-    if (
-      q === 1 ||
-      /sold out|ended|not.?active|not.?public|insufficient/i.test(sent.error || "")
-    ) {
-      break;
-    }
-    // RPS / coalesce on a qty — retry path already ran inside sendMintTx; step down.
   }
 
-  void bestQty;
+  for (const q of qtys) {
+    const pending = wallets.filter((w) => !byAddr.get(w.address.toLowerCase())?.ok);
+    if (pending.length === 0) break;
+
+    console.log(
+      `[mint] SeaDrop blast x${q} on ${pending.length}/${wallets.length} wallet(s)`
+    );
+
+    await Promise.all(
+      pending.map(async (wallet, index) => {
+        // Tiny stagger — keeps Chainstack under RPS without delaying the pack.
+        if (index > 0) await sleep(Math.min(index * 20, 400));
+        const address = wallet.address.toLowerCase();
+        const built = buildSeaDropMintPublicTx({
+          whaleData,
+          minter: wallet.address,
+          quantity: q,
+        });
+        if (!built) {
+          byAddr.set(address, {
+            address,
+            ok: false,
+            error: "could not decode SeaDrop mintPublic",
+          });
+          return;
+        }
+        const sent = await sendMintTx(wallet, {
+          to: built.to,
+          data: built.data,
+          valueWei: 0n,
+          skipEstimate: true,
+          gasLimitHint: gasHint,
+        });
+        if (sent.ok) {
+          byAddr.set(address, {
+            address,
+            ok: true,
+            txHash: sent.txHash,
+            detail: `SeaDrop mintPublic x${q}`,
+          });
+        } else {
+          byAddr.set(address, {
+            address,
+            ok: false,
+            error: `x${q}:${sent.error}`,
+          });
+        }
+      })
+    );
+
+    const okCount = [...byAddr.values()].filter((r) => r.ok).length;
+    if (okCount === wallets.length) break;
+    if (q === 1) break;
+  }
+
+  const results = [...byAddr.values()];
+  const ok = results.filter((r) => r.ok);
+  const summary = results
+    .map((r) =>
+      r.ok
+        ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
+        : `${shortAddr(r.address)} FAIL (${r.error})`
+    )
+    .join(" | ");
+
+  console.log(`[mint] SeaDrop done ok=${ok.length}/${wallets.length}`);
+
   return {
     attempted: true,
-    success: false,
+    success: ok.length > 0,
     dryRun: false,
-    reason: `SeaDrop mintPublic failed: ${shortAddr(probeWallet.address)} FAIL (${probeErrors.slice(0, 3).join("; ")})`.slice(
-      0,
-      400
-    ),
+    reason:
+      ok.length > 0
+        ? `SeaDrop minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`.slice(
+            0,
+            1200
+          )
+        : `SeaDrop mintPublic failed: ${summary}`.slice(0, 500),
+    txHash: ok[0]?.txHash,
   };
 }
 
@@ -459,7 +418,8 @@ async function mintOpenSea(
   }
 
   const results = await Promise.all(
-    wallets.map(async (wallet) => {
+    wallets.map(async (wallet, index) => {
+      if (index > 0) await sleep(Math.min(index * 20, 400));
       const address = wallet.address.toLowerCase();
       try {
         // Rebuild per-wallet (signature / minter bound) but reuse max quantity.
@@ -475,7 +435,7 @@ async function mintOpenSea(
           data: prepared.data,
           valueWei: prepared.valueWei,
           skipEstimate: true,
-          gasLimitHint: 900_000n,
+          gasLimitHint: 1_200_000n,
         });
         if (!sent.ok) {
           return {
@@ -531,7 +491,8 @@ async function mintPublicMax(
   ];
 
   const results = await Promise.all(
-    wallets.map(async (wallet) => {
+    wallets.map(async (wallet, index) => {
+      if (index > 0) await sleep(Math.min(index * 20, 400));
       const address = wallet.address.toLowerCase();
       const errors: string[] = [];
       for (const to of uniqueTargets) {
@@ -540,11 +501,13 @@ async function mintPublicMax(
           minter: wallet.address,
           whaleQuantity: whaleQty,
         });
-        for (const c of candidates) {
+        for (const c of candidates.slice(0, 6)) {
           const sent = await sendMintTx(wallet, {
             to: c.to,
             data: c.data,
-            valueWei: c.valueWei,
+            valueWei: 0n,
+            skipEstimate: true,
+            gasLimitHint: 1_200_000n,
           });
           if (sent.ok) {
             return {
@@ -555,8 +518,6 @@ async function mintPublicMax(
             };
           }
           errors.push(`${c.label}:${sent.error}`);
-          // If qty too high / wrong ABI, continue; keep probes short for speed
-          if (errors.length > 48) break;
         }
       }
       return {
@@ -604,9 +565,10 @@ async function mintByReplay(
   ];
 
   const results = await Promise.all(
-    wallets.map((wallet) =>
-      mintWithWallet(wallet, tos, rawData, whale, whaleQty)
-    )
+    wallets.map(async (wallet, index) => {
+      if (index > 0) await sleep(Math.min(index * 20, 400));
+      return mintWithWallet(wallet, tos, rawData, whale, whaleQty);
+    })
   );
 
   const ok = results.filter((r) => r.ok);
@@ -888,8 +850,8 @@ async function mintWithWallet(
         to,
         data,
         valueWei: 0n,
-        // First attempt: skip estimate for speed on known-good whale calldata.
-        skipEstimate: index === 0,
+        // Always skip estimate — fire raw, paid stages revert with value=0.
+        skipEstimate: true,
         gasLimitHint: 1_200_000n,
       });
       if (sent.ok) {
