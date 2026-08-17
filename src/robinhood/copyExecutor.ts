@@ -184,17 +184,16 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
+  // ALWAYS mint on EVERY configured wallet (user wants 20/20, not 1/20).
+  // Still log empty ones, but do not drop wallets from the blast list.
   const { funded, skippedEmpty } = await getFundedMintWallets(allWallets);
-  // Prefer ALL wallets if funded filter was too aggressive / RPC-flaky.
-  const wallets = funded.length > 0 ? funded : allWallets;
-  if (wallets.length === 0) {
-    return {
-      attempted: false,
-      success: false,
-      dryRun: state.dryRun,
-      reason: `No mint wallets have gas (${allWallets.length} configured, all empty). Send Robinhood Chain ETH to /listkeys addresses.`,
-    };
+  const wallets = allWallets;
+  if (skippedEmpty > 0) {
+    console.warn(
+      `[mint] ${skippedEmpty}/${allWallets.length} wallet(s) look low-gas — still blasting all ${wallets.length}`
+    );
   }
+  void funded;
 
   const openSeaLike =
     isSeaDropAddress(sourceTx.to) || isSeaDropMintPublic(sourceTx.data);
@@ -217,83 +216,171 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     };
   }
 
-  const attempts: string[] = [];
+  // Track per-wallet hits across strategies — NEVER stop at 1/N success.
+  const hits = new Map<
+    string,
+    { address: string; ok: boolean; txHash?: string; detail?: string; error?: string }
+  >();
+  for (const w of wallets) {
+    hits.set(w.address.toLowerCase(), {
+      address: w.address.toLowerCase(),
+      ok: false,
+      error: "pending",
+    });
+  }
+
+  const remaining = () =>
+    wallets.filter((w) => !hits.get(w.address.toLowerCase())?.ok);
+
+  const mergeHits = (
+    batch: Array<{
+      address: string;
+      ok: boolean;
+      txHash?: string;
+      detail?: string;
+      error?: string;
+    }>
+  ) => {
+    for (const r of batch) {
+      const key = r.address.toLowerCase();
+      const prev = hits.get(key);
+      if (r.ok) {
+        hits.set(key, { ...r, address: key, ok: true });
+      } else if (!prev?.ok) {
+        hits.set(key, { ...r, address: key, ok: false });
+      }
+    }
+  };
+
+  const summarize = (label: string) => {
+    const list = [...hits.values()];
+    const ok = list.filter((r) => r.ok);
+    const summary = list
+      .map((r) =>
+        r.ok
+          ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10) || ""}… ${r.detail || ""}`
+          : `${shortAddr(r.address)} FAIL (${(r.error || "").slice(0, 40)})`
+      )
+      .join(" | ");
+    return {
+      okCount: ok.length,
+      total: wallets.length,
+      summary,
+      reason: `${label}: ${ok.length}/${wallets.length} wallet(s) minted — ${summary}`.slice(
+        0,
+        1400
+      ),
+      txHash: ok[0]?.txHash,
+    };
+  };
 
   console.log(
-    `[mint] FAST start ${purchase.txHash.slice(0, 10)}… contract=${collection} wallets=${wallets.length}/${allWallets.length} seadrop=${openSeaLike} whaleQty≈${whaleQty} targets=${mintTargets.length}`
+    `[mint] FAST start ${purchase.txHash.slice(0, 10)}… contract=${collection} wallets=${wallets.length}/${allWallets.length} seadrop=${openSeaLike} whaleQty≈${whaleQty} targets=${mintTargets.length} (goal ${wallets.length}/${wallets.length} MAX)`
   );
 
   // --- Path A: SeaDrop mintPublic rebuild (NO OpenSea API) ---
   if (openSeaLike && isSeaDropMintPublic(sourceTx.data)) {
-    const sd = await mintSeaDropPublic(wallets, sourceTx.data, whaleQty);
-    if (sd.success) return sd;
-    attempts.push(sd.reason);
-
-    if (getOpenSeaApiKey()) {
-      const os = await mintOpenSea(purchase, wallets);
-      if (os.success) return os;
-      attempts.push(os.reason);
+    const sd = await mintSeaDropPublic(remaining(), sourceTx.data, whaleQty);
+    mergeHits(sd.hits);
+    const s = summarize("SeaDrop");
+    console.log(`[mint] after SeaDrop ${s.okCount}/${s.total}`);
+    if (s.okCount === s.total) {
+      return {
+        attempted: true,
+        success: true,
+        dryRun: false,
+        reason: s.reason,
+        txHash: s.txHash,
+      };
     }
-
-    console.warn(
-      `[mint] SeaDrop path exhausted for ${purchase.txHash}: ${attempts.join(" || ")}`
-    );
-    return {
-      attempted: true,
-      success: false,
-      dryRun: false,
-      reason: `SeaDrop free-mint failed (stage ended / sold out / not public / RPC throttle): ${attempts.join(" || ")}`.slice(
-        0,
-        500
-      ),
-    };
+    // Partial — keep filling remaining wallets via OpenSea / other paths.
   }
 
-  // --- Path B: OpenSea Drop API ---
+  // --- Path B: OpenSea Drop API for wallets still missing ---
   try {
     await ensureOpenSeaApiKey();
   } catch {
     // ignore
   }
-  if (getOpenSeaApiKey()) {
-    const os = await mintOpenSea(purchase, wallets);
-    if (os.success) return os;
-    attempts.push(os.reason);
+  if (getOpenSeaApiKey() && remaining().length > 0) {
+    const os = await mintOpenSea(purchase, remaining());
+    mergeHits(os.hits);
+    const s = summarize("OpenSea");
+    console.log(`[mint] after OpenSea ${s.okCount}/${s.total}`);
+    if (s.okCount === s.total) {
+      return {
+        attempted: true,
+        success: true,
+        dryRun: false,
+        reason: s.reason,
+        txHash: s.txHash,
+      };
+    }
   }
 
   // --- Path C: Replay whale website/contract mint tx ---
-  const replay = await mintByReplay(
-    wallets,
-    mintTargets,
-    sourceTx.data,
-    purchase.buyer,
-    whaleQty
-  );
-  if (replay.success) return replay;
-  attempts.push(replay.reason);
+  if (remaining().length > 0) {
+    const replay = await mintByReplay(
+      remaining(),
+      mintTargets,
+      sourceTx.data,
+      purchase.buyer,
+      whaleQty
+    );
+    mergeHits(replay.hits);
+    const s = summarize("Replay");
+    console.log(`[mint] after Replay ${s.okCount}/${s.total}`);
+    if (s.okCount === s.total) {
+      return {
+        attempted: true,
+        success: true,
+        dryRun: false,
+        reason: s.reason,
+        txHash: s.txHash,
+      };
+    }
+  }
 
   // --- Path D: Public ABI probes ---
-  const publicTry = await mintPublicMax(wallets, mintTargets, whaleQty);
-  if (publicTry.success) return publicTry;
-  attempts.push(publicTry.reason);
+  if (remaining().length > 0 && !(openSeaLike && isSeaDropMintPublic(sourceTx.data))) {
+    const publicTry = await mintPublicMax(remaining(), mintTargets, whaleQty);
+    mergeHits(publicTry.hits);
+  }
 
-  console.warn(
-    `[mint] all strategies failed for ${purchase.txHash}: ${attempts.join(" || ")}`
-  );
+  const final = summarize("All paths");
+  console.log(`[mint] FINAL ${final.okCount}/${final.total} for ${purchase.txHash.slice(0, 10)}…`);
 
   return {
     attempted: true,
-    success: false,
+    success: final.okCount > 0,
     dryRun: false,
-    reason: `All mint strategies failed: ${attempts.join(" || ")}`.slice(0, 500),
+    reason:
+      final.okCount > 0
+        ? final.reason
+        : `All mint strategies failed (0/${wallets.length}): ${final.summary}`.slice(0, 500),
+    txHash: final.txHash,
   };
 }
+
+type WalletHit = {
+  address: string;
+  ok: boolean;
+  txHash?: string;
+  detail?: string;
+  error?: string;
+};
+
+type BatchMintResult = { hits: WalletHit[]; reason: string };
 
 async function mintSeaDropPublic(
   wallets: Wallet[],
   whaleData: string,
   whaleQty: number
-): Promise<CopyResult> {
+): Promise<BatchMintResult> {
+  if (wallets.length === 0) {
+    return { hits: [], reason: "no wallets left" };
+  }
+
   const qtys = maxMintQuantityLadder(whaleQty);
   const gasHint = 1_200_000n;
   const byAddr = new Map<
@@ -367,6 +454,53 @@ async function mintSeaDropPublic(
 
     const okCount = [...byAddr.values()].filter((r) => r.ok).length;
     if (okCount === wallets.length) break;
+
+    // Re-blast wallets that only failed due to RPS/throttle at this SAME max qty.
+    const rpsRetry = pending.filter((w) => {
+      const hit = byAddr.get(w.address.toLowerCase());
+      return hit && !hit.ok && /rps|rate|429|throttle|coalesce/i.test(hit.error || "");
+    });
+    if (rpsRetry.length > 0) {
+      console.log(
+        `[mint] SeaDrop RPS re-blast x${q} on ${rpsRetry.length} wallet(s)`
+      );
+      await sleep(200);
+      await Promise.all(
+        rpsRetry.map(async (wallet, index) => {
+          if (index > 0) await sleep(Math.min(index * 30, 500));
+          const address = wallet.address.toLowerCase();
+          const built = buildSeaDropMintPublicTx({
+            whaleData,
+            minter: wallet.address,
+            quantity: q,
+          });
+          if (!built) return;
+          const sent = await sendMintTx(wallet, {
+            to: built.to,
+            data: built.data,
+            valueWei: 0n,
+            skipEstimate: true,
+            gasLimitHint: gasHint,
+          });
+          if (sent.ok) {
+            byAddr.set(address, {
+              address,
+              ok: true,
+              txHash: sent.txHash,
+              detail: `SeaDrop mintPublic x${q}`,
+            });
+          } else {
+            byAddr.set(address, {
+              address,
+              ok: false,
+              error: `x${q}:${sent.error}`,
+            });
+          }
+        })
+      );
+    }
+
+    if ([...byAddr.values()].filter((r) => r.ok).length === wallets.length) break;
     if (q === 1) break;
   }
 
@@ -383,9 +517,7 @@ async function mintSeaDropPublic(
   console.log(`[mint] SeaDrop done ok=${ok.length}/${wallets.length}`);
 
   return {
-    attempted: true,
-    success: ok.length > 0,
-    dryRun: false,
+    hits: results,
     reason:
       ok.length > 0
         ? `SeaDrop minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`.slice(
@@ -393,14 +525,14 @@ async function mintSeaDropPublic(
             1200
           )
         : `SeaDrop mintPublic failed: ${summary}`.slice(0, 500),
-    txHash: ok[0]?.txHash,
   };
 }
 
 async function mintOpenSea(
   purchase: NftPurchase,
   wallets: Wallet[]
-): Promise<CopyResult> {
+): Promise<BatchMintResult> {
+  if (wallets.length === 0) return { hits: [], reason: "no wallets left" };
   // Resolve slug + stage once, then mint all wallets in parallel at max qty.
   let shared: Awaited<ReturnType<typeof prepareOpenSeaFreeMint>> | null = null;
   try {
@@ -410,9 +542,11 @@ async function mintOpenSea(
     });
   } catch (err) {
     return {
-      attempted: true,
-      success: false,
-      dryRun: false,
+      hits: wallets.map((w) => ({
+        address: w.address.toLowerCase(),
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      })),
       reason: `OpenSea prepare failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
@@ -470,14 +604,17 @@ async function mintOpenSea(
     .join(" | ");
 
   return {
-    attempted: true,
-    success: ok.length > 0,
-    dryRun: false,
+    hits: results.map((r) => ({
+      address: r.address,
+      ok: r.ok,
+      txHash: r.ok ? r.txHash : undefined,
+      detail: r.ok ? r.detail : undefined,
+      error: r.ok ? undefined : r.error,
+    })),
     reason:
       ok.length > 0
         ? `OpenSea minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
         : `OpenSea mint failed: ${summary}`,
-    txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
   };
 }
 
@@ -485,7 +622,9 @@ async function mintPublicMax(
   wallets: Wallet[],
   targets: string[],
   whaleQty: number
-): Promise<CopyResult> {
+): Promise<BatchMintResult> {
+  if (wallets.length === 0) return { hits: [], reason: "no wallets left" };
+
   const uniqueTargets = [
     ...new Set(targets.map((t) => t.toLowerCase()).filter(Boolean)),
   ];
@@ -538,14 +677,17 @@ async function mintPublicMax(
     .join(" | ");
 
   return {
-    attempted: true,
-    success: ok.length > 0,
-    dryRun: false,
+    hits: results.map((r) => ({
+      address: r.address,
+      ok: r.ok,
+      txHash: r.ok ? r.txHash : undefined,
+      detail: r.ok ? r.detail : undefined,
+      error: r.ok ? undefined : r.error,
+    })),
     reason:
       ok.length > 0
         ? `Public max-minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
         : `Public max-mint failed: ${summary}`,
-    txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
   };
 }
 
@@ -555,7 +697,9 @@ async function mintByReplay(
   rawData: string,
   whale: string,
   whaleQty: number
-): Promise<CopyResult> {
+): Promise<BatchMintResult> {
+  if (wallets.length === 0) return { hits: [], reason: "no wallets left" };
+
   const tos = [
     ...new Set(
       (Array.isArray(targets) ? targets : [targets])
@@ -583,13 +727,17 @@ async function mintByReplay(
     })
     .join(" | ");
 
+  const hits: WalletHit[] = results.map((r) => ({
+    address: r.address,
+    ok: !!r.ok,
+    txHash: r.ok ? r.txHash : undefined,
+    error: r.ok ? undefined : r.error,
+  }));
+
   if (ok.length > 0) {
     return {
-      attempted: true,
-      success: true,
-      dryRun: false,
+      hits,
       reason: `Website/tx replay minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`,
-      txHash: ok[0]?.txHash,
     };
   }
 
@@ -598,9 +746,7 @@ async function mintByReplay(
   );
   if (allWalletBound) {
     return {
-      attempted: true,
-      success: false,
-      dryRun: false,
+      hits,
       reason:
         `Wallet-bound website mint (allowlist / signature tied to whale). ` +
         `Cannot copy without that site's mint API. (${wallets.length} wallet(s))`,
@@ -608,9 +754,7 @@ async function mintByReplay(
   }
 
   return {
-    attempted: true,
-    success: false,
-    dryRun: false,
+    hits,
     reason: `Website/tx replay failed on all wallets: ${summary}`,
   };
 }
