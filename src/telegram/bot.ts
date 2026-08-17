@@ -11,6 +11,7 @@ import {
 } from "../robinhood/openseaAuth";
 import { resolveScheduleFromOpenSeaLink } from "../robinhood/openseaDrop";
 import { parseOpenSeaUrl } from "../robinhood/openseaUrl";
+import { mintOpenSeaSlugNow } from "../robinhood/slugMint";
 import {
   getAllMintWallets,
   getNativeBalance,
@@ -699,6 +700,77 @@ export function createTelegramBot(): Bot {
     } catch (err) {
       await ctx.reply(
         `Failed to load tx: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  });
+
+  bot.command("mintslug", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (!raw) {
+      await ctx.reply(
+        [
+          "MAX-mint an OpenSea drop now on all mint wallets:",
+          "",
+          "/mintslug https://opensea.io/collection/your-drop",
+          "/mintslug https://opensea.io/assets/robinhood/0xContract/1",
+          "/mintslug your-drop",
+          "",
+          "Uses OpenSea Drop API · free stages only · max_per_wallet.",
+          "Respects /dryrun. Independent of /copy on|off.",
+        ].join("\n")
+      );
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply("Resolving OpenSea drop + minting MAX on all wallets…");
+
+    try {
+      const result = await mintOpenSeaSlugNow(raw);
+      const lines = [
+        result.success
+          ? result.dryRun
+            ? `<b>🧪 Mintslug DRY RUN</b>`
+            : `<b>✅ Mintslug DONE</b>`
+          : `<b>❌ Mintslug FAILED</b>`,
+        ``,
+        `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
+        `<b>Slug:</b> <code>${escape(result.slug)}</code>`,
+        result.contract
+          ? `<b>Contract:</b> <code>${escape(result.contract)}</code>`
+          : "",
+        `<b>Stage:</b> ${escape(result.stageLabel)}`,
+        `<b>Target qty:</b> ${result.quantityTarget}`,
+        ``,
+        `<b>Result:</b> ${escape(result.reason.slice(0, 900))}`,
+      ].filter(Boolean);
+
+      if (result.results.length > 0 && result.results.length <= 12) {
+        lines.push(``);
+        for (const r of result.results) {
+          if (r.ok && r.txHash) {
+            lines.push(
+              `• <code>${escape(r.address.slice(0, 10))}…</code> <a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a> x${r.quantity ?? "?"}`
+            );
+          } else if (r.ok) {
+            lines.push(
+              `• <code>${escape(r.address.slice(0, 10))}…</code> OK x${r.quantity ?? "?"}`
+            );
+          } else {
+            lines.push(
+              `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape((r.error || "fail").slice(0, 80))}`
+            );
+          }
+        }
+      }
+
+      await ctx.reply(lines.join("\n"), {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
       );
     }
   });

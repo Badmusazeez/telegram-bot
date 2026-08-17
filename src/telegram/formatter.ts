@@ -198,6 +198,7 @@ export function helpText(): string {
     `/schedulemint &lt;opensea-url&gt; — auto schedule from OpenSea Drop time`,
     `/schedulemint &lt;when&gt; &lt;opensea-url&gt; — manual time + OpenSea link`,
     `/schedulemint &lt;when&gt; &lt;contract&gt; &lt;mint|mint1|0x...&gt; — advanced`,
+    `/mintslug &lt;opensea-url|slug&gt; — MAX-mint OpenSea drop now on all mint wallets`,
     `/schedulemintfromtx &lt;txHash&gt; &lt;when&gt; — copy whale mint calldata`,
     `/schedules — list scheduled mints`,
     `/cancelschedule &lt;id&gt; — cancel a pending schedule`,
