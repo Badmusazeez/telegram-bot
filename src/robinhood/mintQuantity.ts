@@ -9,12 +9,13 @@ export function hardMaxMintQuantity(): number {
 
 /**
  * Quantity ladder: always try MAX first, then step down fast.
- * Kept short so we don't burn the competitive mint window on estimateGas.
+ * Kept very short — each estimateGas burns mint-RPC RPS during drops.
  */
 export function maxMintQuantityLadder(whaleQuantity?: number): number[] {
   const hardMax = hardMaxMintQuantity();
   const whale = Math.max(1, Math.min(Number(whaleQuantity) || 1, hardMax));
-  const steps = [hardMax, whale, Math.min(hardMax, 20), Math.min(hardMax, 10), 1];
+  // Prefer hard max → whale qty → 1. Avoid 30/20/10 spam that trips Chainstack RPS.
+  const steps = [hardMax, whale, 1];
   return [...new Set(steps.filter((q) => q >= 1 && q <= hardMax))].sort(
     (a, b) => b - a
   );

@@ -266,7 +266,10 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
       attempted: true,
       success: false,
       dryRun: false,
-      reason: `SeaDrop free-mint failed (stage ended / sold out / not public): ${attempts.join(" || ")}`,
+      reason: `SeaDrop free-mint failed (stage ended / sold out / not public / RPC throttle): ${attempts.join(" || ")}`.slice(
+        0,
+        500
+      ),
     };
   }
 
@@ -315,75 +318,123 @@ async function mintSeaDropPublic(
   whaleData: string,
   whaleQty: number
 ): Promise<CopyResult> {
-  // Try whale qty first (often the stage max), then our hard max ladder.
-  const qtys = [
-    ...new Set([whaleQty, ...maxMintQuantityLadder(whaleQty)].filter((q) => q >= 1)),
-  ].sort((a, b) => b - a);
+  // Short ladder — hard max → whale qty → 1 (avoids Chainstack RPS meltdown).
+  const qtys = maxMintQuantityLadder(whaleQty);
 
-  const results = await Promise.all(
-    wallets.map(async (wallet) => {
-      const address = wallet.address.toLowerCase();
-      const errors: string[] = [];
-      for (const q of qtys) {
-        const built = buildSeaDropMintPublicTx({
-          whaleData,
-          minter: wallet.address,
-          quantity: q,
-        });
-        if (!built) {
-          return {
-            address,
-            ok: false as const,
-            error: "could not decode SeaDrop mintPublic",
-          };
-        }
-        // estimateGas first — avoid broadcasting doomed txs / wasting the window.
-        const sent = await sendMintTx(wallet, {
-          to: built.to,
-          data: built.data,
-          valueWei: 0n,
-          skipEstimate: false,
-        });
-        if (sent.ok) {
-          return {
-            address,
-            ok: true as const,
-            txHash: sent.txHash,
-            detail: `SeaDrop mintPublic x${q}`,
-          };
-        }
-        errors.push(`x${q}:${sent.error}`);
-        // If qty 1 already reverts, stage is dead — stop.
-        if (q === 1 || /sold out|ended|not.?active|insufficient/i.test(sent.error || "")) {
-          break;
-        }
-      }
+  // Probe once on the first funded wallet to learn a working qty + gas.
+  const probeWallet = wallets[0]!;
+  let bestQty: number | null = null;
+  let gasHint: bigint | null = null;
+  const probeErrors: string[] = [];
+
+  for (const q of qtys) {
+    const built = buildSeaDropMintPublicTx({
+      whaleData,
+      minter: probeWallet.address,
+      quantity: q,
+    });
+    if (!built) {
       return {
-        address,
-        ok: false as const,
-        error: errors.slice(0, 4).join("; ") || "SeaDrop mint failed",
+        attempted: true,
+        success: false,
+        dryRun: false,
+        reason: "SeaDrop mintPublic: could not decode whale calldata",
       };
-    })
-  );
+    }
+    const sent = await sendMintTx(probeWallet, {
+      to: built.to,
+      data: built.data,
+      valueWei: 0n,
+      skipEstimate: false,
+    });
+    if (sent.ok) {
+      bestQty = q;
+      // Remaining wallets can skip estimate with a safe gas ceiling.
+      gasHint = 900_000n;
+      const rest = wallets.slice(1);
+      if (rest.length === 0) {
+        return {
+          attempted: true,
+          success: true,
+          dryRun: false,
+          reason: `SeaDrop minted on 1/${wallets.length} wallet(s): ${shortAddr(probeWallet.address)} OK ${sent.txHash.slice(0, 10)}… SeaDrop mintPublic x${q}`,
+          txHash: sent.txHash,
+        };
+      }
+      const results = await Promise.all(
+        rest.map(async (wallet) => {
+          const address = wallet.address.toLowerCase();
+          const tx = buildSeaDropMintPublicTx({
+            whaleData,
+            minter: wallet.address,
+            quantity: q,
+          });
+          if (!tx) {
+            return { address, ok: false as const, error: "decode failed" };
+          }
+          const r = await sendMintTx(wallet, {
+            to: tx.to,
+            data: tx.data,
+            valueWei: 0n,
+            skipEstimate: true,
+            gasLimitHint: gasHint!,
+          });
+          if (r.ok) {
+            return {
+              address,
+              ok: true as const,
+              txHash: r.txHash,
+              detail: `SeaDrop mintPublic x${q}`,
+            };
+          }
+          return { address, ok: false as const, error: r.error || "send failed" };
+        })
+      );
+      results.unshift({
+        address: probeWallet.address.toLowerCase(),
+        ok: true as const,
+        txHash: sent.txHash,
+        detail: `SeaDrop mintPublic x${q}`,
+      });
+      const ok = results.filter((r) => r.ok);
+      const summary = results
+        .map((r) =>
+          r.ok
+            ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
+            : `${shortAddr(r.address)} FAIL (${r.error})`
+        )
+        .join(" | ");
+      return {
+        attempted: true,
+        success: ok.length > 0,
+        dryRun: false,
+        reason:
+          ok.length > 0
+            ? `SeaDrop minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`.slice(0, 900)
+            : `SeaDrop mintPublic failed: ${summary}`.slice(0, 500),
+        txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
+      };
+    }
+    probeErrors.push(`x${q}:${sent.error}`);
+    // True stage death — don't burn RPS on lower qtys that will also revert.
+    if (
+      q === 1 ||
+      /sold out|ended|not.?active|not.?public|insufficient/i.test(sent.error || "")
+    ) {
+      break;
+    }
+    // RPS / coalesce on a qty — retry path already ran inside sendMintTx; step down.
+  }
 
-  const ok = results.filter((r) => r.ok);
-  const summary = results
-    .map((r) =>
-      r.ok
-        ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
-        : `${shortAddr(r.address)} FAIL (${r.error})`
-    )
-    .join(" | ");
-
+  void bestQty;
   return {
     attempted: true,
-    success: ok.length > 0,
+    success: false,
     dryRun: false,
-    reason:
-      ok.length > 0
-        ? `SeaDrop minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
-        : `SeaDrop mintPublic failed: ${summary}`,
-    txHash: ok[0] && ok[0].ok ? ok[0].txHash : undefined,
+    reason: `SeaDrop mintPublic failed: ${shortAddr(probeWallet.address)} FAIL (${probeErrors.slice(0, 3).join("; ")})`.slice(
+      0,
+      400
+    ),
   };
 }
 
@@ -701,70 +752,84 @@ async function sendMintTx(
     label: string
   ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> => {
     const connected = wallet.connect(provider);
-    try {
-      const from = await connected.getAddress();
-      let gasEstimate: bigint;
-      if (params.skipEstimate && params.gasLimitHint) {
-        gasEstimate = params.gasLimitHint;
-      } else {
-        gasEstimate = await provider.estimateGas({
-          from,
+    const maxAttempts = 4;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const from = await connected.getAddress();
+        let gasEstimate: bigint;
+        if (params.skipEstimate && params.gasLimitHint) {
+          gasEstimate = params.gasLimitHint;
+        } else {
+          gasEstimate = await provider.estimateGas({
+            from,
+            to: params.to,
+            data: params.data,
+            value: params.valueWei,
+          });
+        }
+        if (gasEstimate > BigInt(config.maxMintGasLimit)) {
+          return {
+            ok: false,
+            error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
+          };
+        }
+
+        const fee = await provider.getFeeData();
+        const gasLimit = params.skipEstimate
+          ? gasEstimate
+          : (gasEstimate * 130n) / 100n;
+        const txRequest: {
+          to: string;
+          data: string;
+          value: bigint;
+          gasLimit: bigint;
+          chainId: number;
+          gasPrice?: bigint;
+          maxFeePerGas?: bigint;
+          maxPriorityFeePerGas?: bigint;
+        } = {
           to: params.to,
           data: params.data,
           value: params.valueWei,
-        });
-      }
-      if (gasEstimate > BigInt(config.maxMintGasLimit)) {
-        return {
-          ok: false,
-          error: `gas ${gasEstimate} > MAX_MINT_GAS_LIMIT`,
+          gasLimit,
+          chainId: Number(config.chain.chainId),
         };
-      }
+        if (fee.maxFeePerGas != null) {
+          txRequest.maxFeePerGas = (fee.maxFeePerGas * 120n) / 100n;
+          txRequest.maxPriorityFeePerGas =
+            ((fee.maxPriorityFeePerGas ?? 0n) * 120n) / 100n;
+        } else if (fee.gasPrice != null) {
+          txRequest.gasPrice = (fee.gasPrice * 120n) / 100n;
+        }
 
-      const fee = await provider.getFeeData();
-      const gasLimit = params.skipEstimate
-        ? gasEstimate
-        : (gasEstimate * 130n) / 100n;
-      const txRequest: {
-        to: string;
-        data: string;
-        value: bigint;
-        gasLimit: bigint;
-        chainId: number;
-        gasPrice?: bigint;
-        maxFeePerGas?: bigint;
-        maxPriorityFeePerGas?: bigint;
-      } = {
-        to: params.to,
-        data: params.data,
-        value: params.valueWei,
-        gasLimit,
-        chainId: Number(config.chain.chainId),
-      };
-      if (fee.maxFeePerGas != null) {
-        txRequest.maxFeePerGas = (fee.maxFeePerGas * 120n) / 100n;
-        txRequest.maxPriorityFeePerGas =
-          ((fee.maxPriorityFeePerGas ?? 0n) * 120n) / 100n;
-      } else if (fee.gasPrice != null) {
-        txRequest.gasPrice = (fee.gasPrice * 120n) / 100n;
-      }
+        console.log(
+          `[mint] sending via ${label} from=${from.slice(0, 8)}… to=${params.to.slice(0, 10)}… gas=${gasLimit}`
+        );
+        const sent = await connected.sendTransaction(txRequest);
+        console.log(`[mint] broadcast ${sent.hash}`);
 
-      console.log(
-        `[mint] sending via ${label} from=${from.slice(0, 8)}… to=${params.to.slice(0, 10)}… gas=${gasLimit}`
-      );
-      const sent = await connected.sendTransaction(txRequest);
-      console.log(`[mint] broadcast ${sent.hash}`);
-
-      // Don't block other wallets on receipt — treat broadcast as success.
-      void sent.wait().catch(() => undefined);
-      return { ok: true, txHash: sent.hash };
-    } catch (err) {
-      // Alert on Chainstack / mint RPC rate-limit or quota (Telegram).
-      if (classifyRpcError(err)) {
-        void reportMintRpcIssue(err);
+        // Don't block other wallets on receipt — treat broadcast as success.
+        void sent.wait().catch(() => undefined);
+        return { ok: true, txHash: sent.hash };
+      } catch (err) {
+        const waitMs = parseTryAgainMs(err);
+        if (waitMs != null && attempt < maxAttempts - 1) {
+          console.warn(
+            `[mint] ${label} RPS/throttle — retry in ${waitMs}ms (attempt ${attempt + 1}/${maxAttempts})`
+          );
+          await sleep(waitMs);
+          continue;
+        }
+        // Only alert after retries exhausted for real rate-limit/quota.
+        if (classifyRpcError(err) && waitMs == null) {
+          void reportMintRpcIssue(err);
+        } else if (classifyRpcError(err) && attempt === maxAttempts - 1) {
+          void reportMintRpcIssue(err);
+        }
+        return { ok: false, error: shortError(err) };
       }
-      return { ok: false, error: shortError(err) };
     }
+    return { ok: false, error: "send failed" };
   };
 
   const primary = await trySend(getMintProvider(), "chainstack");
@@ -773,7 +838,7 @@ async function sendMintTx(
   const backup = getMintBackupProvider();
   const err = primary.error || "";
   const networkish =
-    /timeout|econn|socket|502|503|504|unavailable|rate limit|429|quota|capacity/i.test(
+    /timeout|econn|socket|502|503|504|unavailable|rate limit|429|quota|capacity|rps/i.test(
       err
     );
   if (backup && networkish) {
@@ -781,6 +846,23 @@ async function sendMintTx(
     return trySend(backup, "backup");
   }
   return primary;
+}
+
+/** Parse Chainstack/Alchemy try_again_in (ms). */
+function parseTryAgainMs(err: unknown): number | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (
+    !/-32005|rps limit|try_again_in|too many requests|rate limit|429/.test(lower)
+  ) {
+    return null;
+  }
+  const m = msg.match(/try_again_in["\s:]*([0-9.]+)\s*ms/i);
+  if (m) {
+    const ms = Math.ceil(Number(m[1]));
+    if (Number.isFinite(ms) && ms > 0) return Math.min(Math.max(ms, 50), 2_000);
+  }
+  return 350;
 }
 
 async function mintWithWallet(
@@ -873,6 +955,12 @@ function shortError(err: unknown): string {
   const lower = msg.toLowerCase();
   if (msg.includes("execution reverted") || /\breverted\b/i.test(msg)) {
     return "reverted";
+  }
+  if (/-32005|rps limit|try_again_in|exceeded the rps|too many requests/.test(lower)) {
+    return "rps-limited";
+  }
+  if (/missing revert data|could not coalesce/i.test(msg)) {
+    return "rpc-coalesce/revert";
   }
   if (lower.includes("nonce has already been used") || lower.includes("already known")) {
     return "nonce already used (tx likely already broadcast)";
