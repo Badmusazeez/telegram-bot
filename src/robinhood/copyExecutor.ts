@@ -244,22 +244,35 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   );
 
   // --- Path A: SeaDrop mintPublic rebuild (NO OpenSea API) ---
-  // Public free SeaDrop stages work by rebuilding calldata with our minter + max qty.
   if (openSeaLike && isSeaDropMintPublic(sourceTx.data)) {
-    const sd = await mintSeaDropPublic(
-      wallets,
-      sourceTx.data,
-      whaleQty
-    );
+    const sd = await mintSeaDropPublic(wallets, sourceTx.data, whaleQty);
     if (sd.success) return sd;
     attempts.push(sd.reason);
+
+    // Optional: OpenSea Drop API only if we already have a good key (never force 401 spam).
+    if (getOpenSeaApiKey()) {
+      const os = await mintOpenSea(purchase, wallets);
+      if (os.success) return os;
+      attempts.push(os.reason);
+    }
+
+    // Do NOT fall through to public mint(100) spam — always reverts on SeaDrop.
+    console.warn(
+      `[mint] SeaDrop path exhausted for ${purchase.txHash}: ${attempts.join(" || ")}`
+    );
+    return {
+      attempted: true,
+      success: false,
+      dryRun: false,
+      reason: `SeaDrop free-mint failed (stage ended / sold out / not public): ${attempts.join(" || ")}`,
+    };
   }
 
-  // --- Path B: OpenSea Drop API (needs valid key; auto-refreshes on 401) ---
+  // --- Path B: OpenSea Drop API for non-SeaDrop only when key present ---
   try {
     await ensureOpenSeaApiKey();
   } catch {
-    // continue — SeaDrop path above may already have worked / will retry later
+    // ignore
   }
   if (getOpenSeaApiKey()) {
     const os = await mintOpenSea(purchase, wallets);
@@ -267,7 +280,7 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
     attempts.push(os.reason);
   }
 
-  // --- Path C: Replay whale website/contract mint tx (ANY site) ---
+  // --- Path C: Replay whale website/contract mint tx ---
   const replay = await mintByReplay(
     wallets,
     mintTargets,
@@ -278,12 +291,10 @@ async function executeCopy(purchase: NftPurchase): Promise<CopyResult> {
   if (replay.success) return replay;
   attempts.push(replay.reason);
 
-  // --- Path D: Public ABI probes — skip on SeaDrop (always reverts, wastes the window) ---
-  if (!openSeaLike) {
-    const publicTry = await mintPublicMax(wallets, mintTargets, whaleQty);
-    if (publicTry.success) return publicTry;
-    attempts.push(publicTry.reason);
-  }
+  // --- Path D: Public ABI probes (non-SeaDrop only) ---
+  const publicTry = await mintPublicMax(wallets, mintTargets, whaleQty);
+  if (publicTry.success) return publicTry;
+  attempts.push(publicTry.reason);
 
   console.warn(
     `[mint] all strategies failed for ${purchase.txHash}: ${attempts.join(" || ")}`
@@ -302,7 +313,11 @@ async function mintSeaDropPublic(
   whaleData: string,
   whaleQty: number
 ): Promise<CopyResult> {
-  const qtys = maxMintQuantityLadder(whaleQty);
+  // Try whale qty first (often the stage max), then our hard max ladder.
+  const qtys = [
+    ...new Set([whaleQty, ...maxMintQuantityLadder(whaleQty)].filter((q) => q >= 1)),
+  ].sort((a, b) => b - a);
+
   const results = await Promise.all(
     wallets.map(async (wallet) => {
       const address = wallet.address.toLowerCase();
@@ -320,12 +335,12 @@ async function mintSeaDropPublic(
             error: "could not decode SeaDrop mintPublic",
           };
         }
+        // estimateGas first — avoid broadcasting doomed txs / wasting the window.
         const sent = await sendMintTx(wallet, {
           to: built.to,
           data: built.data,
           valueWei: 0n,
-          skipEstimate: true,
-          gasLimitHint: 900_000n,
+          skipEstimate: false,
         });
         if (sent.ok) {
           return {
@@ -336,6 +351,10 @@ async function mintSeaDropPublic(
           };
         }
         errors.push(`x${q}:${sent.error}`);
+        // If qty 1 already reverts, stage is dead — stop.
+        if (q === 1 || /sold out|ended|not.?active|insufficient/i.test(sent.error || "")) {
+          break;
+        }
       }
       return {
         address,
