@@ -36,6 +36,9 @@ import {
 import { formatSlotRaceEvent } from "./telegram/formatter";
 import { setSlotRaceHandler } from "./robinhood/slotRace";
 
+/** Throttle LOST_RACE Telegram spam (one per contract every 2s). */
+const lostRaceTelegramAt = new Map<string, number>();
+
 async function main(): Promise<void> {
   // Ensure relative paths / cwd issues never break state persistence under pm2
   process.chdir(config.projectRoot);
@@ -233,8 +236,14 @@ async function main(): Promise<void> {
   });
 
   setSlotRaceHandler(async (event) => {
-    // Avoid spamming BURST for every wallet — only key phases to Telegram.
-    if (event.phase === "BURST") return;
+    // BURST is already collapsed to one SUBMITTED summary in slotRace.
+    if (event.phase === "LOST_RACE") {
+      const key = event.contract.toLowerCase();
+      const now = Date.now();
+      const last = lostRaceTelegramAt.get(key) ?? 0;
+      if (now - last < 2_000) return;
+      lostRaceTelegramAt.set(key, now);
+    }
     await broadcastHtml(bot, formatSlotRaceEvent(event));
   });
 

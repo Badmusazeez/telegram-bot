@@ -13,6 +13,9 @@ import {
   probeMintSlot,
   type SlotProbeResult,
 } from "./slotProbe";
+import { analyzeMintFailure } from "./failureAnalyze";
+import { pickFastestMintRpc } from "./mintRpcPick";
+import { Interface } from "ethers";
 import {
   buildSeaDropMintPublicTx,
   isSeaDropMintPublic,
@@ -39,6 +42,11 @@ export type SlotRaceEvent = {
   reason?: string;
   walletsArmed?: number;
   detail?: string;
+  gasLimit?: string;
+  rpcLabel?: string;
+  mintType?: string;
+  failKind?: string;
+  latencyMs?: number;
 };
 
 export type SlotRaceHandler = (event: SlotRaceEvent) => Promise<void>;
@@ -85,6 +93,39 @@ async function emit(event: SlotRaceEvent): Promise<void> {
   }
 }
 
+const ERC721_BAL = new Interface([
+  "function balanceOf(address owner) view returns (uint256)",
+  "function numberMinted(address minter) view returns (uint256)",
+]);
+
+async function walletAlreadyMinted(
+  provider: import("ethers").JsonRpcProvider,
+  nftContract: string,
+  wallet: string
+): Promise<boolean> {
+  try {
+    const data = ERC721_BAL.encodeFunctionData("numberMinted", [wallet]);
+    const ret = await provider.call({ to: nftContract, data });
+    if (ret && ret !== "0x") {
+      const n = ERC721_BAL.decodeFunctionResult("numberMinted", ret)[0] as bigint;
+      if (n > 0n) return true;
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const data = ERC721_BAL.encodeFunctionData("balanceOf", [wallet]);
+    const ret = await provider.call({ to: nftContract, data });
+    if (ret && ret !== "0x") {
+      const n = ERC721_BAL.decodeFunctionResult("balanceOf", ret)[0] as bigint;
+      if (n > 0n) return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -118,6 +159,148 @@ async function waitUntilOpen(
   }
 }
 
+async function prepareOneArmedTx(params: {
+  wallet: Wallet;
+  to: string;
+  data: string;
+  whaleData: string;
+  quantityHint?: number;
+  provider: import("ethers").JsonRpcProvider;
+  dryRun: boolean;
+  qtys: number[];
+}): Promise<ArmedWalletTx | null> {
+  const { wallet, provider, dryRun, qtys } = params;
+
+  // Soft eligibility: skip wallets that already hold / minted this NFT (when readable).
+  const nft =
+    isSeaDropMintPublic(params.whaleData)
+      ? (() => {
+          const b = buildSeaDropMintPublicTx({
+            whaleData: params.whaleData,
+            minter: wallet.address,
+            quantity: 1,
+          });
+          return b?.nftContract || params.to;
+        })()
+      : params.to;
+  if (await walletAlreadyMinted(provider, nft, wallet.address)) {
+    console.log(
+      `[slot] skip ${wallet.address.slice(0, 8)}… — already minted/holds NFT`
+    );
+    return null;
+  }
+
+  if (dryRun) {
+    return {
+      wallet,
+      to: params.to,
+      data: params.data,
+      valueWei: 0n,
+      gasLimit: 300_000n,
+      strategy: "dry-run",
+    };
+  }
+
+  // Prefer SeaDrop rebuild per-wallet when applicable; else whale calldata.
+  let to = params.to;
+  let data = params.data;
+  let strategy = `replay:${mintSelectorLabel(params.data)}`;
+
+  if (isSeaDropMintPublic(params.whaleData)) {
+    let built = null as ReturnType<typeof buildSeaDropMintPublicTx>;
+    for (const q of qtys) {
+      built = buildSeaDropMintPublicTx({
+        whaleData: params.whaleData,
+        minter: wallet.address,
+        quantity: q,
+      });
+      if (built) {
+        strategy = `SeaDrop.mintPublic(x${q})`;
+        break;
+      }
+    }
+    if (built) {
+      to = built.to;
+      data = built.data;
+    }
+  }
+
+  try {
+    const estimated = await provider.estimateGas({
+      from: wallet.address,
+      to,
+      data,
+      value: 0n,
+    });
+    const resolved = resolveMintGasLimit({
+      estimated,
+      ceiling: config.maxMintGasLimit,
+      marginPct: 20,
+    });
+    if (!resolved.ok) {
+      console.warn(
+        `[slot] skip arm ${wallet.address.slice(0, 8)}… gas: ${resolved.reason}`
+      );
+      return null;
+    }
+    const fee = await provider.getFeeData();
+    return {
+      wallet,
+      to,
+      data,
+      valueWei: 0n,
+      gasLimit: resolved.gasLimit,
+      strategy,
+      maxFeePerGas:
+        fee.maxFeePerGas != null
+          ? (fee.maxFeePerGas * 125n) / 100n
+          : undefined,
+      maxPriorityFeePerGas:
+        fee.maxPriorityFeePerGas != null
+          ? (fee.maxPriorityFeePerGas * 125n) / 100n
+          : undefined,
+      gasPrice:
+        fee.maxFeePerGas == null && fee.gasPrice != null
+          ? (fee.gasPrice * 125n) / 100n
+          : undefined,
+    };
+  } catch (err) {
+    // Too-early simulate is expected before window — still arm with safe gas ceiling fraction.
+    const msg = err instanceof Error ? err.message : String(err);
+    const cls = classifyMintFailure(msg);
+    if (cls.kind === "TOO_EARLY" || cls.kind === "LOST_RACE") {
+      const gasLimit = BigInt(
+        Math.min(Math.floor(config.maxMintGasLimit * 0.4), 800_000)
+      );
+      const fee = await provider.getFeeData().catch(() => null);
+      return {
+        wallet,
+        to,
+        data,
+        valueWei: 0n,
+        gasLimit,
+        strategy: `${strategy} (pre-window)`,
+        maxFeePerGas:
+          fee?.maxFeePerGas != null
+            ? (fee.maxFeePerGas * 125n) / 100n
+            : undefined,
+        maxPriorityFeePerGas:
+          fee?.maxPriorityFeePerGas != null
+            ? (fee.maxPriorityFeePerGas * 125n) / 100n
+            : undefined,
+        gasPrice:
+          fee && fee.maxFeePerGas == null && fee.gasPrice != null
+            ? (fee.gasPrice * 125n) / 100n
+            : undefined,
+      };
+    }
+    console.warn(
+      `[slot] prepare failed ${wallet.address.slice(0, 8)}… ${msg.slice(0, 120)}`
+    );
+    return null;
+  }
+}
+
 async function prepareArmedTxs(params: {
   wallets: Wallet[];
   to: string;
@@ -128,149 +311,63 @@ async function prepareArmedTxs(params: {
   const provider = getMintProvider();
   const state = getState();
   const qtys = maxMintQuantityLadder(params.quantityHint || 1);
-  const armed: ArmedWalletTx[] = [];
 
-  for (const wallet of params.wallets) {
-    if (state.dryRun) {
-      armed.push({
+  // Parallel prep across wallets; submission stays nonce-serialized per wallet.
+  const results = await Promise.all(
+    params.wallets.map((wallet) =>
+      prepareOneArmedTx({
         wallet,
         to: params.to,
         data: params.data,
-        valueWei: 0n,
-        gasLimit: 300_000n,
-        strategy: "dry-run",
-      });
-      continue;
-    }
-
-    // Prefer SeaDrop rebuild per-wallet when applicable; else whale calldata.
-    let to = params.to;
-    let data = params.data;
-    let strategy = `replay:${mintSelectorLabel(params.data)}`;
-
-    if (isSeaDropMintPublic(params.whaleData)) {
-      let built = null as ReturnType<typeof buildSeaDropMintPublicTx>;
-      for (const q of qtys) {
-        built = buildSeaDropMintPublicTx({
-          whaleData: params.whaleData,
-          minter: wallet.address,
-          quantity: q,
-        });
-        if (built) {
-          strategy = `SeaDrop.mintPublic(x${q})`;
-          break;
-        }
-      }
-      if (built) {
-        to = built.to;
-        data = built.data;
-      }
-    }
-
-    try {
-      const estimated = await provider.estimateGas({
-        from: wallet.address,
-        to,
-        data,
-        value: 0n,
-      });
-      const resolved = resolveMintGasLimit({
-        estimated,
-        ceiling: config.maxMintGasLimit,
-        marginPct: 20,
-      });
-      if (!resolved.ok) {
-        console.warn(
-          `[slot] skip arm ${wallet.address.slice(0, 8)}… gas: ${resolved.reason}`
-        );
-        continue;
-      }
-      const fee = await provider.getFeeData();
-      armed.push({
-        wallet,
-        to,
-        data,
-        valueWei: 0n,
-        gasLimit: resolved.gasLimit,
-        strategy,
-        maxFeePerGas:
-          fee.maxFeePerGas != null
-            ? (fee.maxFeePerGas * 125n) / 100n
-            : undefined,
-        maxPriorityFeePerGas:
-          fee.maxPriorityFeePerGas != null
-            ? (fee.maxPriorityFeePerGas * 125n) / 100n
-            : undefined,
-        gasPrice:
-          fee.maxFeePerGas == null && fee.gasPrice != null
-            ? (fee.gasPrice * 125n) / 100n
-            : undefined,
-      });
-    } catch (err) {
-      // Too-early simulate is expected before window — still arm with safe gas ceiling fraction.
-      const msg = err instanceof Error ? err.message : String(err);
-      const cls = classifyMintFailure(msg);
-      if (cls.kind === "TOO_EARLY" || cls.kind === "LOST_RACE") {
-        const gasLimit = BigInt(
-          Math.min(Math.floor(config.maxMintGasLimit * 0.4), 800_000)
-        );
-        const fee = await provider.getFeeData().catch(() => null);
-        armed.push({
-          wallet,
-          to,
-          data,
-          valueWei: 0n,
-          gasLimit,
-          strategy: `${strategy} (pre-window)`,
-          maxFeePerGas:
-            fee?.maxFeePerGas != null
-              ? (fee.maxFeePerGas * 125n) / 100n
-              : undefined,
-          maxPriorityFeePerGas:
-            fee?.maxPriorityFeePerGas != null
-              ? (fee.maxPriorityFeePerGas * 125n) / 100n
-              : undefined,
-          gasPrice:
-            fee && fee.maxFeePerGas == null && fee.gasPrice != null
-              ? (fee.gasPrice * 125n) / 100n
-              : undefined,
-        });
-      } else {
-        console.warn(
-          `[slot] prepare failed ${wallet.address.slice(0, 8)}… ${msg.slice(0, 120)}`
-        );
-      }
-    }
-  }
-
-  return armed;
+        whaleData: params.whaleData,
+        quantityHint: params.quantityHint,
+        provider,
+        dryRun: state.dryRun,
+        qtys,
+      })
+    )
+  );
+  return results.filter((r): r is ArmedWalletTx => r != null);
 }
 
 async function burstArmed(
   armed: ArmedWalletTx[],
-  signal: AbortSignal
+  signal: AbortSignal,
+  nftContract: string
 ): Promise<{
   successes: Array<{ address: string; txHash: string }>;
   lost: Array<{ address: string; reason: string }>;
   other: Array<{ address: string; reason: string }>;
 }> {
-  const provider = getMintProvider();
+  const rpc = await pickFastestMintRpc();
+  const provider = rpc.provider;
   const successes: Array<{ address: string; txHash: string }> = [];
   const lost: Array<{ address: string; reason: string }> = [];
   const other: Array<{ address: string; reason: string }> = [];
+  const burstStarted = Date.now();
+
+  // One SUBMITTED summary (avoid 21 Telegram spam); per-wallet stays in logs.
+  if (armed[0]) {
+    await emit({
+      phase: "BURST",
+      contract: nftContract,
+      wallet: armed[0].wallet.address.toLowerCase(),
+      strategy: armed[0].strategy,
+      gasLimit: armed[0].gasLimit.toString(),
+      rpcLabel: `${rpc.label} ${rpc.latencyMs}ms`,
+      detail: `submitting ${armed.length} wallet(s)`,
+      walletsArmed: armed.length,
+    });
+  }
 
   await Promise.all(
     armed.map(async (a, index) => {
       if (signal.aborted) return;
-      // Tiny stagger preserves nonce isolation under RPS without losing the window.
       if (index > 0) await sleep(Math.min(index * 15, 300), signal).catch(() => undefined);
       const address = a.wallet.address.toLowerCase();
-      await emit({
-        phase: "BURST",
-        contract: a.to,
-        wallet: address,
-        strategy: a.strategy,
-      });
+      console.log(
+        `[slot] SUBMIT wallet=${address.slice(0, 8)}… strategy=${a.strategy} gas=${a.gasLimit} rpc=${rpc.label}`
+      );
       try {
         const connected = a.wallet.connect(provider);
         const sent = await withWalletNonce({
@@ -293,26 +390,30 @@ async function burstArmed(
         successes.push({ address, txHash: sent.hash });
         await emit({
           phase: "SUCCESS",
-          contract: a.to,
+          contract: nftContract,
           wallet: address,
           strategy: a.strategy,
           txHash: sent.hash,
+          rpcLabel: rpc.label,
+          latencyMs: Date.now() - burstStarted,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (/nonce/i.test(msg)) invalidateWalletNonce(address);
+        const detail = analyzeMintFailure(msg);
         const cls = classifyMintFailure(msg);
-        if (cls.kind === "LOST_RACE" || cls.kind === "SOLD_OUT") {
-          lost.push({ address, reason: cls.reason });
+        if (cls.kind === "LOST_RACE" || cls.kind === "SOLD_OUT" || detail.kind === "ALREADY_MINTED") {
+          lost.push({ address, reason: `${detail.kind}: ${cls.reason}` });
           await emit({
             phase: "LOST_RACE",
-            contract: a.to,
+            contract: nftContract,
             wallet: address,
             strategy: a.strategy,
             reason: cls.reason,
+            failKind: detail.kind,
           });
         } else {
-          other.push({ address, reason: cls.reason });
+          other.push({ address, reason: `${detail.kind}: ${detail.reason}` });
         }
       }
     })
@@ -422,7 +523,8 @@ export async function runSlotRace(
         detail: slot.detail,
       });
 
-      // Prepare BEFORE open.
+      // Prepare BEFORE open (detect → analyze → calldata/gas/nonce → simulate).
+      const prepStarted = Date.now();
       const armed = await prepareArmedTxs({
         wallets: useWallets,
         to: req.to,
@@ -430,6 +532,7 @@ export async function runSlotRace(
         whaleData: req.whaleData,
         quantityHint: qty,
       });
+      const prepMs = Date.now() - prepStarted;
 
       if (armed.length === 0) {
         return {
@@ -446,6 +549,8 @@ export async function runSlotRace(
         slotSource: slot.source,
         opensAtMs: slot.opensAtMs,
         walletsArmed: armed.length,
+        mintType: isSeaDropMintPublic(req.whaleData) ? "SeaDrop/free" : "public/contract",
+        latencyMs: prepMs,
         detail: `strategy prep done · opens ${new Date(slot.opensAtMs).toISOString()}`,
       });
 
@@ -466,9 +571,10 @@ export async function runSlotRace(
         slotSource: slot.source,
         opensAtMs: slot.opensAtMs,
         walletsArmed: armed.length,
+        mintType: isSeaDropMintPublic(req.whaleData) ? "SeaDrop/free" : "public/contract",
       });
 
-      const result = await burstArmed(armed, abort.signal);
+      const result = await burstArmed(armed, abort.signal, contract);
       if (result.successes.length > 0) {
         return {
           attempted: true,

@@ -250,10 +250,15 @@ export function formatSlotRaceEvent(event: {
   reason?: string;
   walletsArmed?: number;
   detail?: string;
+  gasLimit?: string;
+  rpcLabel?: string;
+  mintType?: string;
+  failKind?: string;
+  latencyMs?: number;
 }): string {
   const contractLine = `<b>Contract:</b> <code>${escHtml(event.contract)}</code>`;
-  const slotLine = event.opensAtMs
-    ? `<b>Slot:</b> <code>${escHtml(new Date(event.opensAtMs).toISOString())}</code>${
+  const launchLine = event.opensAtMs
+    ? `<b>Launch:</b> <code>${escHtml(new Date(event.opensAtMs).toISOString())}</code>${
         event.slotSource ? ` (${escHtml(event.slotSource)})` : ""
       }`
     : event.slotSource
@@ -263,35 +268,41 @@ export function formatSlotRaceEvent(event: {
   switch (event.phase) {
     case "WINDOW_OPEN":
       return [
-        `<b>⚡ WINDOW OPEN</b>`,
+        `<b>🚀 MINT WINDOW OPEN</b>`,
         contractLine,
-        slotLine,
+        event.mintType ? `<b>Mint type:</b> ${escHtml(event.mintType)}` : "",
+        launchLine,
         event.walletsArmed != null
-          ? `<b>Wallets armed:</b> ${event.walletsArmed}`
+          ? `<b>Wallets ready:</b> ${event.walletsArmed}`
           : "",
       ]
         .filter(Boolean)
         .join("\n");
     case "BURST":
       return [
-        `<b>📤 BURST</b>`,
+        `<b>📤 SUBMITTED</b>`,
         contractLine,
         event.wallet
           ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
           : "",
         event.strategy ? `<b>Strategy:</b> ${escHtml(event.strategy)}` : "",
+        event.gasLimit ? `<b>Gas:</b> <code>${escHtml(event.gasLimit)}</code>` : "",
+        event.rpcLabel ? `<b>RPC:</b> ${escHtml(event.rpcLabel)}` : "",
+        event.detail ? escHtml(event.detail) : "",
       ]
         .filter(Boolean)
         .join("\n");
     case "SUCCESS":
       return [
         `<b>✅ SUCCESS</b>`,
-        contractLine,
         event.wallet
           ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
           : "",
         event.txHash
-          ? `<b>Tx:</b> <a href="${config.chain.explorerTxUrl(event.txHash)}">explorer</a>`
+          ? `<b>TX:</b> <a href="${config.chain.explorerTxUrl(event.txHash)}">explorer</a>`
+          : "",
+        event.latencyMs != null
+          ? `<b>Latency:</b> ${event.latencyMs}ms`
           : "",
       ]
         .filter(Boolean)
@@ -299,20 +310,23 @@ export function formatSlotRaceEvent(event: {
     case "LOST_RACE":
       return [
         `<b>❌ LOST RACE</b>`,
-        contractLine,
         event.wallet
           ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
           : "",
-        `<b>Reason:</b> ${escHtml(event.reason || "another transaction consumed the slot")}`,
+        `<b>Reason:</b> ${escHtml(
+          event.failKind
+            ? `${event.failKind}: ${event.reason || "slot consumed"}`
+            : event.reason || "another transaction consumed the slot"
+        )}`,
       ]
         .filter(Boolean)
         .join("\n");
     case "NEXT_SLOT":
       return [
-        `<b>⏱ NEXT SLOT</b>`,
+        `<b>⏱ NEXT OPPORTUNITY</b>`,
         contractLine,
         event.opensAtMs
-          ? `<b>nextFreeAt:</b> <code>${escHtml(new Date(event.opensAtMs).toISOString())}</code>`
+          ? `<b>Time:</b> <code>${escHtml(new Date(event.opensAtMs).toISOString())}</code>`
           : "",
         event.detail ? escHtml(event.detail) : "",
       ]
@@ -320,11 +334,15 @@ export function formatSlotRaceEvent(event: {
         .join("\n");
     case "ARMED":
       return [
-        `<b>🛡 ARMED</b>`,
+        `<b>⚡ SNIPER ARMED</b>`,
         contractLine,
-        slotLine,
+        event.mintType ? `<b>Mint type:</b> ${escHtml(event.mintType)}` : "",
+        launchLine,
         event.walletsArmed != null
-          ? `<b>Wallets armed:</b> ${event.walletsArmed}`
+          ? `<b>Wallets ready:</b> ${event.walletsArmed}`
+          : "",
+        event.latencyMs != null
+          ? `<b>Prep latency:</b> ${event.latencyMs}ms`
           : "",
         event.detail ? escHtml(event.detail) : "",
       ]
@@ -339,4 +357,17 @@ export function formatSlotRaceEvent(event: {
         .filter(Boolean)
         .join("\n");
   }
+}
+
+/** Paid mint detected — never auto-spend unless freeMintsOnly is off AND value path enabled. */
+export function formatPaidMintDetected(params: {
+  contract: string;
+  priceEth: string;
+}): string {
+  return [
+    `<b>PAID MINT DETECTED</b>`,
+    `<b>Price:</b> ${escHtml(params.priceEth)} ETH`,
+    `<b>Contract:</b> <code>${escHtml(params.contract)}</code>`,
+    `<b>Status:</b> NOT SUBMITTED`,
+  ].join("\n");
 }

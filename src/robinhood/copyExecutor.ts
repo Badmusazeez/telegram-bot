@@ -100,7 +100,9 @@ export async function maybeCopyPurchase(
     // Don't let intentional paid-skips overwrite Last copy in /status —
     // that made free-mint hits look like failures.
     const paidSkip =
-      /skipped paid mint|paid mint\/buy \(free-mints-only/i.test(result.reason);
+      /PAID MINT DETECTED|skipped paid mint|paid mint\/buy \(free-mints-only/i.test(
+        result.reason
+      );
     if (!paidSkip) {
       rememberCopyResult(purchase, result);
     } else {
@@ -188,11 +190,12 @@ async function executeCopy(
   // against a paid stage simply reverts on-chain (no spend).
   if (sourceTx.value > 0n || purchase.valueRobinhood > 0 || purchase.isPaid) {
     if (state.freeMintsOnly) {
+      const priceEth = formatEther(sourceTx.value || 0n);
       return {
         attempted: false,
         success: false,
         dryRun: state.dryRun,
-        reason: `Skipped paid mint (${formatEther(sourceTx.value || 0n)} native).`,
+        reason: `PAID MINT DETECTED\nPrice: ${priceEth} ETH\nContract: ${purchase.contract}\nStatus: NOT SUBMITTED`,
       };
     }
   }
@@ -376,6 +379,8 @@ async function executeCopy(
         kind,
         quantity: whaleQty,
         to: sourceTx.to,
+        data: sourceTx.data,
+        mintType: "free",
       });
     }
     if (s.okCount === s.total) {
@@ -467,6 +472,8 @@ async function executeCopy(
       kind: openSeaLike ? "seadrop" : "replay",
       quantity: whaleQty,
       to: sourceTx.to,
+      data: sourceTx.data,
+      mintType: "free",
     });
     return {
       attempted: true,

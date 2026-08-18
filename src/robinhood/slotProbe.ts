@@ -1,4 +1,7 @@
 import { Interface, type JsonRpcProvider } from "ethers";
+import { analyzeMintFailure, classifyMintFailure } from "./failureAnalyze";
+
+export { analyzeMintFailure, classifyMintFailure };
 
 /**
  * Dynamically probe NFT/mint contracts for timing / slot view functions.
@@ -124,37 +127,46 @@ export async function probeMintSlot(
     };
   }
 
-  for (const c of OPEN_CANDIDATES) {
-    const raw = await callUint(provider, to, c.name);
-    if (raw == null) continue;
-    const opensAtMs = normalizeTimestampMs(raw, nowMs);
-    if (opensAtMs == null) continue;
-
+  // Probe all timing views in parallel; keep OPEN_CANDIDATES priority order.
+  const openHits = await Promise.all(
+    OPEN_CANDIDATES.map(async (c) => {
+      const raw = await callUint(provider, to, c.name);
+      if (raw == null) return null;
+      const opensAtMs = normalizeTimestampMs(raw, nowMs);
+      if (opensAtMs == null) return null;
+      return { c, raw, opensAtMs };
+    })
+  );
+  const hit = openHits.find((h) => h != null);
+  if (hit) {
+    const endRaws = await Promise.all(
+      END_CANDIDATES.map(async (endFn) => {
+        const endRaw = await callUint(provider, to, endFn);
+        if (endRaw == null) return null;
+        return normalizeTimestampMs(endRaw, nowMs);
+      })
+    );
     let endsAtMs: number | null = null;
-    for (const endFn of END_CANDIDATES) {
-      const endRaw = await callUint(provider, to, endFn);
-      if (endRaw == null) continue;
-      const endMs = normalizeTimestampMs(endRaw, nowMs);
-      // Ignore end times that are not after the open time.
-      if (endMs != null && endMs > opensAtMs) {
+    for (const endMs of endRaws) {
+      if (endMs != null && endMs > hit.opensAtMs) {
         endsAtMs = endMs;
         break;
       }
     }
 
-    const isFuture = opensAtMs > nowMs + 250;
+    const isFuture = hit.opensAtMs > nowMs + 250;
     const ended = endsAtMs != null && endsAtMs <= nowMs;
     const isOpen = !isFuture && !ended;
 
     return {
       hasTiming: true,
-      source: c.source,
-      opensAtMs,
+      source: hit.c.source,
+      opensAtMs: hit.opensAtMs,
       endsAtMs,
-      rawValue: raw,
+      rawValue: hit.raw,
       isFuture,
       isOpen,
-      detail: `${c.source}=${new Date(opensAtMs).toISOString()}${
+      detail: `${hit.c.source}=${new Date(hit.opensAtMs).toISOString()}${
         endsAtMs ? ` end=${new Date(endsAtMs).toISOString()}` : ""
       }`,
     };
@@ -170,45 +182,4 @@ export async function probeMintSlot(
     isOpen: true,
     detail: "no timing views found — use immediate mint path",
   };
-}
-
-/** Classify a revert / error as LOST_RACE vs too-early vs other. */
-export function classifyMintFailure(error: string): {
-  kind: "LOST_RACE" | "TOO_EARLY" | "SOLD_OUT" | "OTHER";
-  reason: string;
-} {
-  const lower = (error || "").toLowerCase();
-  if (
-    /too early|not started|not live|before start|wait until|nextfreeat|next mint|cooldown|not yet/i.test(
-      lower
-    )
-  ) {
-    return { kind: "TOO_EARLY", reason: error.slice(0, 160) };
-  }
-  if (
-    /sold out|fully minted|exceeds max|max supply|no tokens left|insufficient supply/i.test(
-      lower
-    )
-  ) {
-    return { kind: "SOLD_OUT", reason: error.slice(0, 160) };
-  }
-  if (
-    /already (claimed|minted|claimed)|claimed already|not your (turn|slot)|slot (taken|consumed)|someone else|lost.?race|cannot claim|claim closed|transfer.*failed/i.test(
-      lower
-    ) ||
-    (/reverted/.test(lower) && /slot|freeat|cooldown|occupied/.test(lower))
-  ) {
-    return {
-      kind: "LOST_RACE",
-      reason: "another transaction consumed the slot",
-    };
-  }
-  // Generic revert right after a slot window often means lost race on claim machines.
-  if (/^reverted$|execution reverted|rpc-coalesce\/revert/i.test(lower.trim())) {
-    return {
-      kind: "LOST_RACE",
-      reason: "another transaction consumed the slot (or stage rejected)",
-    };
-  }
-  return { kind: "OTHER", reason: error.slice(0, 160) };
 }
