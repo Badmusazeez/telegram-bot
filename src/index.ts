@@ -33,6 +33,8 @@ import {
   broadcastScheduleResult,
   createTelegramBot,
 } from "./telegram/bot";
+import { formatSlotRaceEvent } from "./telegram/formatter";
+import { setSlotRaceHandler } from "./robinhood/slotRace";
 
 async function main(): Promise<void> {
   // Ensure relative paths / cwd issues never break state persistence under pm2
@@ -228,6 +230,12 @@ async function main(): Promise<void> {
 
   const stopHeartbeat = startHeartbeat(async (html) => {
     await broadcastHtml(bot, html);
+  });
+
+  setSlotRaceHandler(async (event) => {
+    // Avoid spamming BURST for every wallet — only key phases to Telegram.
+    if (event.phase === "BURST") return;
+    await broadcastHtml(bot, formatSlotRaceEvent(event));
   });
 
   const shutdown = (signal: string) => {

@@ -36,6 +36,8 @@ import {
 } from "./nonceManager";
 import { checkMintWalletReadiness } from "./walletReady";
 import { classifyMintCalldata } from "./mintDetect";
+import { probeMintSlot, classifyMintFailure } from "./slotProbe";
+import { runSlotRace } from "./slotRace";
 
 /** One copy attempt per whale mint tx (721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -262,6 +264,40 @@ async function executeCopy(
     };
   }
 
+  // Slot-aware gate: if contract exposes a FUTURE window, arm race engine
+  // instead of wasting gas. Contracts WITHOUT timing → immediate 20/20 path.
+  try {
+    const slot = await probeMintSlot(getMintProvider(), collection);
+    if (slot.hasTiming && slot.isFuture && slot.opensAtMs) {
+      console.log(
+        `[mint:slot] future window detected via ${slot.source} → ARMED ${new Date(slot.opensAtMs).toISOString()}`
+      );
+      // Fire-and-forget race; return armed status to Telegram immediately.
+      void runSlotRace({
+        contract: collection,
+        whaleData: sourceTx.data,
+        to: sourceTx.to,
+        buyer: purchase.buyer,
+        quantityHint: whaleQty,
+        slot,
+      }).then((r) => {
+        console.log(`[mint:slot] race finished: ${r.reason}`);
+      });
+      return {
+        attempted: true,
+        success: false,
+        dryRun: false,
+        reason: `⏱ ARMED for next slot (${slot.source}) at ${new Date(slot.opensAtMs).toISOString()} — ${slot.detail}`,
+      };
+    }
+  } catch (err) {
+    console.warn(
+      `[mint:slot] probe failed (continuing immediate path): ${
+        err instanceof Error ? err.message : err
+      }`
+    );
+  }
+
   // Track per-wallet hits across strategies — NEVER stop at 1/N success.
   const hits = new Map<
     string,
@@ -432,16 +468,47 @@ async function executeCopy(
       quantity: whaleQty,
       to: sourceTx.to,
     });
+    return {
+      attempted: true,
+      success: true,
+      dryRun: false,
+      reason: final.reason,
+      txHash: final.txHash,
+    };
+  }
+
+  // 0/N — if failures look like LOST_RACE / TOO_EARLY, arm next slot when possible.
+  const sampleErr = [...hits.values()].map((h) => h.error || "").join(" ");
+  const cls = classifyMintFailure(sampleErr);
+  if (cls.kind === "LOST_RACE" || cls.kind === "TOO_EARLY") {
+    try {
+      const next = await probeMintSlot(getMintProvider(), collection);
+      if (next.hasTiming && next.opensAtMs && next.opensAtMs > Date.now() + 500) {
+        void runSlotRace({
+          contract: collection,
+          whaleData: sourceTx.data,
+          to: sourceTx.to,
+          buyer: purchase.buyer,
+          quantityHint: whaleQty,
+          slot: next,
+        });
+        return {
+          attempted: true,
+          success: false,
+          dryRun: false,
+          reason: `❌ LOST_RACE — armed next slot (${next.source}) at ${new Date(next.opensAtMs).toISOString()}`,
+        };
+      }
+    } catch {
+      // fall through
+    }
   }
 
   return {
     attempted: true,
-    success: final.okCount > 0,
+    success: false,
     dryRun: false,
-    reason:
-      final.okCount > 0
-        ? final.reason
-        : `All mint strategies failed (0/${wallets.length}): ${final.summary}`.slice(0, 500),
+    reason: `All mint strategies failed (0/${wallets.length}): ${final.summary}`.slice(0, 500),
     txHash: final.txHash,
   };
 }

@@ -202,6 +202,8 @@ export function helpText(): string {
     `/schedulemintfromtx &lt;txHash&gt; &lt;when&gt; — copy whale mint calldata`,
     `/schedules — list scheduled mints`,
     `/cancelschedule &lt;id&gt; — cancel a pending schedule`,
+    ``,
+    `<i>Slot race:</i> when a contract exposes nextFreeAt/startTime/etc., the bot arms wallets and bursts at window open.`,
   ].join("\n");
 }
 
@@ -235,4 +237,106 @@ export function formatScheduleResult(
     `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
     `<b>Result:</b> ${escHtml(result.reason)}${tx}`,
   ].join("\n");
+}
+
+export function formatSlotRaceEvent(event: {
+  phase: string;
+  contract: string;
+  slotSource?: string;
+  opensAtMs?: number | null;
+  wallet?: string;
+  strategy?: string;
+  txHash?: string;
+  reason?: string;
+  walletsArmed?: number;
+  detail?: string;
+}): string {
+  const contractLine = `<b>Contract:</b> <code>${escHtml(event.contract)}</code>`;
+  const slotLine = event.opensAtMs
+    ? `<b>Slot:</b> <code>${escHtml(new Date(event.opensAtMs).toISOString())}</code>${
+        event.slotSource ? ` (${escHtml(event.slotSource)})` : ""
+      }`
+    : event.slotSource
+      ? `<b>Slot source:</b> ${escHtml(event.slotSource)}`
+      : "";
+
+  switch (event.phase) {
+    case "WINDOW_OPEN":
+      return [
+        `<b>⚡ WINDOW OPEN</b>`,
+        contractLine,
+        slotLine,
+        event.walletsArmed != null
+          ? `<b>Wallets armed:</b> ${event.walletsArmed}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "BURST":
+      return [
+        `<b>📤 BURST</b>`,
+        contractLine,
+        event.wallet
+          ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
+          : "",
+        event.strategy ? `<b>Strategy:</b> ${escHtml(event.strategy)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "SUCCESS":
+      return [
+        `<b>✅ SUCCESS</b>`,
+        contractLine,
+        event.wallet
+          ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
+          : "",
+        event.txHash
+          ? `<b>Tx:</b> <a href="${config.chain.explorerTxUrl(event.txHash)}">explorer</a>`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "LOST_RACE":
+      return [
+        `<b>❌ LOST RACE</b>`,
+        contractLine,
+        event.wallet
+          ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
+          : "",
+        `<b>Reason:</b> ${escHtml(event.reason || "another transaction consumed the slot")}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "NEXT_SLOT":
+      return [
+        `<b>⏱ NEXT SLOT</b>`,
+        contractLine,
+        event.opensAtMs
+          ? `<b>nextFreeAt:</b> <code>${escHtml(new Date(event.opensAtMs).toISOString())}</code>`
+          : "",
+        event.detail ? escHtml(event.detail) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "ARMED":
+      return [
+        `<b>🛡 ARMED</b>`,
+        contractLine,
+        slotLine,
+        event.walletsArmed != null
+          ? `<b>Wallets armed:</b> ${event.walletsArmed}`
+          : "",
+        event.detail ? escHtml(event.detail) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    default:
+      return [
+        `<b>Slot ${escHtml(event.phase)}</b>`,
+        contractLine,
+        event.detail ? escHtml(event.detail) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+  }
 }
