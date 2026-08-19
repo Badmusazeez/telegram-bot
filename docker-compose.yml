@@ -1,0 +1,23 @@
+services:
+  mexc-assistant:
+    build: .
+    container_name: mexc-ai-trading-assistant
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CONFIG_PATH: /app/config/settings.yaml
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DRY_RUN: ${DRY_RUN:-false}
+      ACCOUNT_EQUITY: ${ACCOUNT_EQUITY:-10000}
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./data:/app/data
+    ports:
+      - "8080:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
