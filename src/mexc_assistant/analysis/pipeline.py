@@ -5,6 +5,7 @@ from __future__ import annotations
 from mexc_assistant.analysis.cross_exchange import validate_cross_exchange
 from mexc_assistant.analysis.ema import analyze_ema
 from mexc_assistant.analysis.funding import analyze_funding
+from mexc_assistant.analysis.ict_2022 import detect_ict_2022
 from mexc_assistant.analysis.liquidations import build_liquidation_state
 from mexc_assistant.analysis.liquidity import analyze_liquidity
 from mexc_assistant.analysis.news_intelligence import NewsIntelligence
@@ -17,6 +18,7 @@ from mexc_assistant.analysis.volume import analyze_volume
 from mexc_assistant.core.config import Settings
 from mexc_assistant.core.models import (
     AnalysisBundle,
+    ICT2022State,
     Side,
     TradeTick,
     Trend,
@@ -56,6 +58,12 @@ class AnalysisPipeline:
         h1 = await self.rest.get_klines(symbol, "Min60", limit=250)
         m15 = await self.rest.get_klines(symbol, "Min15", limit=300)
         m5 = await self.rest.get_klines(symbol, "Min5", limit=300)
+        m1: list = []
+        if s.ict_2022.enabled and s.ict_2022.ltf_interval == "Min1":
+            try:
+                m1 = await self.rest.get_klines(symbol, "Min1", limit=400)
+            except Exception:  # noqa: BLE001
+                m1 = []
         ticker = await self.rest.get_ticker(symbol)
         funding_rate = ticker.funding_rate
         depth: dict = {}
@@ -101,6 +109,50 @@ class AnalysisPipeline:
         order_flow = analyze_order_flow(trades, exec_candles, s.order_flow)
         volume = analyze_volume(exec_candles, s.volume)
         volatility = analyze_volatility(exec_candles, s.volatility)
+
+        # ICT 2022: HTF (15m+) liquidity sweep → LTF (5m/1m) MSS + FVG
+        ict_state = ICT2022State()
+        if s.ict_2022.enabled:
+            htf_ict = m15 if s.ict_2022.htf_interval == "Min15" else h1
+            ltf_ict = m1 if (s.ict_2022.ltf_interval == "Min1" and m1) else m5
+            setup = detect_ict_2022(
+                htf_candles=htf_ict,
+                ltf_candles=ltf_ict,
+                daily_candles=daily,
+                structure_config=s.structure,
+                ict_config=s.ict_2022,
+                smc_fvg_min_gap_pct=s.smc.fvg_min_gap_pct,
+            )
+            ict_state = ICT2022State(
+                valid=setup.valid,
+                side=setup.side,
+                htf_sweep=setup.htf_sweep,
+                mss=setup.mss,
+                fvg_top=setup.fvg_top,
+                fvg_bottom=setup.fvg_bottom,
+                entry=setup.entry,
+                stop_loss=setup.stop_loss,
+                target=setup.target,
+                equilibrium=setup.equilibrium,
+                displacement_high=setup.displacement_high,
+                displacement_low=setup.displacement_low,
+                in_discount=setup.in_discount,
+                in_premium=setup.in_premium,
+                quality=setup.quality,
+                swept_level=setup.swept_level,
+                mss_level=setup.mss_level,
+                notes=list(setup.notes),
+            )
+            if setup.valid:
+                # Align liquidity flags with ICT sweep direction
+                if setup.side == Side.BUY:
+                    liquidity.swept_low = True
+                elif setup.side == Side.SELL:
+                    liquidity.swept_high = True
+            elif s.ict_2022.require_for_alert:
+                rejects.append(
+                    "ICT 2022 Model incomplete: " + (setup.notes[0] if setup.notes else "no setup")
+                )
 
         prev_price = self._price_cache.get(symbol, ticker.last_price)
         price_up = ticker.last_price >= prev_price
@@ -167,10 +219,16 @@ class AnalysisPipeline:
             rejects.append("High-impact news elevates risk")
 
         _, _, zone_label = premium_discount(exec_candles)
-        if higher_trend == Trend.BULLISH and zone_label == "premium":
-            rejects.append("Bullish bias but price in premium zone")
-        if higher_trend == Trend.BEARISH and zone_label == "discount":
-            rejects.append("Bearish bias but price in discount zone")
+        if not ict_state.valid:
+            if higher_trend == Trend.BULLISH and zone_label == "premium":
+                rejects.append("Bullish bias but price in premium zone")
+            if higher_trend == Trend.BEARISH and zone_label == "discount":
+                rejects.append("Bearish bias but price in discount zone")
+        elif ict_state.side == Side.BUY and not ict_state.in_discount:
+            # Soft preference only — model still valid at equilibrium
+            pass
+        elif ict_state.side == Side.SELL and not ict_state.in_premium:
+            pass
 
         in_bullish_zone = any(
             z.side == Side.BUY and price_in_zone(ticker.last_price, z, s.smc.zone_touch_tolerance_pct)
@@ -182,7 +240,16 @@ class AnalysisPipeline:
             for z in smc_zones
             if z.kind in {"order_block", "fvg", "mitigation_block", "breaker"}
         )
-        if not in_bullish_zone and not in_bearish_zone:
+        ict_zone = (
+            ict_state.valid
+            and ict_state.fvg_bottom > 0
+            and (ict_state.fvg_bottom * 0.998) <= ticker.last_price <= (ict_state.fvg_top * 1.002)
+        ) or (
+            ict_state.valid
+            and abs(ticker.last_price - ict_state.entry) / max(ticker.last_price, 1e-12)
+            <= s.ict_2022.entry_proximity_pct
+        )
+        if not in_bullish_zone and not in_bearish_zone and not ict_zone:
             rejects.append("Price not revisiting a valid institutional zone")
 
         if not volatility.sufficient:
@@ -214,6 +281,7 @@ class AnalysisPipeline:
             volatility=volatility,
             price=ticker.last_price,
             candles_exec=exec_candles,
+            ict_2022=ict_state,
             liquidation=liquidation,
             cross_exchange=cross,
             market_meta=market_meta,

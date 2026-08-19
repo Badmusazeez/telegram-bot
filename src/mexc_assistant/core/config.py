@@ -46,6 +46,20 @@ class SMCConfig(BaseModel):
     zone_touch_tolerance_pct: float = 0.0015
 
 
+class ICT2022Config(BaseModel):
+    """ICT 2022 Model: HTF SSL/BSL sweep → LTF MSS → FVG entry."""
+
+    enabled: bool = True
+    require_for_alert: bool = True
+    htf_interval: str = "Min15"
+    ltf_interval: str = "Min5"
+    htf_sweep_lookback: int = 40
+    stop_buffer_pct: float = 0.0003
+    entry_proximity_pct: float = 0.004
+    min_model_rr: float = 2.0
+    fallback_target_extension: float = 1.5
+
+
 class OrderFlowConfig(BaseModel):
     trade_window: int = 200
     imbalance_threshold: float = 1.35
@@ -93,13 +107,14 @@ class ConfidenceConfig(BaseModel):
     min_positive_categories: int = 6
     weights: dict[str, float] = Field(
         default_factory=lambda: {
-            "ema_alignment": 12,
-            "higher_timeframe": 10,
-            "market_structure": 10,
-            "smart_money": 10,
+            "ema_alignment": 10,
+            "higher_timeframe": 9,
+            "market_structure": 8,
+            "smart_money": 7,
+            "ict_2022": 12,
             "liquidity_sweep": 8,
-            "order_flow": 12,
-            "open_interest": 8,
+            "order_flow": 9,
+            "open_interest": 7,
             "funding_rate": 5,
             "liquidation_heatmap": 8,
             "volume_confirmation": 7,
@@ -167,6 +182,7 @@ class Settings(BaseModel):
     ema: EMAConfig = Field(default_factory=EMAConfig)
     structure: StructureConfig = Field(default_factory=StructureConfig)
     smc: SMCConfig = Field(default_factory=SMCConfig)
+    ict_2022: ICT2022Config = Field(default_factory=ICT2022Config)
     order_flow: OrderFlowConfig = Field(default_factory=OrderFlowConfig)
     open_interest: OpenInterestConfig = Field(default_factory=OpenInterestConfig)
     funding: FundingConfig = Field(default_factory=FundingConfig)

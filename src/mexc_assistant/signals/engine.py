@@ -200,6 +200,15 @@ class SignalEngine:
                 "confidence_summary": breakdown.summary,
                 "cross_exchange": bundle.cross_exchange.notes,
                 "news": bundle.news.notes,
+                "ict_2022": {
+                    "valid": bundle.ict_2022.valid,
+                    "side": bundle.ict_2022.side.value if bundle.ict_2022.side else None,
+                    "quality": bundle.ict_2022.quality,
+                    "entry": bundle.ict_2022.entry,
+                    "stop": bundle.ict_2022.stop_loss,
+                    "target": bundle.ict_2022.target,
+                    "notes": bundle.ict_2022.notes,
+                },
                 "market_meta": {
                     "rank": bundle.market_meta.rank,
                     "market_cap": bundle.market_meta.market_cap,
@@ -223,37 +232,55 @@ class SignalEngine:
 
     def _hard_fails(self, side: Side, bundle: AnalysisBundle, reasons: list[str]) -> list[str]:
         out = list(reasons)
+        ict = bundle.ict_2022
+        ict_ok = (
+            self.settings.ict_2022.enabled
+            and ict.valid
+            and ict.side == side
+            and ict.htf_sweep
+            and ict.mss
+        )
+
+        if self.settings.ict_2022.enabled and self.settings.ict_2022.require_for_alert and not ict_ok:
+            out.append("ICT 2022 Model not confirmed for this side")
+
         if side == Side.BUY:
-            if bundle.ema.flat_or_intertwined or not (
-                bundle.ema.aligned_long
-                or (bundle.ema.price_above_ema20 and bundle.higher_tf_trend == Trend.BULLISH)
+            if not ict_ok and (
+                bundle.ema.flat_or_intertwined
+                or not (
+                    bundle.ema.aligned_long
+                    or (bundle.ema.price_above_ema20 and bundle.higher_tf_trend == Trend.BULLISH)
+                )
             ):
                 out.append("EMA stack does not support long")
             if bundle.order_flow.supports_short and not bundle.order_flow.supports_long:
                 out.append("Order flow contradicts long")
-            if not bundle.liquidity.swept_low:
+            if not ict_ok and not bundle.liquidity.swept_low:
                 out.append("No bullish liquidity sweep/rejection yet")
-            if bundle.higher_tf_trend != Trend.BULLISH:
+            if not ict_ok and bundle.higher_tf_trend != Trend.BULLISH:
                 out.append("HTF structure not bullish")
             if not bundle.volume.above_average:
                 out.append("Low-volume breakout rejected")
-            if not any(z.side == Side.BUY for z in bundle.smc_zones):
+            if not ict_ok and not any(z.side == Side.BUY for z in bundle.smc_zones):
                 out.append("No bullish SMC zone confirmation")
         else:
-            if bundle.ema.flat_or_intertwined or not (
-                bundle.ema.aligned_short
-                or (bundle.ema.price_below_ema20 and bundle.higher_tf_trend == Trend.BEARISH)
+            if not ict_ok and (
+                bundle.ema.flat_or_intertwined
+                or not (
+                    bundle.ema.aligned_short
+                    or (bundle.ema.price_below_ema20 and bundle.higher_tf_trend == Trend.BEARISH)
+                )
             ):
                 out.append("EMA stack does not support short")
             if bundle.order_flow.supports_long and not bundle.order_flow.supports_short:
                 out.append("Order flow contradicts short")
-            if not bundle.liquidity.swept_high:
+            if not ict_ok and not bundle.liquidity.swept_high:
                 out.append("No bearish liquidity sweep/rejection yet")
-            if bundle.higher_tf_trend != Trend.BEARISH:
+            if not ict_ok and bundle.higher_tf_trend != Trend.BEARISH:
                 out.append("HTF structure not bearish")
             if not bundle.volume.above_average:
                 out.append("Low-volume breakout rejected")
-            if not any(z.side == Side.SELL for z in bundle.smc_zones):
+            if not ict_ok and not any(z.side == Side.SELL for z in bundle.smc_zones):
                 out.append("No bearish SMC zone confirmation")
 
         if (
@@ -284,12 +311,21 @@ class SignalEngine:
                     "no bullish smc",
                     "no bearish smc",
                     "news volatility suppression",
+                    "ict 2022",
                 )
             ):
                 hard.append(r)
         return hard
 
     def _resolve_side(self, bundle: AnalysisBundle, reasons: list[str]) -> Side | None:
+        # ICT 2022 Model takes priority when a complete setup is present
+        if (
+            self.settings.ict_2022.enabled
+            and bundle.ict_2022.valid
+            and bundle.ict_2022.side is not None
+        ):
+            return bundle.ict_2022.side
+
         # Multi-category gate: trend + EMA + structure + SMC + order flow
         long_ok = (
             bundle.higher_tf_trend == Trend.BULLISH
@@ -305,6 +341,9 @@ class SignalEngine:
             and bundle.order_flow.supports_short
             and any(z.side == Side.SELL for z in bundle.smc_zones)
         )
+        if self.settings.ict_2022.enabled and self.settings.ict_2022.require_for_alert:
+            reasons.append("ICT 2022 Model required — no complete SSL/BSL → MSS → FVG setup")
+            return None
         if long_ok and short_ok:
             reasons.append("Both sides partially valid — idle to avoid forcing trade")
             return None

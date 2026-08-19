@@ -11,8 +11,9 @@ It does **not** place orders. Quality over quantity — the assistant stays idle
 - Live MEXC Futures REST + WebSocket market data
 - OKX cross-exchange validation (price, OI, funding, trend, liquidations)
 - CoinMarketCap market metadata + news/security intelligence
+- **ICT 2022 Model** (primary entry): HTF SSL/BSL sweep → LTF MSS → FVG at discount/premium
 - Higher-timeframe bias: Daily / 4H / 1H
-- Execution timing: 15m / 5m
+- Execution timing: 15m / 5m (1m optional for ICT LTF)
 - EMA 20/50/100/200 alignment filters (never used alone)
 - Market structure (HH/HL/LH/LL, BOS, CHoCH)
 - SMC zones (order blocks, FVG, breakers, mitigation, premium/discount)

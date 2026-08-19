@@ -136,6 +136,30 @@ class LiquidityState:
 
 
 @dataclass(slots=True)
+class ICT2022State:
+    """ICT 2022 Model snapshot attached to each analysis bundle."""
+
+    valid: bool = False
+    side: Side | None = None
+    htf_sweep: bool = False
+    mss: bool = False
+    fvg_top: float = 0.0
+    fvg_bottom: float = 0.0
+    entry: float = 0.0
+    stop_loss: float = 0.0
+    target: float = 0.0
+    equilibrium: float = 0.0
+    displacement_high: float = 0.0
+    displacement_low: float = 0.0
+    in_discount: bool = False
+    in_premium: bool = False
+    quality: float = 0.0
+    swept_level: float = 0.0
+    mss_level: float = 0.0
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class OrderFlowState:
     buy_volume: float
     sell_volume: float
@@ -311,6 +335,7 @@ class AnalysisBundle:
     volatility: VolatilityState
     price: float
     candles_exec: list[Candle]
+    ict_2022: ICT2022State = field(default_factory=ICT2022State)
     liquidation: LiquidationHeatmapState = field(default_factory=LiquidationHeatmapState)
     cross_exchange: CrossExchangeState = field(default_factory=CrossExchangeState)
     market_meta: MarketMetaState = field(default_factory=MarketMetaState)

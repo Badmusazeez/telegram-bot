@@ -44,6 +44,20 @@ smc:
   order_block_lookback: 30
   zone_touch_tolerance_pct: 0.0015
 
+# ICT 2022 Model (primary entry framework)
+# BUY: HTF SSL sweep → LTF MSS above swing high → discount FVG → buy FVG high → BSL
+# SELL: HTF BSL sweep → LTF MSS below swing low → premium FVG → sell FVG low → SSL
+ict_2022:
+  enabled: true
+  require_for_alert: true
+  htf_interval: Min15
+  ltf_interval: Min5
+  htf_sweep_lookback: 40
+  stop_buffer_pct: 0.0003
+  entry_proximity_pct: 0.004
+  min_model_rr: 2.0
+  fallback_target_extension: 1.5
+
 order_flow:
   trade_window: 200
   imbalance_threshold: 1.35
@@ -84,13 +98,14 @@ confidence:
   negative_threshold: 40
   min_positive_categories: 6
   weights:
-    ema_alignment: 12
-    higher_timeframe: 10
-    market_structure: 10
-    smart_money: 10
+    ema_alignment: 10
+    higher_timeframe: 9
+    market_structure: 8
+    smart_money: 7
+    ict_2022: 12
     liquidity_sweep: 8
-    order_flow: 12
-    open_interest: 8
+    order_flow: 9
+    open_interest: 7
     funding_rate: 5
     liquidation_heatmap: 8
     volume_confirmation: 7

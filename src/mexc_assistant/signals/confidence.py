@@ -18,6 +18,7 @@ FACTOR_LABELS = {
     "higher_timeframe": "Higher-Timeframe Trend",
     "market_structure": "Market Structure (BOS/CHoCH)",
     "smart_money": "Smart Money Concepts",
+    "ict_2022": "ICT 2022 Model",
     "liquidity_sweep": "Liquidity Sweep",
     "order_flow": "Order Flow Confirmation",
     "open_interest": "Open Interest Confirmation",
@@ -115,6 +116,30 @@ def score_signal(
     else:
         scores["smart_money"] = 20.0
         explanations["smart_money"] = "No supportive SMC zone nearby"
+
+    # ICT 2022 Model (HTF sweep → LTF MSS → FVG)
+    ict = bundle.ict_2022
+    if ict.valid and ict.side == side:
+        scores["ict_2022"] = max(70.0, float(ict.quality))
+        zone_tag = (
+            "discount FVG"
+            if side == Side.BUY and ict.in_discount
+            else (
+                "premium FVG"
+                if side == Side.SELL and ict.in_premium
+                else "displacement FVG"
+            )
+        )
+        explanations["ict_2022"] = (
+            f"Complete ICT 2022: HTF {'SSL' if side == Side.BUY else 'BSL'} sweep + "
+            f"LTF MSS + {zone_tag} (q={ict.quality:.0f})"
+        )
+    elif ict.htf_sweep and ict.side == side:
+        scores["ict_2022"] = 35.0
+        explanations["ict_2022"] = "HTF liquidity swept but LTF MSS/FVG incomplete"
+    else:
+        scores["ict_2022"] = 15.0
+        explanations["ict_2022"] = "ICT 2022 sequence not present for this side"
 
     # Liquidity sweep
     if side == Side.BUY:

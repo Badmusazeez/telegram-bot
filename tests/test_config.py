@@ -20,6 +20,7 @@ def test_confidence_weight_keys():
         "higher_timeframe",
         "market_structure",
         "smart_money",
+        "ict_2022",
         "liquidity_sweep",
         "order_flow",
         "open_interest",
@@ -30,3 +31,11 @@ def test_confidence_weight_keys():
         "risk_reward",
     }
     assert set(settings.confidence.weights) == expected
+
+
+def test_ict_2022_config_loaded():
+    settings = load_settings("config/settings.yaml")
+    assert settings.ict_2022.enabled is True
+    assert settings.ict_2022.require_for_alert is True
+    assert settings.ict_2022.htf_interval == "Min15"
+    assert settings.ict_2022.ltf_interval == "Min5"

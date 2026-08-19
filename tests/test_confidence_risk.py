@@ -5,6 +5,7 @@ from mexc_assistant.core.models import (
     ConfidenceLevel,
     EMAState,
     FundingState,
+    ICT2022State,
     LiquidationHeatmapState,
     LiquidityState,
     OpenInterestState,
@@ -27,7 +28,7 @@ from mexc_assistant.alerts.formatter import format_signal_message
 from mexc_assistant.core.models import SMCZone
 
 
-def _bundle(side_bias: str = "long", with_zone: bool = False) -> AnalysisBundle:
+def _bundle(side_bias: str = "long", with_zone: bool = False, with_ict: bool = False) -> AnalysisBundle:
     bullish = side_bias == "long"
     price = 100.0
     candles = [Candle(i, price - 1, price + 1, price - 2, price, 2000) for i in range(40)]
@@ -47,6 +48,49 @@ def _bundle(side_bias: str = "long", with_zone: bool = False) -> AnalysisBundle:
                 strength=1.0,
             )
         ]
+
+    ict = ICT2022State()
+    if with_ict:
+        if bullish:
+            ict = ICT2022State(
+                valid=True,
+                side=Side.BUY,
+                htf_sweep=True,
+                mss=True,
+                fvg_top=100.5,
+                fvg_bottom=99.5,
+                entry=100.5,
+                stop_loss=97.0,
+                target=110.0,
+                equilibrium=100.0,
+                displacement_high=104.0,
+                displacement_low=97.5,
+                in_discount=True,
+                quality=90.0,
+                swept_level=98.0,
+                mss_level=101.0,
+                notes=["ICT 2022 BUY test"],
+            )
+        else:
+            ict = ICT2022State(
+                valid=True,
+                side=Side.SELL,
+                htf_sweep=True,
+                mss=True,
+                fvg_top=100.5,
+                fvg_bottom=99.5,
+                entry=99.5,
+                stop_loss=103.0,
+                target=90.0,
+                equilibrium=100.0,
+                displacement_high=103.5,
+                displacement_low=96.0,
+                in_premium=True,
+                quality=90.0,
+                swept_level=102.0,
+                mss_level=99.0,
+                notes=["ICT 2022 SELL test"],
+            )
 
     return AnalysisBundle(
         symbol="BTC_USDT",
@@ -123,6 +167,7 @@ def _bundle(side_bias: str = "long", with_zone: bool = False) -> AnalysisBundle:
         volatility=VolatilityState(atr=1.5, atr_pct=0.015, sufficient=True),
         price=price,
         candles_exec=candles,
+        ict_2022=ict,
         liquidation=LiquidationHeatmapState(
             long_pools=[96, 97],
             short_pools=[103, 104],
@@ -146,6 +191,7 @@ def test_confidence_levels():
 
 def test_risk_plan_rr_minimum():
     settings = load_settings("config/settings.yaml")
+    settings.ict_2022.require_for_alert = False
     rm = RiskManager(settings)
     plan = rm.build_plan(Side.BUY, _bundle("long", with_zone=True))
     assert plan is not None
@@ -154,16 +200,29 @@ def test_risk_plan_rr_minimum():
     assert plan.tp3 > plan.entry
 
 
+def test_ict_risk_plan_uses_fvg_entry():
+    settings = load_settings("config/settings.yaml")
+    rm = RiskManager(settings)
+    bundle = _bundle("long", with_zone=True, with_ict=True)
+    plan = rm.build_plan(Side.BUY, bundle)
+    assert plan is not None
+    assert plan.entry == bundle.ict_2022.entry
+    assert plan.stop_loss == bundle.ict_2022.stop_loss
+    assert plan.final_target == bundle.ict_2022.target
+
+
 def test_confidence_scoring_explanations():
     settings = load_settings("config/settings.yaml")
     rm = RiskManager(settings)
-    bundle = _bundle("long", with_zone=True)
+    bundle = _bundle("long", with_zone=True, with_ict=True)
     plan = rm.build_plan(Side.BUY, bundle)
     assert plan is not None
     breakdown = score_signal(Side.BUY, bundle, plan, settings.confidence)
     assert 0 <= breakdown.total <= 100
     assert abs(sum(settings.confidence.weights.values()) - 100) < 1e-6
     assert "smart_money" in breakdown.scores
+    assert "ict_2022" in breakdown.scores
+    assert breakdown.scores["ict_2022"] >= 70
     assert "liquidation_heatmap" in breakdown.scores
     assert breakdown.factors
     assert breakdown.positive
@@ -173,10 +232,21 @@ def test_confidence_scoring_explanations():
 
 def test_signal_engine_idle_without_zone():
     settings = load_settings("config/settings.yaml")
+    settings.ict_2022.require_for_alert = False
     engine = SignalEngine(settings, RiskManager(settings))
     signal, decision = engine.evaluate(_bundle("long", with_zone=False))
     assert signal is None
     assert decision.accepted is False
+
+
+def test_signal_engine_accepts_ict_setup():
+    settings = load_settings("config/settings.yaml")
+    engine = SignalEngine(settings, RiskManager(settings))
+    signal, decision = engine.evaluate(_bundle("long", with_zone=True, with_ict=True))
+    assert decision.accepted is True
+    assert signal is not None
+    assert signal.side == Side.BUY
+    assert "ICT 2022" in signal.reason
 
 
 def test_formatter_signal_only():

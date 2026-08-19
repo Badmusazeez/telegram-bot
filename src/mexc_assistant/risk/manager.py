@@ -67,11 +67,70 @@ class RiskManager:
     def build_plan(self, side: Side, bundle: AnalysisBundle) -> RiskPlan | None:
         cfg = self.settings.risk
         vol_cfg = self.settings.volatility
-        entry = bundle.price
         atr = bundle.volatility.atr
         if atr <= 0:
             return None
 
+        ict = bundle.ict_2022
+        use_ict = (
+            self.settings.ict_2022.enabled
+            and ict.valid
+            and ict.side == side
+            and ict.entry > 0
+            and ict.stop_loss > 0
+            and ict.target > 0
+        )
+
+        if use_ict:
+            entry = ict.entry
+            stop = ict.stop_loss
+            if side == Side.BUY:
+                risk = entry - stop
+            else:
+                risk = stop - entry
+            if risk <= 0:
+                return None
+            # ICT primary target is opposite liquidity; still emit TP ladder
+            final = ict.target
+            if side == Side.BUY:
+                if final <= entry:
+                    return None
+                span = final - entry
+                tp1, tp2, tp3 = entry + span * 0.4, entry + span * 0.7, final
+            else:
+                if final >= entry:
+                    return None
+                span = entry - final
+                tp1, tp2, tp3 = entry - span * 0.4, entry - span * 0.7, final
+            rr = abs(final - entry) / risk
+            if rr < cfg.min_rr:
+                # Stretch final slightly only if still short of min RR but model target exists
+                needed = risk * cfg.min_rr
+                if side == Side.BUY:
+                    final = entry + needed
+                    tp3 = final
+                else:
+                    final = entry - needed
+                    tp3 = final
+                rr = abs(final - entry) / risk
+            if rr < cfg.min_rr:
+                return None
+            risk_amount = cfg.account_equity * cfg.risk_per_trade_pct
+            position_size = risk_amount / risk
+            return RiskPlan(
+                entry=entry,
+                stop_loss=stop,
+                tp1=tp1,
+                tp2=tp2,
+                tp3=tp3,
+                final_target=final,
+                risk_reward=rr,
+                position_size=position_size,
+                risk_amount=risk_amount,
+                trailing_after_tp1=cfg.trailing_after_tp1,
+            )
+
+        entry = bundle.price
         structure_stop = (
             bundle.structure.swing_low
             if side == Side.BUY

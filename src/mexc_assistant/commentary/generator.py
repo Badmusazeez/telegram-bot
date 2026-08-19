@@ -42,6 +42,22 @@ def _flow_text(bundle: AnalysisBundle) -> str:
 
 
 def generate_reason(side: Side, bundle: AnalysisBundle) -> str:
+    ict = bundle.ict_2022
+    if ict.valid and ict.side == side:
+        if side == Side.BUY:
+            return (
+                f"ICT 2022 BUY: HTF sellside liquidity ({ict.swept_level:,.4g}) swept, "
+                f"LTF market structure shift above {ict.mss_level:,.4g}, "
+                f"{'discount ' if ict.in_discount else ''}FVG entry at {ict.entry:,.4g} "
+                f"targeting buyside liquidity {ict.target:,.4g}."
+            )
+        return (
+            f"ICT 2022 SELL: HTF buyside liquidity ({ict.swept_level:,.4g}) swept, "
+            f"LTF market structure shift below {ict.mss_level:,.4g}, "
+            f"{'premium ' if ict.in_premium else ''}FVG entry at {ict.entry:,.4g} "
+            f"targeting sellside liquidity {ict.target:,.4g}."
+        )
+
     trend = (
         "uptrend"
         if bundle.higher_tf_trend == Trend.BULLISH
