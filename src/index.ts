@@ -3,6 +3,7 @@ import { maybeCopyPurchase } from "./robinhood/copyExecutor";
 import { startMintScheduler } from "./robinhood/mintScheduler";
 import { startBlockscoutWatcher } from "./robinhood/blockscoutWatcher";
 import { startHeartbeat } from "./robinhood/heartbeat";
+import { startRpcQuotaWatcher } from "./robinhood/rpcQuotaWatcher";
 import { enrichPurchase, startMonitor } from "./robinhood/monitor";
 import { startPendingWatcher } from "./robinhood/pendingWatcher";
 import { startTipScanWatcher } from "./robinhood/tipScanWatcher";
@@ -235,6 +236,10 @@ async function main(): Promise<void> {
     await broadcastHtml(bot, html);
   });
 
+  const stopRpcQuota = startRpcQuotaWatcher(async (html) => {
+    await broadcastHtml(bot, html);
+  });
+
   setSlotRaceHandler(async (event) => {
     // BURST is already collapsed to one SUBMITTED summary in slotRace.
     if (event.phase === "LOST_RACE") {
@@ -256,6 +261,7 @@ async function main(): Promise<void> {
     stopPrices();
     stopSchedules();
     stopHeartbeat();
+    stopRpcQuota();
     bot.stop();
   };
   process.once("SIGINT", () => shutdown("SIGINT"));

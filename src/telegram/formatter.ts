@@ -176,6 +176,7 @@ export function helpText(): string {
     `/start — register this chat for alerts`,
     `/help — show this help`,
     `/status — bot + wallet status`,
+    `/rpcquota — Alchemy + Chainstack RPC limit % (also auto every 6h)`,
     `/wallets — list tracked wallets`,
     `/track &lt;address&gt; [label] — track a wallet`,
     `/untrack &lt;address&gt; — stop tracking`,

@@ -22,6 +22,22 @@ const schema = z.object({
   /** Optional mint backup RPC. */
   MINT_RPC_BACKUP_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
+  /** Alchemy Admin API access key (Usage API) — for exact CU % reports. */
+  ALCHEMY_ADMIN_KEY: z.string().optional().default(""),
+  /** Chainstack Platform API key — for exact RU % reports. */
+  CHAINSTACK_API_KEY: z.string().optional().default(""),
+  /** Monthly RU quota for Chainstack plan (Developer free = 3000000). */
+  CHAINSTACK_MONTHLY_RU_LIMIT: z
+    .string()
+    .optional()
+    .default("3000000")
+    .transform((v) => Number(v)),
+  /** How often to Telegram RPC quota % (default 6h). */
+  RPC_QUOTA_INTERVAL_MS: z
+    .string()
+    .optional()
+    .default(String(6 * 60 * 60 * 1000))
+    .transform((v) => Number(v)),
   COPY_ENABLED: z
     .string()
     .optional()
@@ -180,6 +196,18 @@ export const config = {
     extractAlchemyKey(mintRpcUrl) ||
     extractAlchemyKey(trackBackupRpcUrl) ||
     "",
+  alchemyAdminKey: env.ALCHEMY_ADMIN_KEY.trim(),
+  chainstackApiKey: env.CHAINSTACK_API_KEY.trim(),
+  chainstackMonthlyRuLimit:
+    Number.isFinite(env.CHAINSTACK_MONTHLY_RU_LIMIT) &&
+    env.CHAINSTACK_MONTHLY_RU_LIMIT > 0
+      ? Math.floor(env.CHAINSTACK_MONTHLY_RU_LIMIT)
+      : 3_000_000,
+  rpcQuotaIntervalMs:
+    Number.isFinite(env.RPC_QUOTA_INTERVAL_MS) &&
+    env.RPC_QUOTA_INTERVAL_MS >= 60_000
+      ? env.RPC_QUOTA_INTERVAL_MS
+      : 6 * 60 * 60 * 1000,
   copyEnabled: env.COPY_ENABLED,
   dryRun: env.DRY_RUN,
   freeMintsOnly: env.FREE_MINTS_ONLY,

@@ -46,6 +46,10 @@ import {
 } from "./formatter";
 import { getLastCopySummary } from "../robinhood/copyExecutor";
 import { getBlockscoutStatus } from "../robinhood/blockscoutWatcher";
+import {
+  collectRpcQuotaReport,
+  formatRpcQuotaReport,
+} from "../robinhood/rpcQuota";
 import type {
   CopyResult,
   NftPurchase,
@@ -93,6 +97,18 @@ export function createTelegramBot(): Bot {
 
   bot.command("help", async (ctx) => {
     await ctx.reply(helpText(), { parse_mode: "HTML" });
+  });
+
+  bot.command("rpcquota", async (ctx) => {
+    await ctx.reply("Checking Alchemy + Chainstack RPC quotas…");
+    try {
+      const report = await collectRpcQuotaReport();
+      await ctx.reply(formatRpcQuotaReport(report), { parse_mode: "HTML" });
+    } catch (err) {
+      await ctx.reply(
+        `Quota check failed: ${err instanceof Error ? err.message : err}`
+      );
+    }
   });
 
   bot.command("status", async (ctx) => {
