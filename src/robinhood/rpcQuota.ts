@@ -135,18 +135,59 @@ async function probeJsonRpc(
   }
 }
 
+async function resolveAlchemyUsageKey(): Promise<{
+  key: string;
+  kind: "admin" | "none";
+  hint: string;
+}> {
+  const admin = config.alchemyAdminKey.trim();
+  if (admin) return { key: admin, kind: "admin", hint: "" };
+
+  const app = config.alchemyApiKey.trim();
+  // App RPC keys look like alch_… — they cannot call Usage API (401).
+  if (app.startsWith("alch_")) {
+    return {
+      key: "",
+      kind: "none",
+      hint:
+        "ALCHEMY_API_KEY is an app RPC key (alch_…) — it cannot read CU %. Create Access Key: dashboard.alchemy.com → Security → Access Keys → enable Usage read → set ALCHEMY_ADMIN_KEY=…",
+    };
+  }
+  // Non-alch value in ALCHEMY_API_KEY might be an Access Key the user put in the wrong var.
+  if (app && !app.startsWith("alch_")) {
+    return { key: app, kind: "admin", hint: "" };
+  }
+  return {
+    key: "",
+    kind: "none",
+    hint:
+      "Create Access Key: dashboard.alchemy.com → Security → Access Keys → enable Usage read → set ALCHEMY_ADMIN_KEY in .env (NOT the alch_ app key)",
+  };
+}
+
 async function fetchAlchemyAdminUsage(): Promise<Partial<ProviderQuota> | null> {
-  const key = config.alchemyAdminKey;
-  if (!key) return null;
+  const resolved = await resolveAlchemyUsageKey();
+  if (!resolved.key) {
+    return {
+      detail: resolved.hint,
+      source: "admin_api",
+      status: "UNKNOWN",
+    };
+  }
   try {
     const res = await fetch("https://admin-api.alchemy.com/v1/usage/summary", {
-      headers: { Authorization: `Bearer ${key}` },
+      headers: { Authorization: `Bearer ${resolved.key}` },
       signal: AbortSignal.timeout(15_000),
     });
     const text = await res.text();
     if (!res.ok) {
+      const isAppKey =
+        resolved.key.startsWith("alch_") ||
+        /invalid api key|unauthorized|401/i.test(text);
       return {
-        detail: `Admin API HTTP ${res.status}: ${text.slice(0, 120)}`,
+        detail: isAppKey
+          ? `Alchemy Usage API rejected this key (HTTP ${res.status}). Your alch_ app key cannot read %. Set ALCHEMY_ADMIN_KEY = Access Key with Usage read permission.`
+          : `Admin API HTTP ${res.status}: ${text.slice(0, 120)}`,
         source: "admin_api",
         status: "UNKNOWN",
       };
@@ -160,43 +201,61 @@ async function fetchAlchemyAdminUsage(): Promise<Partial<ProviderQuota> | null> 
           remaining?: string | number;
           percentUsed?: number;
         };
+        totals?: {
+          monthToDate?: {
+            amount?: string | number;
+            unit?: string;
+          };
+        };
       };
     };
     const ul = json.data?.usageLimit;
-    if (!ul) {
+    if (ul) {
+      const used = Number(ul.used);
+      const limit = Number(ul.limit);
+      const remaining = Number(ul.remaining);
+      const percentUsed =
+        typeof ul.percentUsed === "number"
+          ? ul.percentUsed
+          : limit > 0 && Number.isFinite(used)
+            ? Math.round((used / limit) * 1000) / 10
+            : null;
       return {
-        detail: "Admin API: no usageLimit in response",
+        percentUsed,
+        used: Number.isFinite(used) ? used : undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        remaining: Number.isFinite(remaining) ? remaining : undefined,
+        unit: ul.unit || "CU",
+        status: percentUsed != null && percentUsed >= 100 ? "FULL" : "OK",
+        detail:
+          percentUsed != null
+            ? `${formatNum(used)} / ${formatNum(limit)} ${ul.unit || "CU"}`
+            : "usageLimit present but percent unknown",
         source: "admin_api",
-        status: "UNKNOWN",
       };
     }
-    const used = Number(ul.used);
-    const limit = Number(ul.limit);
-    const remaining = Number(ul.remaining);
-    const percentUsed =
-      typeof ul.percentUsed === "number"
-        ? ul.percentUsed
-        : limit > 0 && Number.isFinite(used)
-          ? Math.round((used / limit) * 1000) / 10
-          : null;
-    const status: RpcQuotaStatus =
-      percentUsed != null && percentUsed >= 100
-        ? "FULL"
-        : percentUsed != null && percentUsed >= 90
-          ? "OK"
-          : "OK";
+
+    // Fallback: monthToDate + configured monthly CU limit.
+    const mtd = Number(json.data?.totals?.monthToDate?.amount);
+    const limit = config.alchemyMonthlyCuLimit;
+    if (Number.isFinite(mtd) && limit > 0) {
+      const percentUsed = Math.round((mtd / limit) * 1000) / 10;
+      return {
+        percentUsed,
+        used: mtd,
+        limit,
+        remaining: Math.max(0, limit - mtd),
+        unit: "CU",
+        status: percentUsed >= 100 ? "FULL" : "OK",
+        detail: `${formatNum(mtd)} / ${formatNum(limit)} CU (month-to-date)`,
+        source: "admin_api",
+      };
+    }
+
     return {
-      percentUsed,
-      used: Number.isFinite(used) ? used : undefined,
-      limit: Number.isFinite(limit) ? limit : undefined,
-      remaining: Number.isFinite(remaining) ? remaining : undefined,
-      unit: ul.unit || "CU",
-      status: percentUsed != null && percentUsed >= 100 ? "FULL" : status,
-      detail:
-        percentUsed != null
-          ? `${formatNum(used)} / ${formatNum(limit)} ${ul.unit || "CU"}`
-          : "usageLimit present but percent unknown",
+      detail: "Admin API: no usageLimit in response (Usage read permission may be missing)",
       source: "admin_api",
+      status: "UNKNOWN",
     };
   } catch (err) {
     return {
@@ -361,9 +420,8 @@ export async function collectRpcQuotaReport(): Promise<RpcQuotaReport> {
       "track",
       rpcLabels.track,
       alchemyProbe,
-      alchemyAdmin?.detail
-        ? alchemyAdmin.detail
-        : "set ALCHEMY_ADMIN_KEY for exact CU %"
+      alchemyAdmin?.detail ||
+        "set ALCHEMY_ADMIN_KEY (Access Key with Usage read) for exact CU %"
     );
   }
 
@@ -435,14 +493,32 @@ export function formatRpcQuotaReport(report: RpcQuotaReport): string {
     ].filter((x) => x !== "");
   };
 
+  const needsAlchemySetup = report.alchemy.percentUsed == null;
+  const needsChainstackSetup = report.chainstack.percentUsed == null;
+
   return [
     `<b>📊 RPC quota report</b>`,
     `<i>${esc(report.at)} · every 6h</i>`,
     ``,
     ...line(report.alchemy),
     ...line(report.chainstack),
-    `<i>Exact % needs ALCHEMY_ADMIN_KEY + CHAINSTACK_API_KEY in .env</i>`,
-  ].join("\n");
+    needsAlchemySetup
+      ? [
+          `<b>Alchemy exact CU % setup</b>`,
+          `1. Open <a href="https://dashboard.alchemy.com">dashboard.alchemy.com</a> → <b>Security</b> → <b>Access Keys</b>`,
+          `2. Create key → enable <b>Usage read</b>`,
+          `3. On VPS: <code>ALCHEMY_ADMIN_KEY=your_access_key</code>`,
+          `4. <code>pm2 restart robinhood-nft-bot --update-env</code>`,
+          `Note: <code>alch_…</code> app key is for RPC only — not for usage %.`,
+          ``,
+        ].join("\n")
+      : "",
+    needsChainstackSetup
+      ? `<i>Chainstack exact RU %: set CHAINSTACK_API_KEY from console.chainstack.com → API keys</i>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function esc(text: string): string {

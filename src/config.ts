@@ -24,6 +24,12 @@ const schema = z.object({
   ALCHEMY_API_KEY: z.string().optional().default(""),
   /** Alchemy Admin API access key (Usage API) — for exact CU % reports. */
   ALCHEMY_ADMIN_KEY: z.string().optional().default(""),
+  /** Optional monthly CU ceiling when Admin API returns monthToDate without usageLimit. */
+  ALCHEMY_MONTHLY_CU_LIMIT: z
+    .string()
+    .optional()
+    .default("30000000")
+    .transform((v) => Number(v)),
   /** Chainstack Platform API key — for exact RU % reports. */
   CHAINSTACK_API_KEY: z.string().optional().default(""),
   /** Monthly RU quota for Chainstack plan (Developer free = 3000000). */
@@ -197,6 +203,11 @@ export const config = {
     extractAlchemyKey(trackBackupRpcUrl) ||
     "",
   alchemyAdminKey: env.ALCHEMY_ADMIN_KEY.trim(),
+  alchemyMonthlyCuLimit:
+    Number.isFinite(env.ALCHEMY_MONTHLY_CU_LIMIT) &&
+    env.ALCHEMY_MONTHLY_CU_LIMIT > 0
+      ? Math.floor(env.ALCHEMY_MONTHLY_CU_LIMIT)
+      : 30_000_000,
   chainstackApiKey: env.CHAINSTACK_API_KEY.trim(),
   chainstackMonthlyRuLimit:
     Number.isFinite(env.CHAINSTACK_MONTHLY_RU_LIMIT) &&
