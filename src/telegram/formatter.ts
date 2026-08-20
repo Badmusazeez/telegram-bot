@@ -196,7 +196,7 @@ export function helpText(): string {
     `/pricepct &lt;percent&gt; — alert when price moves by this %`,
     `/openseakey — show OpenSea API key status`,
     `/openseakey refresh — force new instant key (7-day)`,
-    `/schedulemint &lt;opensea-url&gt; — auto schedule from OpenSea Drop time`,
+    `/schedulemint &lt;opensea-url&gt; — detect all stages, arm public/general at exact time (sharp mode)`,
     `/schedulemint &lt;when&gt; &lt;opensea-url&gt; — manual time + OpenSea link`,
     `/schedulemint &lt;when&gt; &lt;contract&gt; &lt;mint|mint1|0x...&gt; — advanced`,
     `/mintslug &lt;opensea-url|slug&gt; — MAX-mint OpenSea drop now on all mint wallets`,
@@ -204,23 +204,37 @@ export function helpText(): string {
     `/schedules — list scheduled mints`,
     `/cancelschedule &lt;id&gt; — cancel a pending schedule`,
     ``,
+    `<i>Sharp mode:</i> T-15s arm → exact timer → burst all keys. Keep the bot running.`,
     `<i>Slot race:</i> when a contract exposes nextFreeAt/startTime/etc., the bot arms wallets and bursts at window open.`,
   ].join("\n");
 }
 
 export function formatScheduleCreated(job: ScheduledMint): string {
+  const n = job.scheduleNumber ?? "?";
+  const leadSec = Math.round((job.leadMs ?? 15_000) / 1000);
+  const sharp = job.sharpMode !== false;
   return [
-    `<b>Mint scheduled</b>`,
-    `<b>ID:</b> <code>${escHtml(job.id)}</code>`,
-    `<b>Label:</b> ${escHtml(job.label)}`,
-    `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
-    `<b>To:</b> <code>${escHtml(job.to)}</code>`,
-    `<b>Data:</b> <code>${escHtml(job.data.slice(0, 66))}${job.data.length > 66 ? "…" : ""}</code>`,
-    job.sourceTxHash
-      ? `<b>Source tx:</b> <a href="${config.chain.explorerTxUrl(job.sourceTxHash)}">explorer</a>`
+    `<b>📅 Scheduled #${n}</b>`,
+    `<b>${escHtml(job.label)}</b>`,
+    job.openSeaSlug ? `<b>slug:</b> ${escHtml(job.openSeaSlug)}` : "",
+    `<b>Contract:</b> <code>${escHtml(job.to)}</code>`,
+    `<b>Keys:</b> all`,
+    sharp
+      ? `<b>T-${leadSec}s · sharp mode (exact timer + burst)</b>`
+      : `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
+    sharp ? `<b>Opens:</b> <code>${escHtml(job.executeAt)}</code>` : "",
+    job.stageLabel
+      ? `<b>Stage:</b> ${escHtml(job.stageLabel)}${
+          job.stageType ? ` (${escHtml(job.stageType)})` : ""
+        }`
       : "",
+    job.stagesSummary
+      ? `\n<b>Stages detected:</b>\n${escHtml(job.stagesSummary)}`
+      : "",
+    ``,
+    `<b>Keep the bot running.</b>`,
   ]
-    .filter(Boolean)
+    .filter((l) => l !== undefined && l !== "")
     .join("\n");
 }
 

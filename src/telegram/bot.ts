@@ -541,28 +541,23 @@ export function createTelegramBot(): Bot {
     // Link-only: /schedulemint <opensea-url>
     if (parts.length === 1 && parseOpenSeaUrl(parts[0])) {
       try {
-        await ctx.reply("Looking up OpenSea drop schedule…");
+        await ctx.reply(`⌛ Scheduling ${parts[0]}…`);
         const resolved = await resolveScheduleFromOpenSeaLink(parts[0]);
         const job = await addScheduledMint({
-          label: `opensea ${resolved.name} (${resolved.stageLabel})`,
+          label: resolved.name || resolved.slug,
           to: resolved.contract,
           // Placeholder; rebuilt from OpenSea Drops API at fire time.
           data: "0x",
           executeAt: resolved.executeAt,
           openSeaSlug: resolved.slug,
+          sharpMode: true,
+          leadMs: resolved.leadMs,
+          stageLabel: resolved.stageLabel,
+          stageType: resolved.stageType,
+          stagesSummary: resolved.stagesSummary,
         });
         await registerNotifyChat(chatId(ctx));
-        await ctx.reply(
-          [
-            formatScheduleCreated(job),
-            ``,
-            `<b>OpenSea drop:</b> <a href="${escape(resolved.openSeaUrl)}">${escape(resolved.name)}</a>`,
-            `<b>Stage:</b> ${escape(resolved.stageLabel)} (${escape(resolved.stageType)})`,
-            `<b>Time source:</b> OpenSea ${resolved.isLive ? "(live now → mint ASAP)" : "next stage start"}`,
-            `<i>Calldata will be built from OpenSea at mint time. Allowlist stages may still revert.</i>`,
-          ].join("\n"),
-          { parse_mode: "HTML" }
-        );
+        await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });
       } catch (err) {
         await ctx.reply(
           `❌ ${err instanceof Error ? err.message : String(err)}`
@@ -600,19 +595,23 @@ export function createTelegramBot(): Bot {
       try {
         const resolved = await resolveScheduleFromOpenSeaLink(targetRaw);
         const job = await addScheduledMint({
-          label: `opensea ${resolved.name} (manual time)`,
+          label: resolved.name || resolved.slug,
           to: resolved.contract,
           data: "0x",
           executeAt: when,
           openSeaSlug: resolved.slug,
+          sharpMode: true,
+          leadMs: resolved.leadMs,
+          stageLabel: resolved.stageLabel,
+          stageType: resolved.stageType,
+          stagesSummary: resolved.stagesSummary,
         });
         await registerNotifyChat(chatId(ctx));
         await ctx.reply(
           [
             formatScheduleCreated(job),
             ``,
-            `<b>OpenSea drop:</b> ${escape(resolved.name)}`,
-            `<b>Note:</b> using your manual time (OpenSea stage was ${escape(resolved.executeAt.toISOString())}).`,
+            `<i>Manual time override (OpenSea stage was ${escape(resolved.executeAt.toISOString())}).</i>`,
           ].join("\n"),
           { parse_mode: "HTML" }
         );

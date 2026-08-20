@@ -49,6 +49,8 @@ export type ScheduledMintStatus =
 
 export interface ScheduledMint {
   id: string;
+  /** Human-friendly schedule number shown in Telegram (#213). */
+  scheduleNumber?: number;
   label: string;
   to: string;
   data: string;
@@ -58,6 +60,14 @@ export interface ScheduledMint {
   sourceTxHash?: string;
   /** If set, mint calldata is rebuilt from OpenSea Drops API at fire time. */
   openSeaSlug?: string;
+  /** Sharp mode: arm early, fire at exact stage start with burst. */
+  sharpMode?: boolean;
+  /** ms before executeAt to start fine wait / pre-arm (default 15000). */
+  leadMs?: number;
+  stageLabel?: string;
+  stageType?: string;
+  /** Compact stage list for Telegram / debugging. */
+  stagesSummary?: string;
   resultTxHash?: string;
   resultReason?: string;
   finishedAt?: string;
