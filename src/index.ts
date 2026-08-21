@@ -5,6 +5,11 @@ import { startMonitor } from "./eth/monitor";
 import { startPriceWatcher } from "./eth/priceWatcher";
 import { getAllMintWallets, getProvider, getWallet } from "./eth/provider";
 import { BOT } from "./identity";
+import {
+  assertFilesystemSeparation,
+  assertTelegramIdentity,
+  separationBanner,
+} from "./separation";
 import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, loadState } from "./store/state";
 import {
@@ -15,6 +20,10 @@ import {
 } from "./telegram/bot";
 
 async function main(): Promise<void> {
+  // Never share folder / token / state with @Nftcopymint_bot (Robinhood).
+  assertFilesystemSeparation();
+  separationBanner();
+
   console.log(
     `Starting @${BOT.telegramUsername} (${BOT.title}) on ${config.chain.name} — Ethereum only, separate from @${BOT.siblingBot}`
   );
@@ -30,11 +39,17 @@ async function main(): Promise<void> {
   }
 
   const bot = createTelegramBot();
+  const me = await bot.api.getMe();
+  assertTelegramIdentity(me.username);
+
   const wallets = getAllMintWallets();
   const wallet = wallets[0] ?? getWallet();
 
   console.log(
     `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
+  );
+  console.log(
+    `Telegram identity OK: @${me.username} (isolated from @${BOT.siblingBot})`
   );
   console.log(
     `freeMintsOnly=${config.freeMintsOnly} privateMints=${config.privateMintsEnabled} autoMint=${config.copyEnabled ? "on" : "off"} dryRun=${config.dryRun} maxBuy=${config.maxBuyEth} ETH`

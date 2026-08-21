@@ -1,16 +1,18 @@
 [Unit]
-Description=@porshmints_bot Ethereum free + private mint Telegram bot
+Description=@porshmints_bot Ethereum mint Telegram bot (NOT @Nftcopymint_bot / Robinhood)
 After=network-online.target
 Wants=network-online.target
+# Separate unit name from any Robinhood bot service — do not Conflict/replace it.
 
 [Service]
 Type=simple
-# IMPORTANT: keep this bot in its OWN folder — do not reuse the @Nftcopymint_bot (Robinhood) directory.
+# REQUIRED: own folder. Never point this at the Robinhood / telegram-bot directory.
 User=root
 WorkingDirectory=/root/porshmints-bot
 Environment=NODE_ENV=production
-# Loads .env via dotenv inside the app — keep secrets ONLY in WorkingDirectory/.env
-# Use a DIFFERENT TELEGRAM_BOT_TOKEN than @Nftcopymint_bot
+Environment=CHAIN=ethereum
+# Secrets live ONLY in WorkingDirectory/.env
+# TELEGRAM_BOT_TOKEN must be @porshmints_bot — never @Nftcopymint_bot
 ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=5

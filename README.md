@@ -1,14 +1,17 @@
 # @porshmints_bot — Ethereum mint bot
 
 **This is `@porshmints_bot` (Ethereum).**  
-It is **not** `@Nftcopymint_bot` (Robinhood Chain).
+It is **not** `@Nftcopymint_bot` (Robinhood Chain).  
+They are **entirely separate** — different folder, token, `.env`, keys, state, and systemd service. They never work together.
 
-| Bot | Chain | Keep separate |
-|---|---|---|
-| `@porshmints_bot` | Ethereum mainnet | this repo / this VPS folder |
-| `@Nftcopymint_bot` | Robinhood Chain | different token, folder, `.env`, keys, state |
+| Bot | Chain | VPS folder | Systemd | State files |
+|---|---|---|---|---|
+| `@porshmints_bot` | Ethereum | `~/porshmints-bot` | `porshmints-bot` | `data/porshmints-*.json` |
+| `@Nftcopymint_bot` | Robinhood | `~/telegram-bot` (or similar) | leave as-is | `data/state.json` etc. |
 
-Do **not** share Telegram tokens, private keys, `.env`, or `data/` files between them.
+**Do not** share Telegram tokens, private keys, `.env`, `data/`, or systemd units.  
+**Do not** install this bot into the Robinhood folder.  
+Startup **refuses** to run if it detects the Robinhood tree or the `@Nftcopymint_bot` token.
 
 ---
 
@@ -39,25 +42,26 @@ Track whale wallets. When they do a **free mint** (0 ETH) or a **private/paid mi
 
 > Allowlist/merkle private mints that embed proofs bound to the whale address may still revert on your wallet.
 
-## Run on a VPS (recommended)
+## Put it on your VPS (separate from Robinhood)
 
-Use the **`@porshmints_bot` token** (never the `@Nftcopymint_bot` token).  
-Install into a **separate folder** from the Robinhood bot.
+Leave the Robinhood bot running wherever it already is. Do **not** stop it, edit it, or reuse its folder.
 
-### 1) Clone into its own folder
+### 1) Clone into a NEW folder
 
 ```bash
 ssh root@YOUR_VPS_IP
 
-# If you previously cloned into ~/telegram-bot for Robinhood, leave that alone.
-# Put THIS bot in a different directory:
+# Leave ~/telegram-bot (Robinhood / @Nftcopymint_bot) alone.
 cd ~
-rm -rf porshmints-bot   # only if reinstalling this ETH bot
+# Only remove if reinstalling THIS Ethereum bot:
+# rm -rf porshmints-bot
 
 git clone -b cursor/eth-free-private-mint-bot-f9dc \
   https://github.com/Badmusazeez/telegram-bot.git porshmints-bot
 cd porshmints-bot
 ```
+
+You must end up in **`~/porshmints-bot`**, not `~/telegram-bot`.
 
 ### 2) Install + create `.env`
 
@@ -70,7 +74,7 @@ nano .env
 Fill at least:
 
 ```env
-TELEGRAM_BOT_TOKEN=...          # @porshmints_bot token ONLY
+TELEGRAM_BOT_TOKEN=...          # @porshmints_bot token ONLY (new BotFather bot)
 TELEGRAM_ALLOWED_CHAT_IDS=YOUR_CHAT_ID
 ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
 PRIVATE_KEY=0xyour_eth_mint_wallet_key
@@ -80,11 +84,14 @@ PRIVATE_MINTS_ENABLED=true
 FREE_MINTS_ONLY=false
 DRY_RUN=true
 COPY_ENABLED=false
+CHAIN=ethereum
 ```
 
 ```bash
 npm run check
 ```
+
+`npm run check` verifies the token is **`@porshmints_bot`** and refuses `@Nftcopymint_bot`.
 
 ### 3) Quick test (foreground)
 
@@ -92,9 +99,9 @@ npm run check
 ./run.sh
 ```
 
-Message **@porshmints_bot** in Telegram: `/start` → `/status`. Stop with `Ctrl+C`.
+Message **`@porshmints_bot`** (not the Robinhood bot): `/start` → `/status`. Stop with `Ctrl+C`.
 
-### 4) Keep it running with systemd
+### 4) Always-on systemd (own unit — does not replace Robinhood)
 
 ```bash
 # WorkingDirectory defaults to /root/porshmints-bot — edit if different
@@ -113,6 +120,8 @@ sudo systemctl stop porshmints-bot
 ```
 
 After editing `.env`: `sudo systemctl restart porshmints-bot`.
+
+This unit is named **`porshmints-bot`**. It does not stop or restart the Robinhood bot’s service.
 
 ### Telegram (@porshmints_bot)
 
@@ -160,6 +169,7 @@ These names are intentional so they never collide with `@Nftcopymint_bot` state.
 - Never paste a private key into Telegram (prefer `.env` `PRIVATE_KEY`)
 - Use a fresh low-balance Ethereum mint wallet
 - Allowlist with `/allow` when possible
+- Never copy Robinhood `.env` / keys into this folder
 
 ## Commands
 

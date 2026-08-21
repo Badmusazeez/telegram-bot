@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Validates .env before starting the bot on a VPS / local machine.
+ * Validates .env + hard separation from @Nftcopymint_bot before start.
  * Usage: npm run check
  */
 import fs from "node:fs";
@@ -32,6 +32,46 @@ if (!fs.existsSync(path.join(root, "node_modules"))) {
 }
 ok("node_modules present");
 
+// ── hard separation from Robinhood / @Nftcopymint_bot ─────────────────────
+let pkgName = "";
+try {
+  pkgName = JSON.parse(
+    fs.readFileSync(path.join(root, "package.json"), "utf8")
+  ).name;
+} catch {
+  fail("Cannot read package.json");
+}
+if (pkgName === "robinhood-nft-copy-bot") {
+  fail(
+    "This is the Robinhood bot package.\n  Install @porshmints_bot into ~/porshmints-bot instead."
+  );
+}
+if (pkgName !== "porshmints-bot") {
+  fail(`Wrong package "${pkgName}" (expected porshmints-bot)`);
+}
+ok(`package is ${pkgName} (not Robinhood)`);
+
+if (fs.existsSync(path.join(root, "src", "robinhood"))) {
+  fail("Found src/robinhood/ — wrong folder. Use ~/porshmints-bot only.");
+}
+ok("no src/robinhood/ (isolated tree)");
+
+if (path.basename(root) === "telegram-bot") {
+  fail(
+    "Folder is named telegram-bot (Robinhood path).\n  Use a separate directory: ~/porshmints-bot"
+  );
+}
+ok(`folder basename OK (${path.basename(root)})`);
+
+for (const f of ["data/state.json", "data/mint-wallets.json"]) {
+  if (fs.existsSync(path.join(root, f))) {
+    fail(
+      `Found ${f} (Robinhood state).\n  This bot only uses data/porshmints-*.json — wrong/mixed install.`
+    );
+  }
+}
+ok("no Robinhood data/state.json collision");
+
 if (!fs.existsSync(envPath)) {
   fail("No .env file found.\n  cp env.example .env && nano .env");
 }
@@ -52,6 +92,14 @@ const rpc = (
 const chats = (process.env.TELEGRAM_ALLOWED_CHAT_IDS || "").trim();
 const key = (process.env.PRIVATE_KEY || "").trim();
 const tracked = (process.env.TRACKED_WALLETS || "").trim();
+const chain = (process.env.CHAIN || "ethereum").trim().toLowerCase();
+
+if (chain === "robinhood" || chain === "rh" || chain === "4663") {
+  fail(
+    `CHAIN=${chain} is Robinhood.\n  @porshmints_bot must use CHAIN=ethereum only.`
+  );
+}
+ok(`CHAIN=${chain || "ethereum"} (Ethereum)`);
 
 const problems = [];
 if (!token) problems.push("TELEGRAM_BOT_TOKEN is empty");
@@ -71,19 +119,55 @@ if (problems.length) {
   console.error("\n✗ .env needs attention:");
   for (const p of problems) console.error(`  - ${p}`);
   console.error("\nEdit with:\n  nano .env\n");
+  console.error(
+    "Remember: TELEGRAM_BOT_TOKEN must be @porshmints_bot — never @Nftcopymint_bot.\n"
+  );
   process.exit(1);
 }
 
-ok("TELEGRAM_BOT_TOKEN set");
+ok("TELEGRAM_BOT_TOKEN set (must be @porshmints_bot only)");
 ok("TELEGRAM_ALLOWED_CHAT_IDS set");
 ok("ETH_RPC_URL set");
-if (key) ok("PRIVATE_KEY set");
+if (key) ok("PRIVATE_KEY set (Ethereum wallet — not Robinhood key)");
 else console.log("! PRIVATE_KEY empty (alerts-only / dry-run until you set it)");
 if (tracked) ok("TRACKED_WALLETS set");
 else console.log("! TRACKED_WALLETS empty (use /track in Telegram)");
 
-console.log("\n@porshmints_bot (Ethereum) ready. Start with:");
-console.log("  npm run start:dev");
-console.log("  # or production: npm run build && npm start");
-console.log("  # or systemd:    sudo systemctl start porshmints-bot");
-console.log("  # Keep separate from @Nftcopymint_bot (Robinhood).\n");
+// Optional live token check against BotFather identity
+if (token) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const body = await res.json();
+    if (!body.ok) {
+      fail(
+        `Telegram getMe failed: ${body.description || res.status}\n  Check TELEGRAM_BOT_TOKEN for @porshmints_bot.`
+      );
+    }
+    const username = String(body.result?.username || "");
+    if (username.toLowerCase() === "nftcopymint_bot") {
+      fail(
+        `Token belongs to @${username} (Robinhood bot).\n  Create a NEW @BotFather token for @porshmints_bot.`
+      );
+    }
+    if (username.toLowerCase() !== "porshmints_bot") {
+      fail(
+        `Token is @${username}, expected @porshmints_bot.\n  Use the correct BotFather bot / token.`
+      );
+    }
+    ok(`Telegram token is @${username} (not @Nftcopymint_bot)`);
+  } catch (err) {
+    console.log(
+      `! Could not verify token with Telegram API (${err?.message || err}). Continuing.`
+    );
+  }
+}
+
+console.log("\n@porshmints_bot (Ethereum) ready — isolated from @Nftcopymint_bot.");
+console.log("Start with:");
+console.log("  ./run.sh");
+console.log("  # or: npm run start:dev");
+console.log("  # production: npm run build && npm start");
+console.log("  # systemd:    sudo systemctl start porshmints-bot");
+console.log(
+  "\nDo NOT restart or edit the Robinhood bot service for this install.\n"
+);
