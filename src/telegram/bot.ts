@@ -757,10 +757,10 @@ export function createTelegramBot(): Bot {
         `<b>Stage:</b> ${escape(result.stageLabel)}`,
         `<b>Target qty:</b> ${result.quantityTarget}`,
         ``,
-        `<b>Result:</b> ${escape(result.reason.slice(0, 900))}`,
+        `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
       ].filter(Boolean);
 
-      if (result.results.length > 0 && result.results.length <= 12) {
+      if (result.results.length > 0 && result.results.length <= 25) {
         lines.push(``);
         for (const r of result.results) {
           if (r.ok && r.txHash) {
@@ -777,6 +777,11 @@ export function createTelegramBot(): Bot {
             );
           }
         }
+      } else if (result.results.length > 25) {
+        lines.push(
+          ``,
+          `<i>${result.results.length} wallet results (see mint result summary)</i>`
+        );
       }
 
       await ctx.reply(lines.join("\n"), {

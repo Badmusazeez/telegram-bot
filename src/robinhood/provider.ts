@@ -57,49 +57,19 @@ export async function getNativeBalance(address: string): Promise<string> {
 
 /** Minimum native balance required to attempt a mint (covers gas). */
 const MIN_MINT_BALANCE_WEI = 50_000_000_000_000n; // 0.00005 ETH
+void MIN_MINT_BALANCE_WEI;
 
 /**
  * Return wallets with enough RH gas to mint.
- * On RPC balance errors, KEEP the wallet (optimistic) — dropping them caused
- * "only 1/20 minted" when Chainstack RPS failed mid balance-check.
+ * Uses shared readiness cache (one balance pass per mint window).
+ * On RPC balance errors, KEEP the wallet (optimistic).
  */
 export async function getFundedMintWallets(
   wallets?: Wallet[]
 ): Promise<{ funded: Wallet[]; skippedEmpty: number }> {
   const all = wallets ?? getAllMintWallets();
-  const provider = getMintProvider();
-  const funded: Wallet[] = [];
-  let skippedEmpty = 0;
-
-  const balances = await Promise.all(
-    all.map(async (w) => {
-      try {
-        const bal = await provider.getBalance(w.address);
-        return { w, bal: bal as bigint | null };
-      } catch (err) {
-        console.warn(
-          `[wallets] balance check failed for ${w.address.slice(0, 10)}… — including anyway`
-        );
-        try {
-          const { reportMintRpcIssue } = await import("./mintRpcAlerts");
-          await reportMintRpcIssue(err);
-        } catch {
-          // ignore
-        }
-        // Unknown balance — do NOT treat as empty.
-        return { w, bal: null };
-      }
-    })
-  );
-
-  for (const { w, bal } of balances) {
-    if (bal === null || bal >= MIN_MINT_BALANCE_WEI) {
-      funded.push(w);
-    } else {
-      skippedEmpty += 1;
-    }
-  }
-
+  const { getFundedFromReadiness } = await import("./walletReady");
+  const { funded, skippedEmpty } = await getFundedFromReadiness(all);
   console.log(
     `[wallets] funded=${funded.length}/${all.length} skippedEmpty=${skippedEmpty}`
   );

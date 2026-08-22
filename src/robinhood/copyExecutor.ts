@@ -34,10 +34,21 @@ import {
   invalidateWalletNonce,
   withWalletNonce,
 } from "./nonceManager";
-import { checkMintWalletReadiness } from "./walletReady";
+import { checkMintWalletReadiness, clearWalletReadinessCache } from "./walletReady";
 import { classifyMintCalldata } from "./mintDetect";
 import { probeMintSlot, classifyMintFailure } from "./slotProbe";
 import { runSlotRace } from "./slotRace";
+import {
+  getMintRpcGate,
+  isMissingRevertData,
+  mapPool,
+  parseTryAgainMs as parseGateTryAgainMs,
+} from "./rpcGate";
+import {
+  buildMintResultStats,
+  classifyMintError,
+  formatMintResultStats,
+} from "./mintResultReport";
 
 /** One copy attempt per whale mint tx (721A often emit many Transfers). */
 const copyBySourceTx = new Map<string, Promise<CopyResult>>();
@@ -229,15 +240,20 @@ async function executeCopy(
     };
   }
 
-  // ALWAYS mint on EVERY configured wallet (user wants 20/20, not 1/20).
-  // Readiness is logged; we still blast all wallets (preserves 20/20 behavior).
+  // Fresh readiness pass for this mint (cached ~45s across strategies).
+  clearWalletReadinessCache();
+
+  // Prefer funded/ready wallets; if none classified ready (all unknown), blast all.
   const readiness = await checkMintWalletReadiness(allWallets);
   if (readiness.notReady.length > 0) {
     console.warn(
-      `[mint] readiness: ${readiness.notReady.length}/${allWallets.length} low-gas — still blasting all`
+      `[mint] readiness: ready=${readiness.ready.length}/${allWallets.length} ` +
+        `empty=${readiness.empty.length} lowGas=${readiness.lowGas.length} — blasting ready+unknown`
     );
   }
-  const wallets = allWallets;
+  // Prefer funded/ready wallets; if none classified ready (all unknown), blast all.
+  const wallets =
+    readiness.ready.length > 0 ? readiness.ready : allWallets;
 
   const openSeaLike =
     isSeaDropAddress(sourceTx.to) || isSeaDropMintPublic(sourceTx.data);
@@ -465,6 +481,24 @@ async function executeCopy(
   timer.mark("broadcast");
   console.log(`[mint] FINAL ${final.okCount}/${final.total} for ${purchase.txHash.slice(0, 10)}…`);
 
+  const outcomes = [...hits.values()].map((h) => ({
+    address: h.address,
+    ok: h.ok,
+    txHash: h.txHash,
+    error: h.error,
+    bucket: h.ok
+      ? ("success" as const)
+      : classifyMintError(h.error),
+  }));
+  const mintStats = buildMintResultStats({
+    configured: allWallets.length,
+    fundedReady: wallets.length,
+    empty: readiness.empty.length,
+    lowGas: readiness.lowGas.length,
+    outcomes,
+  });
+  const statsText = formatMintResultStats(mintStats);
+
   if (final.okCount > 0) {
     // Partial success still caches the best available path hint.
     rememberMintStrategy({
@@ -479,7 +513,7 @@ async function executeCopy(
       attempted: true,
       success: true,
       dryRun: false,
-      reason: final.reason,
+      reason: `${final.reason}\n\n${statsText}`,
       txHash: final.txHash,
     };
   }
@@ -515,7 +549,10 @@ async function executeCopy(
     attempted: true,
     success: false,
     dryRun: false,
-    reason: `All mint strategies failed (0/${wallets.length}): ${final.summary}`.slice(0, 500),
+    reason: `All mint strategies failed (0/${wallets.length}): ${final.summary}\n\n${statsText}`.slice(
+      0,
+      900
+    ),
     txHash: final.txHash,
   };
 }
@@ -567,10 +604,9 @@ async function mintSeaDropPublic(
       `[mint] SeaDrop blast x${q} on ${pending.length}/${wallets.length} wallet(s)`
     );
 
-    await Promise.all(
-      pending.map(async (wallet, index) => {
+    await mapPool(pending, 5, async (wallet, index) => {
         // Tiny stagger — keeps Chainstack under RPS without delaying the pack.
-        if (index > 0) await sleep(Math.min(index * 20, 400));
+        if (index > 0) await sleep(Math.min(index * 15, 200));
         const address = wallet.address.toLowerCase();
         const built = buildSeaDropMintPublicTx({
           whaleData,
@@ -606,8 +642,7 @@ async function mintSeaDropPublic(
             error: `x${q}:${sent.error}`,
           });
         }
-      })
-    );
+      });
 
     const okCount = [...byAddr.values()].filter((r) => r.ok).length;
     if (okCount === wallets.length) break;
@@ -708,9 +743,8 @@ async function mintOpenSea(
     };
   }
 
-  const results = await Promise.all(
-    wallets.map(async (wallet, index) => {
-      if (index > 0) await sleep(Math.min(index * 20, 400));
+  const results = await mapPool(wallets, 3, async (wallet, index) => {
+      if (index > 0) await sleep(Math.min(index * 25, 300));
       const address = wallet.address.toLowerCase();
       try {
         // Rebuild per-wallet (signature / minter bound) but reuse max quantity.
@@ -748,8 +782,7 @@ async function mintOpenSea(
           error: err instanceof Error ? err.message : String(err),
         };
       }
-    })
-  );
+    });
 
   const ok = results.filter((r) => r.ok);
   const summary = results
@@ -1012,6 +1045,7 @@ async function sendMintTx(
     contract?: string;
   }
 ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
+  const gate = getMintRpcGate();
   const trySend = async (
     provider: ReturnType<typeof getMintProvider>,
     label: string
@@ -1022,12 +1056,14 @@ async function sendMintTx(
       try {
         const from = await connected.getAddress();
         // ALWAYS use real eth_estimateGas — never a blind hardcoded hint.
-        const estimated = await provider.estimateGas({
-          from,
-          to: params.to,
-          data: params.data,
-          value: params.valueWei,
-        });
+        const estimated = await gate.run(() =>
+          provider.estimateGas({
+            from,
+            to: params.to,
+            data: params.data,
+            value: params.valueWei,
+          })
+        );
 
         const resolved = resolveMintGasLimit({
           estimated,
@@ -1050,7 +1086,7 @@ async function sendMintTx(
           return { ok: false, error: resolved.reason };
         }
 
-        const fee = await provider.getFeeData();
+        const fee = await gate.run(() => provider.getFeeData());
         const txRequest: {
           to: string;
           data: string;
@@ -1079,12 +1115,14 @@ async function sendMintTx(
           `[mint] sending via ${label} strategy=${params.strategy || "?"} from=${from.slice(0, 8)}… ` +
             `to=${params.to.slice(0, 10)}… gasLimit=${resolved.gasLimit} (est ${estimated})`
         );
-        const sent = await withWalletNonce({
-          address: from,
-          provider,
-          fn: async (nonce) =>
-            connected.sendTransaction({ ...txRequest, nonce }),
-        });
+        const sent = await gate.run(() =>
+          withWalletNonce({
+            address: from,
+            provider,
+            fn: async (nonce) =>
+              connected.sendTransaction({ ...txRequest, nonce }),
+          })
+        );
         console.log(`[mint] broadcast ${sent.hash}`);
 
         void sent.wait().catch(() => undefined);
@@ -1100,6 +1138,14 @@ async function sendMintTx(
             `[mint] ${label} RPS/throttle — retry in ${waitMs}ms (attempt ${attempt + 1}/${maxAttempts})`
           );
           await sleep(waitMs);
+          continue;
+        }
+        // missing revert data is often RPC flake — retry same provider once, then failover.
+        if (isMissingRevertData(err) && attempt < maxAttempts - 1) {
+          console.warn(
+            `[mint] ${label} missing revert data — retry (not classifying as contract fail yet)`
+          );
+          await sleep(120);
           continue;
         }
         if (classifyRpcError(err) && waitMs == null) {
@@ -1119,7 +1165,7 @@ async function sendMintTx(
   const backup = getMintBackupProvider();
   const err = primary.error || "";
   const networkish =
-    /timeout|econn|socket|502|503|504|unavailable|rate limit|429|quota|capacity|rps/i.test(
+    /timeout|econn|socket|502|503|504|unavailable|rate limit|429|quota|capacity|rps|missing revert data/i.test(
       err
     );
   if (backup && networkish) {
@@ -1131,19 +1177,7 @@ async function sendMintTx(
 
 /** Parse Chainstack/Alchemy try_again_in (ms). */
 function parseTryAgainMs(err: unknown): number | null {
-  const msg = err instanceof Error ? err.message : String(err);
-  const lower = msg.toLowerCase();
-  if (
-    !/-32005|rps limit|try_again_in|too many requests|rate limit|429/.test(lower)
-  ) {
-    return null;
-  }
-  const m = msg.match(/try_again_in["\s:]*([0-9.]+)\s*ms/i);
-  if (m) {
-    const ms = Math.ceil(Number(m[1]));
-    if (Number.isFinite(ms) && ms > 0) return Math.min(Math.max(ms, 50), 2_000);
-  }
-  return 350;
+  return parseGateTryAgainMs(err);
 }
 
 async function mintWithWallet(

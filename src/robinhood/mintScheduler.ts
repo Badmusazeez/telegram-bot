@@ -17,6 +17,8 @@ import {
   getMintProvider,
 } from "./provider";
 import { withWalletNonce, invalidateWalletNonce } from "./nonceManager";
+import { checkMintWalletReadiness } from "./walletReady";
+import { getMintRpcGate, mapPool, parseTryAgainMs, isMissingRevertData } from "./rpcGate";
 import type { Wallet } from "ethers";
 
 export type ScheduleHandler = (
@@ -122,14 +124,17 @@ async function sendOnWallet(
 ): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
   const address = wallet.address.toLowerCase();
   const provider = getMintProvider();
+  const gate = getMintRpcGate();
   const value = params.valueWei ?? 0n;
   try {
-    const estimated = await provider.estimateGas({
-      from: wallet.address,
-      to: params.to,
-      data: params.data,
-      value,
-    });
+    const estimated = await gate.run(() =>
+      provider.estimateGas({
+        from: wallet.address,
+        to: params.to,
+        data: params.data,
+        value,
+      })
+    );
 
     const resolved = resolveMintGasLimit({
       estimated,
@@ -145,24 +150,73 @@ async function sendOnWallet(
     }
 
     const connected = wallet.connect(provider);
-    const sent = await withWalletNonce({
-      address,
-      provider,
-      fn: async (nonce) =>
-        connected.sendTransaction({
-          to: params.to,
-          data: params.data,
-          value,
-          gasLimit: resolved.gasLimit,
-          nonce,
-          chainId: Number(config.chain.chainId),
-        }),
-    });
+    const sent = await gate.run(() =>
+      withWalletNonce({
+        address,
+        provider,
+        fn: async (nonce) =>
+          connected.sendTransaction({
+            to: params.to,
+            data: params.data,
+            value,
+            gasLimit: resolved.gasLimit,
+            nonce,
+            chainId: Number(config.chain.chainId),
+          }),
+      })
+    );
     void sent.wait().catch(() => undefined);
     return { address, ok: true, txHash: sent.hash };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/nonce/i.test(msg)) invalidateWalletNonce(address);
+    const waitMs = parseTryAgainMs(err);
+    if (waitMs != null) {
+      await sleep(waitMs);
+      try {
+        const estimated = await gate.run(() =>
+          provider.estimateGas({
+            from: wallet.address,
+            to: params.to,
+            data: params.data,
+            value,
+          })
+        );
+        const resolved = resolveMintGasLimit({
+          estimated,
+          ceiling: config.maxMintGasLimit,
+          marginPct: 20,
+        });
+        if (!resolved.ok) return { address, ok: false, error: resolved.reason };
+        const connected = wallet.connect(provider);
+        const sent = await gate.run(() =>
+          withWalletNonce({
+            address,
+            provider,
+            fn: async (nonce) =>
+              connected.sendTransaction({
+                to: params.to,
+                data: params.data,
+                value,
+                gasLimit: resolved.gasLimit,
+                nonce,
+                chainId: Number(config.chain.chainId),
+              }),
+          })
+        );
+        void sent.wait().catch(() => undefined);
+        return { address, ok: true, txHash: sent.hash };
+      } catch (err2) {
+        return {
+          address,
+          ok: false,
+          error: err2 instanceof Error ? err2.message : String(err2),
+        };
+      }
+    }
+    if (isMissingRevertData(err)) {
+      return { address, ok: false, error: "missing revert data (ambiguous)" };
+    }
     return { address, ok: false, error: msg };
   }
 }
@@ -220,15 +274,18 @@ async function resolveJobTxForWallet(
 
 async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
   const state = getState();
-  const wallets = getAllMintWallets();
+  const allWallets = getAllMintWallets();
+  const readiness = await checkMintWalletReadiness(allWallets);
+  const wallets =
+    readiness.ready.length > 0 ? readiness.ready : allWallets;
 
   if (state.dryRun) {
     return {
       success: true,
       dryRun: true,
-      reason: `DRY RUN — sharp burst would MAX-mint on ${wallets.length || 0} wallet(s) at ${job.executeAt} to ${job.to}${
+      reason: `DRY RUN — sharp burst would MAX-mint on ${wallets.length}/${allWallets.length} wallet(s) at ${job.executeAt} to ${job.to}${
         job.openSeaSlug ? ` (OpenSea drop ${job.openSeaSlug})` : ""
-      }`,
+      } (empty=${readiness.empty.length})`,
     };
   }
 
@@ -248,10 +305,9 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     };
   }
 
-  // Parallel burst across all mint wallets (nonce-safe per wallet).
-  const results = await Promise.all(
-    wallets.map(async (w, index) => {
-      if (index > 0) await sleep(Math.min(index * 12, 250));
+  // Rate-aware burst (nonce-safe per wallet).
+  const results = await mapPool(wallets, 5, async (w, index) => {
+      if (index > 0) await sleep(Math.min(index * 12, 200));
       try {
         const tx = await resolveJobTxForWallet(job, w);
         const sent = await sendOnWallet(w, tx);
@@ -266,8 +322,7 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
           error: err instanceof Error ? err.message : String(err),
         };
       }
-    })
-  );
+    });
   const ok = results.filter((r) => r.ok);
   const summary = results
     .map(
@@ -287,8 +342,8 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     dryRun: false,
     reason:
       ok.length > 0
-        ? `Sharp burst MAX mint on ${ok.length}/${wallets.length} wallet(s): ${summary}`
-        : `Sharp burst failed on all ${wallets.length} wallet(s): ${summary}`,
+        ? `Sharp burst MAX mint on ${ok.length}/${wallets.length} ready (${allWallets.length} configured, ${readiness.empty.length} empty): ${summary}`
+        : `Sharp burst failed on all ${wallets.length} ready wallets (${allWallets.length} configured): ${summary}`,
     txHash: firstOk && "txHash" in firstOk ? firstOk.txHash : undefined,
   };
 }

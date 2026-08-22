@@ -5,6 +5,7 @@ import {
   invalidateOpenSeaApiKey,
 } from "./openseaAuth";
 import { parseOpenSeaUrl, type OpenSeaLinkRef } from "./openseaUrl";
+import { getOpenSeaGate, parseTryAgainMs } from "./rpcGate";
 
 export type OpenSeaDropStage = {
   uuid?: string;
@@ -46,10 +47,31 @@ export type ResolvedOpenSeaSchedule = {
   leadMs: number;
 };
 
+/** Shared drop cache — one fetch per slug during a mint window. */
+const dropCache = new Map<string, { at: number; drop: OpenSeaDrop }>();
+const DROP_CACHE_MS = 30_000;
+
+let openSeaCooldownUntil = 0;
+
+export function getOpenSeaCooldownRemainingMs(): number {
+  return Math.max(0, openSeaCooldownUntil - Date.now());
+}
+
+export function clearOpenSeaDropCache(): void {
+  dropCache.clear();
+}
+
 async function fetchOpenSeaJson(
   url: string,
   init?: RequestInit
 ): Promise<unknown> {
+  const cool = getOpenSeaCooldownRemainingMs();
+  if (cool > 0) {
+    throw new Error(
+      `OpenSea HTTP 429 cooldown — retry in ${cool}ms (Resource rate limit exceeded)`
+    );
+  }
+
   await ensureOpenSeaApiKey();
   const key = getOpenSeaApiKey();
   if (!key) {
@@ -58,15 +80,19 @@ async function fetchOpenSeaJson(
     );
   }
 
+  const gate = getOpenSeaGate();
+
   const doFetch = async (apiKey: string) =>
-    fetch(url, {
-      ...init,
-      headers: {
-        accept: "application/json",
-        "x-api-key": apiKey,
-        ...(init?.headers || {}),
-      },
-    });
+    gate.run(() =>
+      fetch(url, {
+        ...init,
+        headers: {
+          accept: "application/json",
+          "x-api-key": apiKey,
+          ...(init?.headers || {}),
+        },
+      })
+    );
 
   let res = await doFetch(key);
   if (res.status === 401 || res.status === 403) {
@@ -87,6 +113,23 @@ async function fetchOpenSeaJson(
       );
     }
     res = await doFetch(refreshed);
+  }
+
+  if (res.status === 429) {
+    const retryAfter = res.headers.get("retry-after");
+    const body = await res.text().catch(() => "");
+    let waitMs = 2_000;
+    if (retryAfter) {
+      const sec = Number(retryAfter);
+      if (Number.isFinite(sec) && sec > 0) waitMs = Math.min(sec * 1000, 30_000);
+    }
+    const fromBody = parseTryAgainMs(body);
+    if (fromBody != null) waitMs = Math.max(waitMs, fromBody);
+    openSeaCooldownUntil = Date.now() + waitMs;
+    gate.noteRateLimit(new Error(`OpenSea 429 try_again_in ${waitMs}ms`));
+    throw new Error(
+      `OpenSea HTTP 429: Resource rate limit exceeded (cooldown ${waitMs}ms)`
+    );
   }
 
   if (!res.ok) {
@@ -123,12 +166,18 @@ export async function resolveCollectionSlug(
 }
 
 export async function fetchOpenSeaDrop(slug: string): Promise<OpenSeaDrop> {
+  const key = slug.toLowerCase();
+  const hit = dropCache.get(key);
+  if (hit && Date.now() - hit.at < DROP_CACHE_MS) {
+    return hit.drop;
+  }
   const drop = (await fetchOpenSeaJson(
     `https://api.opensea.io/api/v2/drops/${encodeURIComponent(slug)}`
   )) as OpenSeaDrop;
   if (!drop?.contract_address || !Array.isArray(drop.stages)) {
     throw new Error("OpenSea drop response missing contract/stages.");
   }
+  dropCache.set(key, { at: Date.now(), drop });
   return drop;
 }
 
