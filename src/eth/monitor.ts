@@ -307,7 +307,11 @@ export async function startMonitor(
     }
   };
 
-  await tick();
+  // Do NOT await the first scan — a slow/hung RPC must not block Telegram /status.
+  console.log(
+    `[monitor] armed (poll=${config.pollIntervalMs}ms) — first scan in background`
+  );
+  void tick();
   const timer = setInterval(() => {
     void tick();
   }, config.pollIntervalMs);

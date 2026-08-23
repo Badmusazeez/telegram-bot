@@ -120,9 +120,11 @@ async function main(): Promise<void> {
   process.once("SIGINT", () => shutdown("SIGINT"));
   process.once("SIGTERM", () => shutdown("SIGTERM"));
 
+  console.log("Connecting Telegram polling (commands work after 'online')…");
   await bot.start({
+    drop_pending_updates: true,
     onStart: (info) => {
-      console.log(`Telegram bot @${info.username} is online`);
+      console.log(`Telegram bot @${info.username} is online — try /start /status`);
     },
   });
 }
