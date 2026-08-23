@@ -36,8 +36,9 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     openseaChain: "ink",
     alchemyNftNetwork: "ink-mainnet",
     maxScanBlocks: 400,
-    getLogsMaxBlocks: 100,
-    defaultLookbackBlocks: 40,
+    // Alchemy free tier (and some others) cap eth_getLogs at 10 blocks on Ink.
+    getLogsMaxBlocks: 10,
+    defaultLookbackBlocks: 20,
     defaultPollIntervalMs: 4_000,
   },
 };

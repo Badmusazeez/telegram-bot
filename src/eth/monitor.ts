@@ -113,6 +113,34 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isBlockRangeLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    /up to a \d+ block range/i.test(msg) ||
+    /block range should work/i.test(msg) ||
+    /query returned more than/i.test(msg) ||
+    /block range is too (large|wide)/i.test(msg) ||
+    /response size exceeded/i.test(msg)
+  );
+}
+
+function suggestedMaxBlocksFromError(err: unknown): number | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = msg.match(/up to a (\d+) block range/i);
+  if (m) {
+    return Math.max(1, Number(m[1]));
+  }
+  const range = msg.match(/\[0x([0-9a-f]+),\s*0x([0-9a-f]+)\]/i);
+  if (range) {
+    const a = parseInt(range[1], 16);
+    const b = parseInt(range[2], 16);
+    if (Number.isFinite(a) && Number.isFinite(b) && b >= a) {
+      return Math.max(1, b - a + 1);
+    }
+  }
+  return null;
+}
+
 async function logsForBuyerChunk(
   fromBlock: number,
   toBlock: number,
@@ -131,6 +159,10 @@ async function logsForBuyerChunk(
       });
     } catch (err) {
       lastErr = err;
+      // Don't burn retries on hard free-tier range limits — caller will rechunk.
+      if (isBlockRangeLimitError(err)) {
+        throw err;
+      }
       console.warn(
         `[monitor] getLogs retry ${attempt}/3 for ${buyer} blocks ${fromBlock}-${toBlock}: ${
           err instanceof Error ? err.message : String(err)
@@ -148,13 +180,29 @@ async function logsForBuyer(
   toBlock: number,
   buyer: string
 ): Promise<Log[]> {
-  const chunkSize = Math.max(1, config.chain.getLogsMaxBlocks);
+  let chunkSize = Math.max(1, config.chain.getLogsMaxBlocks);
   const all: Log[] = [];
 
-  for (let start = fromBlock; start <= toBlock; start += chunkSize) {
+  for (let start = fromBlock; start <= toBlock; ) {
     const end = Math.min(toBlock, start + chunkSize - 1);
-    const part = await logsForBuyerChunk(start, end, buyer);
-    all.push(...part);
+    try {
+      const part = await logsForBuyerChunk(start, end, buyer);
+      all.push(...part);
+      start = end + 1;
+    } catch (err) {
+      if (isBlockRangeLimitError(err) && chunkSize > 1) {
+        const suggested = suggestedMaxBlocksFromError(err);
+        const next = suggested
+          ? Math.min(chunkSize - 1, suggested)
+          : Math.max(1, Math.floor(chunkSize / 2));
+        console.warn(
+          `[monitor] RPC block-range limit for ${buyer}; shrinking getLogs chunks ${chunkSize} → ${next}`
+        );
+        chunkSize = Math.max(1, next);
+        continue;
+      }
+      throw err;
+    }
   }
 
   return all;
@@ -210,9 +258,18 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         `[monitor] getLogs failed for ${wallet.address}:`,
         err instanceof Error ? err.message : err
       );
-      console.error(
-        "[monitor] Tip: set ETH_RPC_URL / INK_RPC_URL to an Ink RPC, e.g. https://rpc-gel.inkonchain.com or Alchemy ink-mainnet"
-      );
+      if (
+        err instanceof Error &&
+        /Free tier|10 block range|Upgrade to PAYG/i.test(err.message)
+      ) {
+        console.error(
+          "[monitor] Tip: free RPC limits getLogs to 10 blocks — bot now auto-chunks; or set ETH_RPC_URL=https://rpc-gel.inkonchain.com"
+        );
+      } else {
+        console.error(
+          "[monitor] Tip: set ETH_RPC_URL / INK_RPC_URL to https://rpc-gel.inkonchain.com (or Alchemy ink-mainnet)"
+        );
+      }
       continue;
     }
 
