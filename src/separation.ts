@@ -21,7 +21,7 @@ function fail(message: string): never {
   console.error(`\n${message}\n`);
   console.error("Correct layout on the VPS:");
   console.error("  ~/telegram-bot/     → @" + BOT.siblingBot + " (Robinhood) — leave alone");
-  console.error("  ~/porshmints-bot/   → @" + BOT.telegramUsername + " (Ethereum) — this bot");
+  console.error("  ~/porshmints-bot/   → @" + BOT.telegramUsername + " (Ink) — this bot");
   console.error("\nNever share: folder, TELEGRAM_BOT_TOKEN, .env, PRIVATE_KEY, or data/\n");
   process.exit(1);
 }
@@ -49,7 +49,7 @@ export function assertFilesystemSeparation(root = process.cwd()): void {
   if (pkgName && pkgName !== BOT.name) {
     fail(
       `package.json name is "${pkgName}" (expected "${BOT.name}").\n` +
-        `Wrong checkout — use the porshmints / Ethereum branch only.`
+        `Wrong checkout — use the porshmints / Ink branch only.`
     );
   }
 
@@ -75,7 +75,13 @@ export function assertFilesystemSeparation(root = process.cwd()): void {
   if (chain === "robinhood" || chain === "rh" || chain === "4663") {
     fail(
       `CHAIN="${process.env.CHAIN}" is Robinhood.\n` +
-        `@${BOT.telegramUsername} is Ethereum-only (CHAIN=ethereum).`
+        `@${BOT.telegramUsername} is Ink-only (CHAIN=ink).`
+    );
+  }
+  if (chain === "ethereum" || chain === "eth" || chain === "1") {
+    fail(
+      `CHAIN="${process.env.CHAIN}" is Ethereum mainnet.\n` +
+        `@${BOT.telegramUsername} is Ink-only now (CHAIN=ink, chainId 57073).`
     );
   }
 }
@@ -111,7 +117,7 @@ export function separationBanner(): void {
     [
       "",
       `── isolation ──────────────────────────────────────────`,
-      `  this bot : @${BOT.telegramUsername}  (${BOT.title} / Ethereum)`,
+      `  this bot : @${BOT.telegramUsername}  (${BOT.title} / Ink)`,
       `  other bot: @${BOT.siblingBot}  (Robinhood) — DO NOT TOUCH`,
       `  folder   : must be ~/porshmints-bot (not the Robinhood folder)`,
       `  token    : must be @${BOT.telegramUsername} only`,

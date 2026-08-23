@@ -38,7 +38,7 @@ export function formatPurchaseAlert(
 
   return [
     `<b>@${BOT.telegramUsername} alert</b>`,
-    `<b>Bot:</b> ${escHtml(BOT.title)} (Ethereum)`,
+    `<b>Bot:</b> ${escHtml(BOT.title)} (Ink)`,
     `<b>Chain:</b> ${escHtml(config.chain.name)}`,
     `<b>Type:</b> ${kind}`,
     ``,
@@ -106,7 +106,7 @@ export function formatStatus(params: {
     `<b>@${BOT.telegramUsername} status</b>`,
     ``,
     `Bot: <b>${escHtml(BOT.title)}</b> · Telegram <code>@${BOT.telegramUsername}</code>`,
-    `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>) — Ethereum only`,
+    `Chain: <b>${escHtml(config.chain.name)}</b> (<code>${config.chain.chainId}</code>) — Ink only`,
     `Not related to <code>@${BOT.siblingBot}</code> (Robinhood).`,
     `Mode: <b>${mode}</b>`,
     `Tracked wallets: <b>${params.trackedCount}</b>`,
@@ -127,10 +127,10 @@ export function formatStatus(params: {
 export function helpText(): string {
   return [
     `<b>@${BOT.telegramUsername}</b> — ${escHtml(BOT.title)}`,
-    `Active chain: <b>${escHtml(config.chain.name)}</b> (Ethereum only)`,
+    `Active chain: <b>${escHtml(config.chain.name)}</b> (Ink only)`,
     `Separate from <code>@${BOT.siblingBot}</code> (Robinhood Chain).`,
     ``,
-    `Tracks whale wallets and auto-copies <b>free mints</b> + optional <b>private/paid mints</b> (under max buy) on Ethereum.`,
+    `Tracks whale wallets and auto-copies <b>free mints</b> + optional <b>private/paid mints</b> (under max buy) on Ink.`,
     `Secondary marketplace buys are always skipped.`,
     ``,
     `<b>Commands</b>`,

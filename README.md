@@ -1,12 +1,12 @@
-# @porshmints_bot — Ethereum mint bot
+# @porshmints_bot — Ink mint bot
 
-**This is `@porshmints_bot` (Ethereum).**  
+**This is `@porshmints_bot` (Ink chain).**  
 It is **not** `@Nftcopymint_bot` (Robinhood Chain).  
 They are **entirely separate** — different folder, token, `.env`, keys, state, and systemd service. They never work together.
 
 | Bot | Chain | VPS folder | Systemd | State files |
 |---|---|---|---|---|
-| `@porshmints_bot` | Ethereum | `~/porshmints-bot` | `porshmints-bot` | `data/porshmints-*.json` |
+| `@porshmints_bot` | **Ink** (57073) | `~/porshmints-bot` | `porshmints-bot` | `data/porshmints-*.json` |
 | `@Nftcopymint_bot` | Robinhood | `~/telegram-bot` (or similar) | leave as-is | `data/state.json` etc. |
 
 **Do not** share Telegram tokens, private keys, `.env`, `data/`, or systemd units.  
@@ -15,7 +15,7 @@ Startup **refuses** to run if it detects the Robinhood tree or the `@Nftcopymint
 
 ---
 
-Telegram bot for **Ethereum** free-mint + private-mint NFT copy trading.
+Telegram bot for **Ink** free-mint + private-mint NFT copy trading.
 
 Track whale wallets. When they do a **free mint** (0 ETH) or a **private/paid mint** (mint from `0x0` with value ≤ max buy), the bot can auto-replay the same mint calldata into your wallet. **Secondary marketplace buys are always skipped.**
 
@@ -25,7 +25,7 @@ Track whale wallets. When they do a **free mint** (0 ETH) or a **private/paid mi
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `CHAIN` | `ethereum` | Ethereum mainnet (1) |
+| `CHAIN` | `ink` | Ink mainnet (57073) |
 | `FREE_MINTS_ONLY` | `false` | When true, skip private/paid mints |
 | `PRIVATE_MINTS_ENABLED` | `true` | Copy private/paid mints under `MAX_BUY_ETH` |
 | `COPY_ENABLED` | `false` | Auto-mint off until `/copy on` |
@@ -53,7 +53,7 @@ ssh root@YOUR_VPS_IP
 
 # Leave ~/telegram-bot (Robinhood / @Nftcopymint_bot) alone.
 cd ~
-# Only remove if reinstalling THIS Ethereum bot:
+# Only remove if reinstalling THIS Ink bot:
 # rm -rf porshmints-bot
 
 git clone -b cursor/eth-free-private-mint-bot-f9dc \
@@ -76,15 +76,15 @@ Fill at least:
 ```env
 TELEGRAM_BOT_TOKEN=...          # @porshmints_bot token ONLY (new BotFather bot)
 TELEGRAM_ALLOWED_CHAT_IDS=YOUR_CHAT_ID
-ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
-PRIVATE_KEY=0xyour_eth_mint_wallet_key
+CHAIN=ink
+ETH_RPC_URL=https://rpc-gel.inkonchain.com
+PRIVATE_KEY=0xyour_ink_mint_wallet_key
 TRACKED_WALLETS=0xWhale1:Alpha,0xWhale2:Beta
 MAX_BUY_ETH=0.05
 PRIVATE_MINTS_ENABLED=true
 FREE_MINTS_ONLY=false
 DRY_RUN=true
 COPY_ENABLED=false
-CHAIN=ethereum
 ```
 
 ```bash
@@ -100,6 +100,8 @@ npm run check
 ```
 
 Message **`@porshmints_bot`** (not the Robinhood bot): `/start` → `/status`. Stop with `Ctrl+C`.
+
+You must see `Telegram bot @porshmints_bot is online` before Telegram will reply.
 
 ### 4) Always-on systemd (own unit — does not replace Robinhood)
 
@@ -142,7 +144,7 @@ When dry-run looks good: `/dryrun off`
 
 ```bash
 cp env.example .env
-# fill @porshmints_bot TELEGRAM_*, ETH_RPC_URL, PRIVATE_KEY, TRACKED_WALLETS
+# fill @porshmints_bot TELEGRAM_*, ETH_RPC_URL (Ink), PRIVATE_KEY, TRACKED_WALLETS
 npm install
 npm run check
 npm run start:dev
@@ -150,11 +152,14 @@ npm run start:dev
 
 ## Network
 
-- Name: Ethereum Mainnet  
-- Chain ID: `1`  
-- Explorer: https://etherscan.io  
+- Name: Ink  
+- Chain ID: `57073`  
+- RPC (public): `https://rpc-gel.inkonchain.com`  
+- Explorer: https://explorer.inkonchain.com  
+- Gas token: ETH  
+- OpenSea slug: `ink`
 
-## Data files (Ethereum bot only)
+## Data files (Ink bot only)
 
 | File | Purpose |
 |---|---|
@@ -167,7 +172,7 @@ These names are intentional so they never collide with `@Nftcopymint_bot` state.
 
 - Separate Telegram bot token from `@Nftcopymint_bot`
 - Never paste a private key into Telegram (prefer `.env` `PRIVATE_KEY`)
-- Use a fresh low-balance Ethereum mint wallet
+- Use a fresh low-balance Ink mint wallet (ETH on Ink for gas)
 - Allowlist with `/allow` when possible
 - Never copy Robinhood `.env` / keys into this folder
 

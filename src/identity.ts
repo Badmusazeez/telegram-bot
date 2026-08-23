@@ -1,5 +1,5 @@
 /**
- * Identity for @porshmints_bot — Ethereum only.
+ * Identity for @porshmints_bot — Ink chain only.
  * Entirely separate from @Nftcopymint_bot (Robinhood): different folder, token,
  * .env, keys, state files, and systemd unit. They never share runtime.
  */
@@ -13,7 +13,7 @@ export const BOT = {
   /** Short product title used in Telegram messages. */
   title: "PorshMints",
   /** Human chain label. */
-  chainLabel: "Ethereum",
+  chainLabel: "Ink",
   /** Sibling Robinhood bot — never share token, state, keys, or folder. */
   siblingBot: "Nftcopymint_bot",
 } as const;

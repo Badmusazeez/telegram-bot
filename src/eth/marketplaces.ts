@@ -1,4 +1,4 @@
-/** Well-known Ethereum NFT marketplace settlement contracts. */
+/** Well-known Ink / OP-Stack NFT marketplace settlement contracts (extend as needed). */
 export const MARKETPLACES: Record<string, string> = {
   "0x00000000000000adc04c56bf30ac9d3c0aaf14dc": "OpenSea Seaport 1.5",
   "0x0000000000000068f116a894984e2db1123eb395": "OpenSea Seaport 1.6",

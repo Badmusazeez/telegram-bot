@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# One-time VPS install for @porshmints_bot (Ethereum) ONLY.
+# One-time VPS install for @porshmints_bot (Ink) ONLY.
 #
 # HARD RULE: never install into the @Nftcopymint_bot (Robinhood) folder.
 # Correct layout:
 #   ~/telegram-bot/     → @Nftcopymint_bot (Robinhood) — leave running, do not touch
-#   ~/porshmints-bot/   → @porshmints_bot (Ethereum)  — this install
+#   ~/porshmints-bot/   → @porshmints_bot (Ink)  — this install
 #
 # Usage (from THIS repo root):
 #   chmod +x scripts/vps-install.sh
@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "==> Installing @porshmints_bot (Ethereum)…"
+echo "==> Installing @porshmints_bot (Ink)…"
 echo "    HARD SEPARATION from @Nftcopymint_bot (Robinhood)."
 echo "    Root: $ROOT"
 
@@ -97,7 +97,7 @@ if [[ ! -f .env ]]; then
   chmod 600 .env
   echo "    Edit secrets now:  nano .env"
   echo "    Use the @porshmints_bot token — NEVER the @Nftcopymint_bot token."
-  echo "    Use an Ethereum PRIVATE_KEY — NEVER the Robinhood wallet key."
+  echo "    Use an Ink PRIVATE_KEY + Ink RPC — NEVER the Robinhood wallet/RPC."
 else
   echo "==> .env already exists (leaving it alone)"
   chmod 600 .env || true
@@ -124,7 +124,9 @@ npm run build
 echo
 echo "Done. @porshmints_bot is isolated from @Nftcopymint_bot."
 echo "Next steps:"
-echo "  1) nano .env   # @porshmints_bot token + ETH RPC + ETH key + tracked wallets"
+echo "  1) nano .env   # @porshmints_bot token + Ink RPC + Ink key + tracked wallets"
+echo "     CHAIN=ink"
+echo "     ETH_RPC_URL=https://rpc-gel.inkonchain.com"
 echo "  2) npm run check"
 echo "  3) Quick test:  ./run.sh   then /start in Telegram @porshmints_bot"
 echo "  4) Always-on (does NOT affect Robinhood systemd):"

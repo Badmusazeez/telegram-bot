@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Foreground runner for @porshmints_bot (Ethereum) ONLY.
+# Foreground runner for @porshmints_bot (Ink) ONLY.
 # For always-on: use systemd unit porshmints-bot.service
 #
 # NEVER run this from the @Nftcopymint_bot / Robinhood folder.
@@ -21,7 +21,7 @@ fi
 
 if [[ "$(basename "$PWD")" == "telegram-bot" ]]; then
   echo "✗ REFUSING: folder telegram-bot is for @Nftcopymint_bot (Robinhood)."
-  echo "  Use ~/porshmints-bot for this Ethereum bot."
+  echo "  Use ~/porshmints-bot for this Ink bot."
   exit 1
 fi
 

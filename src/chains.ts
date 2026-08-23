@@ -1,4 +1,4 @@
-export type ChainKey = "ethereum";
+export type ChainKey = "ink";
 
 export interface ChainConfig {
   key: ChainKey;
@@ -19,29 +19,42 @@ export interface ChainConfig {
   defaultPollIntervalMs: number;
 }
 
+/**
+ * Ink mainnet (Kraken OP Stack L2).
+ * Chain ID 57073 — gas token is ETH. Not related to Robinhood Chain.
+ */
 export const CHAINS: Record<ChainKey, ChainConfig> = {
-  ethereum: {
-    key: "ethereum",
-    name: "Ethereum",
-    chainId: 1n,
-    defaultRpcUrl: "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY",
-    explorerTxUrl: (tx) => `https://etherscan.io/tx/${tx}`,
-    explorerAddressUrl: (addr) => `https://etherscan.io/address/${addr}`,
-    openseaChain: "ethereum",
-    alchemyNftNetwork: "eth-mainnet",
-    maxScanBlocks: 200,
-    getLogsMaxBlocks: 50,
-    defaultLookbackBlocks: 20,
-    defaultPollIntervalMs: 12_000,
+  ink: {
+    key: "ink",
+    name: "Ink",
+    chainId: 57073n,
+    // Public Gelato RPC (no key). Prefer Alchemy ink-mainnet for production.
+    defaultRpcUrl: "https://rpc-gel.inkonchain.com",
+    explorerTxUrl: (tx) => `https://explorer.inkonchain.com/tx/${tx}`,
+    explorerAddressUrl: (addr) =>
+      `https://explorer.inkonchain.com/address/${addr}`,
+    openseaChain: "ink",
+    alchemyNftNetwork: "ink-mainnet",
+    maxScanBlocks: 400,
+    getLogsMaxBlocks: 100,
+    defaultLookbackBlocks: 40,
+    defaultPollIntervalMs: 4_000,
   },
 };
 
+const ALIASES: Record<string, ChainKey> = {
+  ink: "ink",
+  inkchain: "ink",
+  inkonchain: "ink",
+};
+
 export function resolveChain(raw: string | undefined): ChainConfig {
-  const key = (raw || "ethereum").trim().toLowerCase() as ChainKey;
+  const normalized = (raw || "ink").trim().toLowerCase();
+  const key = (ALIASES[normalized] || normalized) as ChainKey;
   const chain = CHAINS[key];
   if (!chain) {
     throw new Error(
-      `Unsupported CHAIN="${raw}". Use: ${Object.keys(CHAINS).join(", ")}`
+      `Unsupported CHAIN="${raw}". This bot is Ink-only. Use: ink`
     );
   }
   return chain;

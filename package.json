@@ -1,7 +1,7 @@
 {
   "name": "porshmints-bot",
   "version": "1.0.0",
-  "description": "@porshmints_bot — Ethereum free + private mint Telegram bot (separate from @Nftcopymint_bot / Robinhood)",
+  "description": "@porshmints_bot — Ink free + private mint Telegram bot (separate from @Nftcopymint_bot / Robinhood)",
   "main": "dist/index.js",
   "scripts": {
     "check": "node scripts/check-env.mjs",
@@ -17,7 +17,8 @@
   },
   "keywords": [
     "porshmints",
-    "ethereum",
+    "ink",
+    "inkchain",
     "nft",
     "telegram",
     "free-mint",

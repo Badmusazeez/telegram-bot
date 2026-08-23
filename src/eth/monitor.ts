@@ -211,7 +211,7 @@ export async function scanForPurchases(): Promise<NftPurchase[]> {
         err instanceof Error ? err.message : err
       );
       console.error(
-        "[monitor] Tip: set ETH_RPC_URL to Alchemy: https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+        "[monitor] Tip: set ETH_RPC_URL / INK_RPC_URL to an Ink RPC, e.g. https://rpc-gel.inkonchain.com or Alchemy ink-mainnet"
       );
       continue;
     }

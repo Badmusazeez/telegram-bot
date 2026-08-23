@@ -85,6 +85,7 @@ try {
 
 const token = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const rpc = (
+  process.env.INK_RPC_URL ||
   process.env.ETH_RPC_URL ||
   process.env.RPC_URL ||
   ""
@@ -92,19 +93,34 @@ const rpc = (
 const chats = (process.env.TELEGRAM_ALLOWED_CHAT_IDS || "").trim();
 const key = (process.env.PRIVATE_KEY || "").trim();
 const tracked = (process.env.TRACKED_WALLETS || "").trim();
-const chain = (process.env.CHAIN || "ethereum").trim().toLowerCase();
+const chain = (process.env.CHAIN || "ink").trim().toLowerCase();
 
 if (chain === "robinhood" || chain === "rh" || chain === "4663") {
   fail(
-    `CHAIN=${chain} is Robinhood.\n  @porshmints_bot must use CHAIN=ethereum only.`
+    `CHAIN=${chain} is Robinhood.\n  @porshmints_bot must use CHAIN=ink only.`
   );
 }
-ok(`CHAIN=${chain || "ethereum"} (Ethereum)`);
+if (chain === "ethereum" || chain === "eth" || chain === "1") {
+  fail(
+    `CHAIN=${chain} is Ethereum mainnet.\n  @porshmints_bot is Ink-only (CHAIN=ink).`
+  );
+}
+if (chain && chain !== "ink" && chain !== "inkchain" && chain !== "inkonchain") {
+  fail(`CHAIN=${chain} unsupported. Use CHAIN=ink`);
+}
+ok(`CHAIN=${chain || "ink"} (Ink)`);
 
 const problems = [];
 if (!token) problems.push("TELEGRAM_BOT_TOKEN is empty");
-if (!rpc || rpc.includes("YOUR_KEY")) {
-  problems.push("ETH_RPC_URL is missing or still has YOUR_KEY placeholder");
+if (!rpc) {
+  problems.push(
+    "ETH_RPC_URL / INK_RPC_URL missing (e.g. https://rpc-gel.inkonchain.com)"
+  );
+}
+if (rpc.includes("eth-mainnet.g.alchemy.com") || rpc.includes("YOUR_KEY")) {
+  problems.push(
+    "ETH_RPC_URL still looks like Ethereum/placeholder — use an Ink RPC (https://rpc-gel.inkonchain.com)"
+  );
 }
 if (rpc && !/^https?:\/\//i.test(rpc)) {
   problems.push("ETH_RPC_URL must start with http:// or https://");
@@ -127,8 +143,8 @@ if (problems.length) {
 
 ok("TELEGRAM_BOT_TOKEN set (must be @porshmints_bot only)");
 ok("TELEGRAM_ALLOWED_CHAT_IDS set");
-ok("ETH_RPC_URL set");
-if (key) ok("PRIVATE_KEY set (Ethereum wallet — not Robinhood key)");
+ok("Ink RPC set (ETH_RPC_URL / INK_RPC_URL)");
+if (key) ok("PRIVATE_KEY set (Ink wallet — not Robinhood key)");
 else console.log("! PRIVATE_KEY empty (alerts-only / dry-run until you set it)");
 if (tracked) ok("TRACKED_WALLETS set");
 else console.log("! TRACKED_WALLETS empty (use /track in Telegram)");
@@ -162,7 +178,7 @@ if (token) {
   }
 }
 
-console.log("\n@porshmints_bot (Ethereum) ready — isolated from @Nftcopymint_bot.");
+console.log("\n@porshmints_bot (Ink) ready — isolated from @Nftcopymint_bot.");
 console.log("Start with:");
 console.log("  ./run.sh");
 console.log("  # or: npm run start:dev");

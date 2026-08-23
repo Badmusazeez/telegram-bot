@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   separationBanner();
 
   console.log(
-    `Starting @${BOT.telegramUsername} (${BOT.title}) on ${config.chain.name} — Ethereum only, separate from @${BOT.siblingBot}`
+    `Starting @${BOT.telegramUsername} (${BOT.title}) on ${config.chain.name} — Ink only, separate from @${BOT.siblingBot}`
   );
   await loadState();
   await loadMintWallets();

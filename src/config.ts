@@ -5,10 +5,12 @@ import { resolveChain, type ChainConfig } from "./chains";
 const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
-  /** ethereum */
-  CHAIN: z.string().optional().default("ethereum"),
+  /** ink (Ink mainnet) — only supported chain */
+  CHAIN: z.string().optional().default("ink"),
+  /** Ink RPC (name kept for compatibility; gas token is still ETH) */
   ETH_RPC_URL: z.string().optional().default(""),
-  /** Alias for ETH_RPC_URL */
+  INK_RPC_URL: z.string().optional().default(""),
+  /** Alias for ETH_RPC_URL / INK_RPC_URL */
   RPC_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
   COPY_ENABLED: z
@@ -85,10 +87,15 @@ if (!parsed.success) {
 const env = parsed.data;
 const chain: ChainConfig = resolveChain(env.CHAIN);
 const rpcUrl =
-  env.ETH_RPC_URL.trim() || env.RPC_URL.trim() || chain.defaultRpcUrl;
+  env.INK_RPC_URL.trim() ||
+  env.ETH_RPC_URL.trim() ||
+  env.RPC_URL.trim() ||
+  chain.defaultRpcUrl;
 
 if (!rpcUrl.startsWith("http")) {
-  throw new Error("ETH_RPC_URL (or RPC_URL) must be a valid RPC URL");
+  throw new Error(
+    "INK_RPC_URL / ETH_RPC_URL / RPC_URL must be a valid Ink RPC URL"
+  );
 }
 
 const maxBuyEth = Number(env.MAX_BUY_ETH);
