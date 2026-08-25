@@ -116,6 +116,19 @@ MAX-mint (stage `max_per_wallet`) in parallel, or sequential with interval:
 
 Contract-only OpenSea links (`/assets/robinhood/0xContract`, no token id) are treated as the **whole collection**.
 
+## Cadence snipe (Wrong Bird etc.)
+
+For mints with **1 on-chain winner every N seconds** (`mintFree()`), use `/snipe` — not `/claim`:
+
+```text
+/dryrun on
+/snipe https://opensea.io/collection/wrong-bird 10
+/dryrun off
+/snipe https://opensea.io/collection/wrong-bird 10
+```
+
+Bursts all remaining wallets each window until every funded wallet holds 1 NFT.
+
 ## Commands
 
-`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow` `/prices` `/watchprice` `/schedulemint` `/mintslug` `/claim` `/schedules`
+`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow` `/prices` `/watchprice` `/schedulemint` `/mintslug` `/claim` `/snipe` `/schedules`

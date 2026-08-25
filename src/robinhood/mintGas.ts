@@ -91,6 +91,7 @@ export function mintSelectorLabel(data: string | null | undefined): string {
     "0x9b4f3f25": "SeaDrop.mintPublic(legacy)",
     "0xa0712d68": "mint(uint256)",
     "0x1249c58b": "mint()",
+    "0x8ab53447": "mintFree()",
     "0x40c10f19": "mint(address,uint256)",
     "0x94bf804d": "mint(address,uint256)",
     "0x2db11544": "claim(uint256)",

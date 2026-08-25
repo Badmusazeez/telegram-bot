@@ -13,6 +13,11 @@ import { resolveScheduleFromOpenSeaLink } from "../robinhood/openseaDrop";
 import { parseOpenSeaUrl } from "../robinhood/openseaUrl";
 import { mintOpenSeaSlugNow, parseSlugMintCommandArgs, type SlugMintResult } from "../robinhood/slugMint";
 import {
+  parseSnipeCommandArgs,
+  runCadenceSnipe,
+  type CadenceSnipeResult,
+} from "../robinhood/cadenceSnipe";
+import {
   getAllMintWallets,
   getNativeBalance,
   getProvider,
@@ -791,7 +796,8 @@ export function createTelegramBot(): Bot {
           "/claim your-drop          ← defaults to 10s interval",
           "",
           "Contract-only links (…/assets/robinhood/0xContract) = collection.",
-          "Free stages only · 1 NFT/wallet · waits N seconds between wallets.",
+          "Free OpenSea Drop stages only · 1 NFT/wallet · waits N seconds between wallets.",
+          "For cadence mints (1 winner / 10s like Wrong Bird): /snipe",
           "Respects /dryrun. Independent of /copy on|off.",
         ].join("\n")
       );
@@ -828,6 +834,53 @@ export function createTelegramBot(): Bot {
         },
       });
       await replySlugMintResult(ctx, result, "Claim");
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("snipe", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (!raw) {
+      await ctx.reply(
+        [
+          "Cadence snipe — 1 on-chain winner per interval, 1 NFT per wallet:",
+          "",
+          "/snipe https://opensea.io/collection/wrong-bird 10",
+          "/snipe wrong-bird 10",
+          "/snipe 0xeb00d52ef95ea6aef1a7dfdc16337053eeedf5e6 10",
+          "",
+          "Uses mintFree() · bursts all remaining wallets each window",
+          "until every funded wallet holds 1 (or rounds exhausted).",
+          "Respects /dryrun. Independent of /copy on|off.",
+        ].join("\n")
+      );
+      return;
+    }
+
+    const parsed = parseSnipeCommandArgs(raw);
+    if (!parsed) {
+      await ctx.reply(
+        "Invalid target. Example:\n/snipe https://opensea.io/collection/wrong-bird 10"
+      );
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(
+      `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · mintFree · all funded wallets…`
+    );
+
+    try {
+      const result = await runCadenceSnipe(parsed.target, {
+        intervalSec: parsed.intervalSec,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyCadenceSnipeResult(ctx, result);
     } catch (err) {
       await ctx.reply(
         `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
@@ -928,6 +981,51 @@ async function replySlugMintResult(
       ``,
       `<i>${result.results.length} wallet results (see mint result summary)</i>`
     );
+  }
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
+}
+
+async function replyCadenceSnipeResult(
+  ctx: Context,
+  result: CadenceSnipeResult
+): Promise<void> {
+  const lines = [
+    result.success
+      ? result.dryRun
+        ? `<b>🧪 Snipe DRY RUN</b>`
+        : `<b>✅ Snipe DONE</b>`
+      : `<b>❌ Snipe FAILED</b>`,
+    ``,
+    `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
+    `<b>Slug:</b> <code>${escape(result.slug)}</code>`,
+    `<b>Contract:</b> <code>${escape(result.contract)}</code>`,
+    `<b>Calldata:</b> <code>${escape(result.calldata)}</code> (mintFree)`,
+    `<b>Cadence:</b> 1 winner / ${result.intervalSec}s · 1 NFT/wallet`,
+    ``,
+    `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
+  ];
+
+  if (result.results.length > 0 && result.results.length <= 25) {
+    lines.push(``);
+    for (const r of result.results) {
+      if (r.ok && r.txHash) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> <a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a>${r.round ? ` r${r.round}` : ""}`
+        );
+      } else if (r.ok) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> OK${r.round ? ` r${r.round}` : ""}${r.error ? ` (${escape(r.error.slice(0, 40))})` : ""}`
+        );
+      } else {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape((r.error || "fail").slice(0, 80))}`
+        );
+      }
+    }
   }
 
   await ctx.reply(lines.join("\n"), {

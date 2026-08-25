@@ -161,6 +161,7 @@ export async function prepareOpenSeaFreeMint(params: {
 
 const MINT_IFACE = new Interface([
   "function mint()",
+  "function mintFree()",
   "function mint(uint256 quantity)",
   "function publicMint(uint256 quantity)",
   "function claim(uint256 quantity)",
@@ -219,6 +220,14 @@ export function buildPublicMaxMintCandidates(params: {
       quantity: q,
     });
   }
+
+  out.push({
+    to: params.to,
+    data: MINT_IFACE.encodeFunctionData("mintFree()", []),
+    valueWei: 0n,
+    label: "mintFree()",
+    quantity: 1,
+  });
 
   out.push({
     to: params.to,

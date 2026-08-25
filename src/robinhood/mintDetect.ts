@@ -14,6 +14,7 @@ export const MINT_SELECTORS = new Set([
   "0x94bf804d",
   "0x40c10f19", // mint(address,uint256)
   "0x1249c58b", // mint()
+  "0x8ab53447", // mintFree() — Wrong Bird cadence mints
   "0x2db11544", // claim?
   "0x4a21a2df", // legacy scatter (detect only)
   "0x6a627842", // mint(address)

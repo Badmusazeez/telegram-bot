@@ -201,6 +201,7 @@ export function helpText(): string {
     `/schedulemint &lt;when&gt; &lt;contract&gt; &lt;mint|mint1|0x...&gt; — advanced`,
     `/mintslug &lt;opensea-url|slug&gt; [secs] — MAX-mint OpenSea drop now (optional sequential interval)`,
     `/claim &lt;opensea-url|slug&gt; [secs] — free claim 1 NFT/wallet · default 10s between wallets`,
+    `/snipe &lt;collection|0x|url&gt; [secs] — cadence snipe (1 winner/interval, mintFree, all wallets)`,
     `/schedulemintfromtx &lt;txHash&gt; &lt;when&gt; — copy whale mint calldata`,
     `/schedules — list scheduled mints`,
     `/cancelschedule &lt;id&gt; — cancel a pending schedule`,

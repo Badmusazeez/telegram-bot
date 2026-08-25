@@ -61,7 +61,7 @@ export function clearOpenSeaDropCache(): void {
   dropCache.clear();
 }
 
-async function fetchOpenSeaJson(
+export async function fetchOpenSeaJson(
   url: string,
   init?: RequestInit
 ): Promise<unknown> {
