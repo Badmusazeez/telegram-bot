@@ -100,8 +100,9 @@ Keep `DRY_RUN=false` and `PRIVATE_KEY` set for live scheduled mints.
 Free claim **1 NFT per wallet** with a wait between wallets (default **10s**):
 
 ```text
+/claim https://opensea.io/assets/robinhood/0xdcd9bc67dcd09bb37ef92175267741be973a7dbe 10
+/claim 0xdcd9bc67dcd09bb37ef92175267741be973a7dbe 10
 /claim https://opensea.io/collection/your-drop 10
-/claim your-drop 10
 /dryrun on    ← simulate first
 /dryrun off   ← then go live
 ```
@@ -109,11 +110,11 @@ Free claim **1 NFT per wallet** with a wait between wallets (default **10s**):
 MAX-mint (stage `max_per_wallet`) in parallel, or sequential with interval:
 
 ```text
-/mintslug https://opensea.io/collection/your-drop
+/mintslug https://opensea.io/assets/robinhood/0xdcd9bc67dcd09bb37ef92175267741be973a7dbe
 /mintslug your-drop 10
 ```
 
-Need a **full** collection or asset URL — `https://opensea.io/assets/robinhood` alone is invalid (missing contract/token id).
+Contract-only OpenSea links (`/assets/robinhood/0xContract`, no token id) are treated as the **whole collection**.
 
 ## Commands
 

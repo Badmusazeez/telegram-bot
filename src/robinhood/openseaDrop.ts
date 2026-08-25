@@ -171,9 +171,22 @@ export async function fetchOpenSeaDrop(slug: string): Promise<OpenSeaDrop> {
   if (hit && Date.now() - hit.at < DROP_CACHE_MS) {
     return hit.drop;
   }
-  const drop = (await fetchOpenSeaJson(
-    `https://api.opensea.io/api/v2/drops/${encodeURIComponent(slug)}`
-  )) as OpenSeaDrop;
+  let drop: OpenSeaDrop;
+  try {
+    drop = (await fetchOpenSeaJson(
+      `https://api.opensea.io/api/v2/drops/${encodeURIComponent(slug)}`
+    )) as OpenSeaDrop;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/opensea http 404|drop not found/i.test(msg)) {
+      throw new Error(
+        `OpenSea collection "${slug}" has no Drop mint page.\n` +
+          `/claim and /mintslug only work for OpenSea Drop free stages.\n` +
+          `For custom contract mints: /track a whale + /copy on, or /schedulemintfromtx <tx> <when>.`
+      );
+    }
+    throw err;
+  }
   if (!drop?.contract_address || !Array.isArray(drop.stages)) {
     throw new Error("OpenSea drop response missing contract/stages.");
   }
@@ -344,7 +357,7 @@ export async function resolveScheduleFromOpenSeaLink(
     throw new Error("Invalid OpenSea link.");
   }
   if (
-    link.kind === "asset" &&
+    (link.kind === "asset" || link.kind === "contract") &&
     link.chain &&
     link.chain !== "robinhood" &&
     link.chain !== config.chain.openseaChain

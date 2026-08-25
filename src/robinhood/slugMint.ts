@@ -8,7 +8,7 @@ import {
   resolveCollectionSlug,
   type OpenSeaDropStage,
 } from "./openseaDrop";
-import { parseOpenSeaUrl } from "./openseaUrl";
+import { parseOpenSeaUrl, normalizeOpenSeaInput } from "./openseaUrl";
 import { openSeaStageMaxPerWallet } from "./multiMint";
 import { maxMintQuantityLadder } from "./mintQuantity";
 import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
@@ -76,30 +76,32 @@ export type SlugMintOptions = {
   onProgress?: (line: string) => void | Promise<void>;
 };
 
-/** Parse `/mintslug|/claim <url|slug> [intervalSec]`. */
+/** Parse `/mintslug|/claim <url|slug|0xContract> [intervalSec]`. */
 export function parseSlugMintCommandArgs(raw: string): {
   target: string;
   intervalSec?: number;
 } | null {
-  const text = raw.trim();
+  const text = normalizeOpenSeaInput(raw.trim());
   if (!text) return null;
 
   // Trailing interval: "... 10" or "... 10s"
   const withInterval = text.match(/^(.*?)\s+(\d+)\s*s?$/i);
   if (withInterval) {
-    const target = withInterval[1].trim();
+    const targetRaw = withInterval[1].trim();
     const intervalSec = Number(withInterval[2]);
+    const resolved = resolveSlugInput(targetRaw);
     if (
-      resolveSlugInput(target) &&
+      resolved &&
       Number.isFinite(intervalSec) &&
       intervalSec >= 0 &&
       intervalSec <= 3_600
     ) {
-      return { target, intervalSec };
+      return { target: resolved.value, intervalSec };
     }
   }
 
-  if (resolveSlugInput(text)) return { target: text };
+  const resolved = resolveSlugInput(text);
+  if (resolved) return { target: resolved.value };
   return null;
 }
 
@@ -141,15 +143,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Accept OpenSea URL or bare collection slug. */
+/** Accept OpenSea URL, contract address, or bare collection slug. */
 export function resolveSlugInput(raw: string): {
   kind: "url" | "slug";
   value: string;
 } | null {
-  const text = raw.trim();
+  const text = normalizeOpenSeaInput(raw);
   if (!text) return null;
   const link = parseOpenSeaUrl(text);
-  if (link) return { kind: "url", value: text };
+  if (link) return { kind: "url", value: link.url || text };
   if (/^[a-z0-9][a-z0-9_-]{1,80}$/i.test(text) && !text.includes("://")) {
     return { kind: "slug", value: text.toLowerCase() };
   }
@@ -157,15 +159,15 @@ export function resolveSlugInput(raw: string): {
 }
 
 function incompleteOpenSeaAssetHint(raw: string): string | null {
-  const text = raw.trim();
-  // e.g. https://opensea.io/assets/robinhood  (missing contract/tokenId)
+  const text = normalizeOpenSeaInput(raw);
+  // e.g. https://opensea.io/assets/robinhood  (missing contract)
   if (/opensea\.io\/(?:assets|item)\/[a-z0-9_-]+\/?$/i.test(text)) {
     return (
-      "Incomplete OpenSea asset URL (missing contract / token id).\n" +
-        "Use a full asset link OR a collection drop link:\n" +
+      "Incomplete OpenSea URL (missing contract).\n" +
+        "Collection examples:\n" +
+        "• https://opensea.io/assets/robinhood/0xContract\n" +
         "• https://opensea.io/collection/your-drop\n" +
-        "• https://opensea.io/assets/robinhood/0xContract/1\n" +
-        "• /claim your-drop 10"
+        "• /claim 0xContract 10"
     );
   }
   return null;
@@ -184,8 +186,8 @@ async function resolveSlugFromInput(raw: string): Promise<{
     throw new Error(
       "Invalid input. Use an OpenSea URL or collection slug.\n" +
         "Examples:\n" +
-        "/claim https://opensea.io/collection/your-drop 10\n" +
-        "/claim https://opensea.io/assets/robinhood/0xContract/1 10\n" +
+        "/claim https://opensea.io/assets/robinhood/0xContract 10\n" +
+        "/claim 0xContract 10\n" +
         "/mintslug your-drop"
     );
   }

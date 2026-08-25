@@ -617,7 +617,10 @@ export function createTelegramBot(): Bot {
         );
       } catch (err) {
         // Fallback: contract from asset URL + mint1
-        if (openSea.kind === "asset" && openSea.contract) {
+        if (
+          (openSea.kind === "asset" || openSea.kind === "contract") &&
+          openSea.contract
+        ) {
           const wallet = getWallet();
           const data = resolveCalldata(dataRaw, wallet?.address || openSea.contract);
           if (!data) {
@@ -726,12 +729,13 @@ export function createTelegramBot(): Bot {
         [
           "MAX-mint an OpenSea drop now on all mint wallets:",
           "",
+          "/mintslug https://opensea.io/assets/robinhood/0xdcd9…",
           "/mintslug https://opensea.io/collection/your-drop",
-          "/mintslug https://opensea.io/assets/robinhood/0xContract/1",
-          "/mintslug your-drop",
+          "/mintslug 0xdcd9bc67dcd09bb37ef92175267741be973a7dbe",
           "/mintslug your-drop 10   ← sequential, 10s between wallets",
           "",
           "Uses OpenSea Drop API · free stages only · max_per_wallet.",
+          "Contract-only OpenSea links (no token id) = whole collection.",
           "For 1 NFT/wallet @ interval, use /claim instead.",
           "Respects /dryrun. Independent of /copy on|off.",
         ].join("\n")
@@ -781,12 +785,12 @@ export function createTelegramBot(): Bot {
         [
           "Claim 1 free OpenSea NFT per mint wallet (sequential):",
           "",
+          "/claim https://opensea.io/assets/robinhood/0xdcd9… 10",
+          "/claim 0xdcd9bc67dcd09bb37ef92175267741be973a7dbe 10",
           "/claim https://opensea.io/collection/your-drop 10",
-          "/claim https://opensea.io/assets/robinhood/0xContract/1 10",
-          "/claim your-drop 10",
           "/claim your-drop          ← defaults to 10s interval",
           "",
-          "⚠️ Need a FULL collection or asset URL — not just /assets/robinhood.",
+          "Contract-only links (…/assets/robinhood/0xContract) = collection.",
           "Free stages only · 1 NFT/wallet · waits N seconds between wallets.",
           "Respects /dryrun. Independent of /copy on|off.",
         ].join("\n")
@@ -798,13 +802,12 @@ export function createTelegramBot(): Bot {
     if (!parsed) {
       await ctx.reply(
         [
-          "Invalid OpenSea URL/slug.",
+          "Invalid OpenSea URL/slug/contract.",
           "",
-          "https://opensea.io/assets/robinhood alone is incomplete.",
-          "Use:",
-          "• https://opensea.io/collection/<slug>",
-          "• https://opensea.io/assets/robinhood/0xContract/<tokenId>",
-          "• /claim <slug> 10",
+          "Examples:",
+          "• /claim https://opensea.io/assets/robinhood/0xdcd9… 10",
+          "• /claim 0xdcd9bc67dcd09bb37ef92175267741be973a7dbe 10",
+          "• /claim https://opensea.io/collection/<slug> 10",
         ].join("\n")
       );
       return;

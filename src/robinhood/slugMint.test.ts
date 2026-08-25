@@ -40,6 +40,27 @@ describe("parseSlugMintCommandArgs", () => {
     });
   });
 
+  it("parses contract-only collection URL + interval", () => {
+    const url =
+      "https://opensea.io/assets/robinhood/0xdcd9bc67dcd09bb37ef92175267741be973a7dbe";
+    assert.deepEqual(parseSlugMintCommandArgs(`${url} 10`), {
+      target: url,
+      intervalSec: 10,
+    });
+    assert.deepEqual(parseSlugMintCommandArgs(`${url}. 10`), {
+      target: url,
+      intervalSec: 10,
+    });
+  });
+
+  it("parses bare contract + interval", () => {
+    const c = "0xdcd9bc67dcd09bb37ef92175267741be973a7dbe";
+    assert.deepEqual(parseSlugMintCommandArgs(`${c} 10`), {
+      target: `https://opensea.io/assets/robinhood/${c}`,
+      intervalSec: 10,
+    });
+  });
+
   it("parses target without interval", () => {
     assert.deepEqual(parseSlugMintCommandArgs("my-drop"), {
       target: "my-drop",
