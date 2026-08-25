@@ -57,7 +57,51 @@ export type SlugMintResult = {
   results: SlugMintWalletResult[];
   /** Structured counts for Telegram. */
   statsText?: string;
+  /** claim = 1/wallet sequential; max = stage max blast */
+  mode?: "max" | "claim";
+  /** Seconds between wallets when sequential (0 = parallel). */
+  intervalSec?: number;
 };
+
+export type SlugMintOptions = {
+  /** max = stage max_per_wallet (default); claim = exactly 1 free NFT per wallet */
+  mode?: "max" | "claim";
+  /**
+   * Seconds to wait between wallets (sequential).
+   * Omit or 0 = parallel rate-aware blast (mintslug default).
+   * Claim default in Telegram is 10.
+   */
+  intervalSec?: number;
+  /** Optional progress lines (Telegram). */
+  onProgress?: (line: string) => void | Promise<void>;
+};
+
+/** Parse `/mintslug|/claim <url|slug> [intervalSec]`. */
+export function parseSlugMintCommandArgs(raw: string): {
+  target: string;
+  intervalSec?: number;
+} | null {
+  const text = raw.trim();
+  if (!text) return null;
+
+  // Trailing interval: "... 10" or "... 10s"
+  const withInterval = text.match(/^(.*?)\s+(\d+)\s*s?$/i);
+  if (withInterval) {
+    const target = withInterval[1].trim();
+    const intervalSec = Number(withInterval[2]);
+    if (
+      resolveSlugInput(target) &&
+      Number.isFinite(intervalSec) &&
+      intervalSec >= 0 &&
+      intervalSec <= 3_600
+    ) {
+      return { target, intervalSec };
+    }
+  }
+
+  if (resolveSlugInput(text)) return { target: text };
+  return null;
+}
 
 function stagePriceWei(stage: OpenSeaDropStage | null | undefined): bigint {
   if (!stage?.price) return 0n;
@@ -112,17 +156,36 @@ export function resolveSlugInput(raw: string): {
   return null;
 }
 
+function incompleteOpenSeaAssetHint(raw: string): string | null {
+  const text = raw.trim();
+  // e.g. https://opensea.io/assets/robinhood  (missing contract/tokenId)
+  if (/opensea\.io\/(?:assets|item)\/[a-z0-9_-]+\/?$/i.test(text)) {
+    return (
+      "Incomplete OpenSea asset URL (missing contract / token id).\n" +
+        "Use a full asset link OR a collection drop link:\n" +
+        "• https://opensea.io/collection/your-drop\n" +
+        "• https://opensea.io/assets/robinhood/0xContract/1\n" +
+        "• /claim your-drop 10"
+    );
+  }
+  return null;
+}
+
 async function resolveSlugFromInput(raw: string): Promise<{
   slug: string;
   openSeaUrl: string;
 }> {
+  const incomplete = incompleteOpenSeaAssetHint(raw);
+  if (incomplete) {
+    throw new Error(incomplete);
+  }
   const parsed = resolveSlugInput(raw);
   if (!parsed) {
     throw new Error(
       "Invalid input. Use an OpenSea URL or collection slug.\n" +
         "Examples:\n" +
-        "/mintslug https://opensea.io/collection/your-drop\n" +
-        "/mintslug https://opensea.io/assets/robinhood/0xContract/1\n" +
+        "/claim https://opensea.io/collection/your-drop 10\n" +
+        "/claim https://opensea.io/assets/robinhood/0xContract/1 10\n" +
         "/mintslug your-drop"
     );
   }
@@ -140,19 +203,26 @@ async function resolveSlugFromInput(raw: string): Promise<{
   };
 }
 
-async function buildMaxMintForWallet(
+async function buildFreeMintForWallet(
   slug: string,
   wallet: Wallet,
-  stage: OpenSeaDropStage
+  stage: OpenSeaDropStage,
+  mode: "max" | "claim"
 ): Promise<{ to: string; data: string; valueWei: bigint; quantity: number }> {
   const cool = getOpenSeaCooldownRemainingMs();
   if (cool > 0) {
     await sleep(Math.min(cool, 3_000));
   }
-  const target = openSeaStageMaxPerWallet(stage);
-  const ladder = maxMintQuantityLadder(target).filter((q) => q <= target);
+  const stageMax = openSeaStageMaxPerWallet(stage);
+  const quantities =
+    mode === "claim"
+      ? [1].filter((q) => q <= stageMax)
+      : maxMintQuantityLadder(stageMax).filter((q) => q <= stageMax);
+  if (quantities.length === 0) {
+    throw new Error(`Stage max_per_wallet is ${stageMax} — cannot mint`);
+  }
   let lastErr: Error | null = null;
-  for (const quantity of ladder) {
+  for (const quantity of quantities) {
     try {
       const built = await buildOpenSeaDropMintTx({
         slug,
@@ -172,7 +242,7 @@ async function buildMaxMintForWallet(
       }
     }
   }
-  throw lastErr || new Error("OpenSea max mint build failed");
+  throw lastErr || new Error("OpenSea free mint build failed");
 }
 
 async function sendMint(
@@ -269,10 +339,20 @@ async function sendMint(
 }
 
 /**
- * Immediately MAX-mint an OpenSea drop (URL or slug) on every funded mint wallet.
- * Supports all configured wallets (no 7-wallet cap). Rate-aware concurrency.
+ * Immediately free-mint an OpenSea drop (URL or slug) on every funded mint wallet.
+ * - mode "max" (default): MAX quantity per wallet, parallel rate-aware blast
+ * - mode "claim": 1 NFT per wallet
+ * - intervalSec > 0: sequential one-wallet-at-a-time with sleep between wallets
  */
-export async function mintOpenSeaSlugNow(raw: string): Promise<SlugMintResult> {
+export async function mintOpenSeaSlugNow(
+  raw: string,
+  options: SlugMintOptions = {}
+): Promise<SlugMintResult> {
+  const mode = options.mode ?? "max";
+  const intervalSec = Math.max(0, Math.floor(options.intervalSec ?? 0));
+  const sequential = intervalSec > 0;
+  const onProgress = options.onProgress;
+
   clearWalletReadinessCache();
   await ensureOpenSeaApiKey();
   if (!getOpenSeaApiKey()) {
@@ -307,22 +387,29 @@ export async function mintOpenSeaSlugNow(raw: string): Promise<SlugMintResult> {
   }
 
   const stageLabel = stage.label || stage.stage_type || "drop";
-  const quantityTarget = openSeaStageMaxPerWallet(stage);
+  const quantityTarget =
+    mode === "claim" ? 1 : openSeaStageMaxPerWallet(stage);
   const name = drop.collection_name || drop.collection_slug || slug;
   const contract = (drop.contract_address || "").toLowerCase();
   const state = getState();
 
+  const baseMeta = {
+    dryRun: state.dryRun,
+    slug,
+    name,
+    contract,
+    stageLabel,
+    quantityTarget,
+    openSeaUrl: drop.opensea_url || openSeaUrl,
+    mode,
+    intervalSec: sequential ? intervalSec : 0,
+  };
+
   const all = getAllMintWallets();
   if (all.length === 0) {
     return {
-      dryRun: state.dryRun,
+      ...baseMeta,
       success: false,
-      slug,
-      name,
-      contract,
-      stageLabel,
-      quantityTarget,
-      openSeaUrl: drop.opensea_url || openSeaUrl,
       reason: "No mint wallets configured. Use /addkey or PRIVATE_KEY(S).",
       results: [],
       statsText: formatMintResultStats({
@@ -347,8 +434,8 @@ export async function mintOpenSeaSlugNow(raw: string): Promise<SlugMintResult> {
   const skippedEmpty = readiness.empty.length + readiness.lowGas.length;
 
   console.log(
-    `[mintslug] wallets configured=${all.length} ready=${funded.length} ` +
-      `empty=${readiness.empty.length} lowGas=${readiness.lowGas.length}`
+    `[mintslug] mode=${mode} interval=${intervalSec}s wallets configured=${all.length} ` +
+      `ready=${funded.length} empty=${readiness.empty.length} lowGas=${readiness.lowGas.length}`
   );
 
   if (funded.length === 0) {
@@ -360,19 +447,19 @@ export async function mintOpenSeaSlugNow(raw: string): Promise<SlugMintResult> {
       outcomes: [],
     });
     return {
-      dryRun: state.dryRun,
+      ...baseMeta,
       success: false,
-      slug,
-      name,
-      contract,
-      stageLabel,
-      quantityTarget,
-      openSeaUrl: drop.opensea_url || openSeaUrl,
       reason: `All ${all.length} mint wallet(s) empty/low-gas. Fund wallets with RH gas.`,
       results: [],
       statsText: formatMintResultStats(stats),
     };
   }
+
+  const qtyLabel =
+    mode === "claim" ? "claim x1" : `MAX-mint x${quantityTarget}`;
+  const paceLabel = sequential
+    ? `sequential · ${intervalSec}s between wallets`
+    : "parallel blast";
 
   if (state.dryRun) {
     const stats = buildMintResultStats({
@@ -386,18 +473,16 @@ export async function mintOpenSeaSlugNow(raw: string): Promise<SlugMintResult> {
         bucket: "success" as const,
       })),
     });
+    const etaSec = sequential
+      ? Math.max(0, (funded.length - 1) * intervalSec)
+      : 0;
     return {
+      ...baseMeta,
       dryRun: true,
       success: true,
-      slug,
-      name,
-      contract,
-      stageLabel,
-      quantityTarget,
-      openSeaUrl: drop.opensea_url || openSeaUrl,
-      reason: `DRY RUN — would MAX-mint x${quantityTarget} on ${funded.length}/${all.length} wallet(s)${
-        skippedEmpty ? ` (${skippedEmpty} empty/low-gas skipped)` : ""
-      }. /dryrun off to go live.\n\n${formatMintResultStats(stats)}`,
+      reason: `DRY RUN — would ${qtyLabel} on ${funded.length}/${all.length} wallet(s) (${paceLabel}${
+        etaSec ? `; ~${etaSec}s wall time` : ""
+      })${skippedEmpty ? ` (${skippedEmpty} empty/low-gas skipped)` : ""}. /dryrun off to go live.\n\n${formatMintResultStats(stats)}`,
       results: funded.map((w) => ({
         address: w.address.toLowerCase(),
         ok: true,
@@ -407,37 +492,68 @@ export async function mintOpenSeaSlugNow(raw: string): Promise<SlugMintResult> {
     };
   }
 
-  // Rate-aware concurrency: OpenSea mint builder is slow/429-prone; RPC gate caps sends.
-  const results = await mapPool(funded, 4, async (wallet) => {
+  const mintOne = async (wallet: Wallet): Promise<SlugMintWalletResult> => {
     const address = wallet.address.toLowerCase();
     try {
-      const built = await buildMaxMintForWallet(slug, wallet, stage);
+      const built = await buildFreeMintForWallet(slug, wallet, stage, mode);
       const sent = await sendMint(wallet, {
         ...built,
-        strategy: `OpenSeaDrop(${slug},x${built.quantity})`,
+        strategy: `OpenSeaDrop(${slug},${mode},x${built.quantity})`,
       });
       if (!sent.ok) {
         return {
           address,
-          ok: false as const,
+          ok: false,
           quantity: built.quantity,
           error: sent.error,
         };
       }
       return {
         address,
-        ok: true as const,
+        ok: true,
         txHash: sent.txHash,
         quantity: built.quantity,
       };
     } catch (err) {
       return {
         address,
-        ok: false as const,
+        ok: false,
         error: shortErr(err),
       };
     }
-  });
+  };
+
+  let results: SlugMintWalletResult[];
+  if (sequential) {
+    results = [];
+    for (let i = 0; i < funded.length; i++) {
+      const wallet = funded[i];
+      const n = i + 1;
+      if (onProgress) {
+        await onProgress(
+          `⏳ Wallet ${n}/${funded.length}: ${wallet.address.slice(0, 8)}… (${qtyLabel})`
+        );
+      }
+      const one = await mintOne(wallet);
+      results.push(one);
+      if (onProgress) {
+        await onProgress(
+          one.ok
+            ? `✅ ${n}/${funded.length} OK ${one.txHash?.slice(0, 12) ?? ""}…`
+            : `❌ ${n}/${funded.length} FAIL (${one.error || "fail"})`
+        );
+      }
+      if (i < funded.length - 1) {
+        if (onProgress) {
+          await onProgress(`⏱ Waiting ${intervalSec}s before next wallet…`);
+        }
+        await sleep(intervalSec * 1_000);
+      }
+    }
+  } else {
+    // Rate-aware concurrency: OpenSea mint builder is slow/429-prone; RPC gate caps sends.
+    results = await mapPool(funded, 4, mintOne);
+  }
 
   const outcomes: MintWalletOutcome[] = results.map((r) => ({
     address: r.address,
@@ -466,20 +582,15 @@ export async function mintOpenSeaSlugNow(raw: string): Promise<SlugMintResult> {
     .join(" | ");
 
   return {
+    ...baseMeta,
     dryRun: false,
     success: ok.length > 0,
-    slug,
-    name,
-    contract,
-    stageLabel,
-    quantityTarget,
-    openSeaUrl: drop.opensea_url || openSeaUrl,
     reason:
       (ok.length > 0
-        ? `Minted on ${ok.length}/${funded.length} ready wallet(s) (${all.length} configured)${
+        ? `${mode === "claim" ? "Claimed" : "Minted"} on ${ok.length}/${funded.length} ready wallet(s) (${all.length} configured · ${paceLabel})${
             skippedEmpty ? `; ${skippedEmpty} empty/low-gas skipped` : ""
           }: ${summary}`
-        : `All ready wallets failed (${all.length} configured, ${funded.length} ready): ${summary}`) +
+        : `All ready wallets failed (${all.length} configured, ${funded.length} ready · ${paceLabel}): ${summary}`) +
       `\n\n${statsText}`,
     results,
     statsText,

@@ -11,7 +11,7 @@ import {
 } from "../robinhood/openseaAuth";
 import { resolveScheduleFromOpenSeaLink } from "../robinhood/openseaDrop";
 import { parseOpenSeaUrl } from "../robinhood/openseaUrl";
-import { mintOpenSeaSlugNow } from "../robinhood/slugMint";
+import { mintOpenSeaSlugNow, parseSlugMintCommandArgs, type SlugMintResult } from "../robinhood/slugMint";
 import {
   getAllMintWallets,
   getNativeBalance,
@@ -729,65 +729,102 @@ export function createTelegramBot(): Bot {
           "/mintslug https://opensea.io/collection/your-drop",
           "/mintslug https://opensea.io/assets/robinhood/0xContract/1",
           "/mintslug your-drop",
+          "/mintslug your-drop 10   ← sequential, 10s between wallets",
           "",
           "Uses OpenSea Drop API · free stages only · max_per_wallet.",
+          "For 1 NFT/wallet @ interval, use /claim instead.",
           "Respects /dryrun. Independent of /copy on|off.",
         ].join("\n")
       );
       return;
     }
 
+    const parsed = parseSlugMintCommandArgs(raw);
+    if (!parsed) {
+      await ctx.reply(
+        "Invalid input. Example:\n/mintslug https://opensea.io/collection/your-drop\n/mintslug your-drop 10"
+      );
+      return;
+    }
+
     await registerNotifyChat(chatId(ctx));
-    await ctx.reply("Resolving OpenSea drop + minting MAX on all wallets…");
+    const intervalSec = parsed.intervalSec;
+    const sequential = (intervalSec ?? 0) > 0;
+    await ctx.reply(
+      sequential
+        ? `Resolving OpenSea drop + MAX-mint sequential (${intervalSec}s between wallets)…`
+        : "Resolving OpenSea drop + minting MAX on all wallets…"
+    );
 
     try {
-      const result = await mintOpenSeaSlugNow(raw);
-      const lines = [
-        result.success
-          ? result.dryRun
-            ? `<b>🧪 Mintslug DRY RUN</b>`
-            : `<b>✅ Mintslug DONE</b>`
-          : `<b>❌ Mintslug FAILED</b>`,
-        ``,
-        `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
-        `<b>Slug:</b> <code>${escape(result.slug)}</code>`,
-        result.contract
-          ? `<b>Contract:</b> <code>${escape(result.contract)}</code>`
-          : "",
-        `<b>Stage:</b> ${escape(result.stageLabel)}`,
-        `<b>Target qty:</b> ${result.quantityTarget}`,
-        ``,
-        `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
-      ].filter(Boolean);
-
-      if (result.results.length > 0 && result.results.length <= 25) {
-        lines.push(``);
-        for (const r of result.results) {
-          if (r.ok && r.txHash) {
-            lines.push(
-              `• <code>${escape(r.address.slice(0, 10))}…</code> <a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a> x${r.quantity ?? "?"}`
-            );
-          } else if (r.ok) {
-            lines.push(
-              `• <code>${escape(r.address.slice(0, 10))}…</code> OK x${r.quantity ?? "?"}`
-            );
-          } else {
-            lines.push(
-              `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape((r.error || "fail").slice(0, 80))}`
-            );
-          }
-        }
-      } else if (result.results.length > 25) {
-        lines.push(
-          ``,
-          `<i>${result.results.length} wallet results (see mint result summary)</i>`
-        );
-      }
-
-      await ctx.reply(lines.join("\n"), {
-        parse_mode: "HTML",
-        link_preview_options: { is_disabled: true },
+      const result = await mintOpenSeaSlugNow(parsed.target, {
+        mode: "max",
+        intervalSec: intervalSec ?? 0,
+        onProgress: sequential
+          ? async (line) => {
+              await ctx.reply(line).catch(() => undefined);
+            }
+          : undefined,
       });
+      await replySlugMintResult(ctx, result, "Mintslug");
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("claim", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (!raw) {
+      await ctx.reply(
+        [
+          "Claim 1 free OpenSea NFT per mint wallet (sequential):",
+          "",
+          "/claim https://opensea.io/collection/your-drop 10",
+          "/claim https://opensea.io/assets/robinhood/0xContract/1 10",
+          "/claim your-drop 10",
+          "/claim your-drop          ← defaults to 10s interval",
+          "",
+          "⚠️ Need a FULL collection or asset URL — not just /assets/robinhood.",
+          "Free stages only · 1 NFT/wallet · waits N seconds between wallets.",
+          "Respects /dryrun. Independent of /copy on|off.",
+        ].join("\n")
+      );
+      return;
+    }
+
+    const parsed = parseSlugMintCommandArgs(raw);
+    if (!parsed) {
+      await ctx.reply(
+        [
+          "Invalid OpenSea URL/slug.",
+          "",
+          "https://opensea.io/assets/robinhood alone is incomplete.",
+          "Use:",
+          "• https://opensea.io/collection/<slug>",
+          "• https://opensea.io/assets/robinhood/0xContract/<tokenId>",
+          "• /claim <slug> 10",
+        ].join("\n")
+      );
+      return;
+    }
+
+    const intervalSec = parsed.intervalSec ?? 10;
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(
+      `Claiming free mint: 1 NFT/wallet · ${intervalSec}s between wallets · all funded keys…`
+    );
+
+    try {
+      const result = await mintOpenSeaSlugNow(parsed.target, {
+        mode: "claim",
+        intervalSec,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replySlugMintResult(ctx, result, "Claim");
     } catch (err) {
       await ctx.reply(
         `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
@@ -831,6 +868,69 @@ function escape(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+async function replySlugMintResult(
+  ctx: Context,
+  result: SlugMintResult,
+  title: string
+): Promise<void> {
+  const modeLabel =
+    result.mode === "claim"
+      ? "claim x1"
+      : `MAX x${result.quantityTarget}`;
+  const pace =
+    (result.intervalSec ?? 0) > 0
+      ? `sequential · ${result.intervalSec}s gap`
+      : "parallel";
+
+  const lines = [
+    result.success
+      ? result.dryRun
+        ? `<b>🧪 ${escape(title)} DRY RUN</b>`
+        : `<b>✅ ${escape(title)} DONE</b>`
+      : `<b>❌ ${escape(title)} FAILED</b>`,
+    ``,
+    `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
+    `<b>Slug:</b> <code>${escape(result.slug)}</code>`,
+    result.contract
+      ? `<b>Contract:</b> <code>${escape(result.contract)}</code>`
+      : "",
+    `<b>Stage:</b> ${escape(result.stageLabel)}`,
+    `<b>Mode:</b> ${escape(modeLabel)} · ${escape(pace)}`,
+    `<b>Target qty:</b> ${result.quantityTarget}`,
+    ``,
+    `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
+  ].filter(Boolean);
+
+  if (result.results.length > 0 && result.results.length <= 25) {
+    lines.push(``);
+    for (const r of result.results) {
+      if (r.ok && r.txHash) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> <a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a> x${r.quantity ?? "?"}`
+        );
+      } else if (r.ok) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> OK x${r.quantity ?? "?"}`
+        );
+      } else {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape((r.error || "fail").slice(0, 80))}`
+        );
+      }
+    }
+  } else if (result.results.length > 25) {
+    lines.push(
+      ``,
+      `<i>${result.results.length} wallet results (see mint result summary)</i>`
+    );
+  }
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
 }
 
 export async function broadcastPurchase(

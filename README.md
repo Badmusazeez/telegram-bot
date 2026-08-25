@@ -95,6 +95,26 @@ Or paste full calldata hex from a whale mint tx.
 
 Keep `DRY_RUN=false` and `PRIVATE_KEY` set for live scheduled mints.
 
+## OpenSea claim / mintslug
+
+Free claim **1 NFT per wallet** with a wait between wallets (default **10s**):
+
+```text
+/claim https://opensea.io/collection/your-drop 10
+/claim your-drop 10
+/dryrun on    ← simulate first
+/dryrun off   ← then go live
+```
+
+MAX-mint (stage `max_per_wallet`) in parallel, or sequential with interval:
+
+```text
+/mintslug https://opensea.io/collection/your-drop
+/mintslug your-drop 10
+```
+
+Need a **full** collection or asset URL — `https://opensea.io/assets/robinhood` alone is invalid (missing contract/token id).
+
 ## Commands
 
-`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow` `/prices` `/watchprice` `/schedulemint` `/schedules`
+`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow` `/prices` `/watchprice` `/schedulemint` `/mintslug` `/claim` `/schedules`
