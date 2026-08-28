@@ -16,9 +16,21 @@ import {
   getAllMintWallets,
   getMintProvider,
 } from "./provider";
-import { withWalletNonce, invalidateWalletNonce } from "./nonceManager";
-import { checkMintWalletReadiness } from "./walletReady";
-import { getMintRpcGate, mapPool, parseTryAgainMs, isMissingRevertData } from "./rpcGate";
+import {
+  withWalletNonce,
+  invalidateWalletNonce,
+  warmWalletNonce,
+} from "./nonceManager";
+import {
+  checkMintWalletReadiness,
+  clearWalletReadinessCache,
+} from "./walletReady";
+import {
+  getMintRpcGate,
+  mapPool,
+  parseTryAgainMs,
+  isMissingRevertData,
+} from "./rpcGate";
 import type { Wallet } from "ethers";
 
 export type ScheduleHandler = (
@@ -26,9 +38,19 @@ export type ScheduleHandler = (
   result: ScheduledMintResult
 ) => Promise<void>;
 
-const DEFAULT_LEAD_MS = 15_000;
+/** Lead time for real pre-arm (OpenSea builder + gas). Was 15s wait-only. */
+const DEFAULT_LEAD_MS = 30_000;
 /** Jobs currently in sharp fine-wait (avoid double-fire from poll). */
 const sharpArmed = new Set<string>();
+
+type ArmedScheduledTx = {
+  wallet: Wallet;
+  to: string;
+  data: string;
+  valueWei: bigint;
+  gasLimit: bigint;
+  quantity?: number;
+};
 
 export function parseScheduleTime(raw: string): Date | null {
   const text = raw.trim();
@@ -113,111 +135,8 @@ async function waitUntilExact(fireAtMs: number): Promise<void> {
     const left = fireAtMs - Date.now();
     if (left <= 0) return;
     const wait =
-      left > 200 ? Math.min(left - 100, 1_000) : Math.min(left, 20);
-    await sleep(Math.max(5, wait));
-  }
-}
-
-async function sendOnWallet(
-  wallet: Wallet,
-  params: { to: string; data: string; valueWei?: bigint }
-): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
-  const address = wallet.address.toLowerCase();
-  const provider = getMintProvider();
-  const gate = getMintRpcGate();
-  const value = params.valueWei ?? 0n;
-  try {
-    const estimated = await gate.run(() =>
-      provider.estimateGas({
-        from: wallet.address,
-        to: params.to,
-        data: params.data,
-        value,
-      })
-    );
-
-    const resolved = resolveMintGasLimit({
-      estimated,
-      ceiling: config.maxMintGasLimit,
-      marginPct: 20,
-    });
-    console.log(
-      `[schedule:gas] fn=${mintSelectorLabel(params.data)} estimateGas=${estimated} ` +
-        `ceiling=${resolved.ceiling} gasLimit=${resolved.ok ? resolved.gasLimit : 0}`
-    );
-    if (!resolved.ok) {
-      return { address, ok: false, error: resolved.reason };
-    }
-
-    const connected = wallet.connect(provider);
-    const sent = await gate.run(() =>
-      withWalletNonce({
-        address,
-        provider,
-        fn: async (nonce) =>
-          connected.sendTransaction({
-            to: params.to,
-            data: params.data,
-            value,
-            gasLimit: resolved.gasLimit,
-            nonce,
-            chainId: Number(config.chain.chainId),
-          }),
-      })
-    );
-    void sent.wait().catch(() => undefined);
-    return { address, ok: true, txHash: sent.hash };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/nonce/i.test(msg)) invalidateWalletNonce(address);
-    const waitMs = parseTryAgainMs(err);
-    if (waitMs != null) {
-      await sleep(waitMs);
-      try {
-        const estimated = await gate.run(() =>
-          provider.estimateGas({
-            from: wallet.address,
-            to: params.to,
-            data: params.data,
-            value,
-          })
-        );
-        const resolved = resolveMintGasLimit({
-          estimated,
-          ceiling: config.maxMintGasLimit,
-          marginPct: 20,
-        });
-        if (!resolved.ok) return { address, ok: false, error: resolved.reason };
-        const connected = wallet.connect(provider);
-        const sent = await gate.run(() =>
-          withWalletNonce({
-            address,
-            provider,
-            fn: async (nonce) =>
-              connected.sendTransaction({
-                to: params.to,
-                data: params.data,
-                value,
-                gasLimit: resolved.gasLimit,
-                nonce,
-                chainId: Number(config.chain.chainId),
-              }),
-          })
-        );
-        void sent.wait().catch(() => undefined);
-        return { address, ok: true, txHash: sent.hash };
-      } catch (err2) {
-        return {
-          address,
-          ok: false,
-          error: err2 instanceof Error ? err2.message : String(err2),
-        };
-      }
-    }
-    if (isMissingRevertData(err)) {
-      return { address, ok: false, error: "missing revert data (ambiguous)" };
-    }
-    return { address, ok: false, error: msg };
+      left > 200 ? Math.min(left - 100, 1_000) : Math.min(left, 10);
+    await sleep(Math.max(3, wait));
   }
 }
 
@@ -248,7 +167,12 @@ async function resolveJobTxForWallet(
       throw new Error("OpenSea stage is paid — free-mint only");
     }
     const target = openSeaStageMaxPerWallet(stage);
-    const ladder = maxMintQuantityLadder(target).filter((q) => q <= target);
+    // Prefer qty 1 first for FCFS WL (fastest path), then ladder up if allowed.
+    const ladder = [
+      ...new Set(
+        [1, ...maxMintQuantityLadder(target)].filter((q) => q <= target)
+      ),
+    ].sort((a, b) => a - b);
     let lastErr: Error | null = null;
     for (const quantity of ladder) {
       try {
@@ -272,9 +196,227 @@ async function resolveJobTxForWallet(
   return { to: job.to, data: job.data, valueWei: 0n };
 }
 
-async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
+/**
+ * Pre-arm during lead window: OpenSea mint builder + estimateGas + nonce warm.
+ * Fire path must only send.
+ */
+async function prepareArmedTxs(
+  job: ScheduledMint,
+  wallets: Wallet[]
+): Promise<ArmedScheduledTx[]> {
+  const provider = getMintProvider();
+  const gate = getMintRpcGate();
+
+  // Warm drop cache once (shared).
+  if (job.openSeaSlug) {
+    try {
+      await fetchOpenSeaDrop(job.openSeaSlug);
+    } catch (err) {
+      console.warn(
+        `[schedule:arm] drop prefetch failed: ${
+          err instanceof Error ? err.message : err
+        }`
+      );
+    }
+  }
+
+  const built = await mapPool(wallets, 4, async (wallet) => {
+    try {
+      const tx = await resolveJobTxForWallet(job, wallet);
+      return { wallet, tx, error: null as string | null };
+    } catch (err) {
+      return {
+        wallet,
+        tx: null as null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
+
+  const armed: ArmedScheduledTx[] = [];
+  await mapPool(
+    built.filter((b) => b.tx),
+    6,
+    async (item) => {
+      const wallet = item.wallet;
+      const tx = item.tx!;
+      try {
+        await warmWalletNonce(wallet.address, provider).catch(() => undefined);
+        let gasLimit: bigint;
+        try {
+          const estimated = await gate.run(() =>
+            provider.estimateGas({
+              from: wallet.address,
+              to: tx.to,
+              data: tx.data,
+              value: tx.valueWei,
+            })
+          );
+          const resolved = resolveMintGasLimit({
+            estimated,
+            ceiling: config.maxMintGasLimit,
+            marginPct: 25,
+          });
+          if (!resolved.ok) {
+            console.warn(
+              `[schedule:arm] skip ${wallet.address.slice(0, 8)}… gas: ${resolved.reason}`
+            );
+            return;
+          }
+          gasLimit = resolved.gasLimit;
+          console.log(
+            `[schedule:arm] ${wallet.address.slice(0, 8)}… fn=${mintSelectorLabel(tx.data)} ` +
+              `qty=${tx.quantity ?? "?"} estimate=${estimated} gasLimit=${gasLimit}`
+          );
+        } catch (err) {
+          // Pre-window revert is common for timed stages — arm with safe ceiling.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (
+            /revert|execution|not (yet |)?(live|open|started)|too early|before/i.test(
+              msg
+            )
+          ) {
+            gasLimit = BigInt(
+              Math.min(Math.floor(config.maxMintGasLimit * 0.35), 700_000)
+            );
+            console.log(
+              `[schedule:arm] ${wallet.address.slice(0, 8)}… pre-window → gasLimit=${gasLimit}`
+            );
+          } else {
+            console.warn(
+              `[schedule:arm] skip ${wallet.address.slice(0, 8)}… ${msg.slice(0, 120)}`
+            );
+            return;
+          }
+        }
+        armed.push({
+          wallet,
+          to: tx.to,
+          data: tx.data,
+          valueWei: tx.valueWei,
+          gasLimit,
+          quantity: tx.quantity,
+        });
+      } catch (err) {
+        console.warn(
+          `[schedule:arm] prepare failed ${wallet.address.slice(0, 8)}… ${
+            err instanceof Error ? err.message.slice(0, 120) : err
+          }`
+        );
+      }
+    }
+  );
+
+  for (const b of built) {
+    if (!b.tx && b.error) {
+      console.warn(
+        `[schedule:arm] build failed ${b.wallet.address.slice(0, 8)}… ${b.error.slice(0, 120)}`
+      );
+    }
+  }
+
+  return armed;
+}
+
+/** Send-only burst — no OpenSea, no estimateGas. */
+async function burstArmedSends(
+  armed: ArmedScheduledTx[]
+): Promise<
+  Array<{
+    address: string;
+    ok: boolean;
+    txHash?: string;
+    error?: string;
+    detail?: string;
+  }>
+> {
+  const provider = getMintProvider();
+  const gate = getMintRpcGate();
+
+  return Promise.all(
+    armed.map(async (a, index) => {
+      const address = a.wallet.address.toLowerCase();
+      if (index > 0) await sleep(Math.min(index * 3, 40));
+      try {
+        const connected = a.wallet.connect(provider);
+        const sent = await gate.run(() =>
+          withWalletNonce({
+            address,
+            provider,
+            fn: async (nonce) =>
+              connected.sendTransaction({
+                to: a.to,
+                data: a.data,
+                value: a.valueWei,
+                gasLimit: a.gasLimit,
+                nonce,
+                chainId: Number(config.chain.chainId),
+              }),
+          })
+        );
+        void sent.wait().catch(() => undefined);
+        return {
+          address,
+          ok: true as const,
+          txHash: sent.hash,
+          detail: a.quantity ? `x${a.quantity}` : undefined,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/nonce/i.test(msg)) invalidateWalletNonce(address);
+        const waitMs = parseTryAgainMs(err);
+        if (waitMs != null && waitMs < 400) {
+          await sleep(waitMs);
+          try {
+            const connected = a.wallet.connect(provider);
+            const sent = await gate.run(() =>
+              withWalletNonce({
+                address,
+                provider,
+                fn: async (nonce) =>
+                  connected.sendTransaction({
+                    to: a.to,
+                    data: a.data,
+                    value: a.valueWei,
+                    gasLimit: a.gasLimit,
+                    nonce,
+                    chainId: Number(config.chain.chainId),
+                  }),
+              })
+            );
+            void sent.wait().catch(() => undefined);
+            return {
+              address,
+              ok: true as const,
+              txHash: sent.hash,
+              detail: a.quantity ? `x${a.quantity}` : undefined,
+            };
+          } catch (err2) {
+            return {
+              address,
+              ok: false as const,
+              error: err2 instanceof Error ? err2.message : String(err2),
+            };
+          }
+        }
+        if (isMissingRevertData(err)) {
+          return {
+            address,
+            ok: false,
+            error: "missing revert data (ambiguous)",
+          };
+        }
+        return { address, ok: false, error: msg };
+      }
+    })
+  );
+}
+
+/** Cold path (non-sharp / fallback if arm produced nothing). */
+async function executeJobCold(job: ScheduledMint): Promise<ScheduledMintResult> {
   const state = getState();
   const allWallets = getAllMintWallets();
+  clearWalletReadinessCache();
   const readiness = await checkMintWalletReadiness(allWallets);
   const wallets =
     readiness.ready.length > 0 ? readiness.ready : allWallets;
@@ -283,7 +425,7 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     return {
       success: true,
       dryRun: true,
-      reason: `DRY RUN — sharp burst would MAX-mint on ${wallets.length}/${allWallets.length} wallet(s) at ${job.executeAt} to ${job.to}${
+      reason: `DRY RUN — would mint on ${wallets.length}/${allWallets.length} wallet(s) at ${job.executeAt} to ${job.to}${
         job.openSeaSlug ? ` (OpenSea drop ${job.openSeaSlug})` : ""
       } (empty=${readiness.empty.length})`,
     };
@@ -305,24 +447,16 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     };
   }
 
-  // Rate-aware burst (nonce-safe per wallet).
-  const results = await mapPool(wallets, 5, async (w, index) => {
-      if (index > 0) await sleep(Math.min(index * 12, 200));
-      try {
-        const tx = await resolveJobTxForWallet(job, w);
-        const sent = await sendOnWallet(w, tx);
-        return {
-          ...sent,
-          detail: tx.quantity ? `x${tx.quantity}` : undefined,
-        };
-      } catch (err) {
-        return {
-          address: w.address.toLowerCase(),
-          ok: false as const,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-    });
+  const armed = await prepareArmedTxs(job, wallets);
+  if (armed.length === 0) {
+    return {
+      success: false,
+      dryRun: false,
+      reason: "Could not prepare any wallet txs (OpenSea/gas).",
+    };
+  }
+
+  const results = await burstArmedSends(armed);
   const ok = results.filter((r) => r.ok);
   const summary = results
     .map(
@@ -334,7 +468,6 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
         }`
     )
     .join(" | ");
-
   const firstOk = results.find((r) => r.ok && r.txHash);
 
   return {
@@ -342,10 +475,14 @@ async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
     dryRun: false,
     reason:
       ok.length > 0
-        ? `Sharp burst MAX mint on ${ok.length}/${wallets.length} ready (${allWallets.length} configured, ${readiness.empty.length} empty): ${summary}`
-        : `Sharp burst failed on all ${wallets.length} ready wallets (${allWallets.length} configured): ${summary}`,
-    txHash: firstOk && "txHash" in firstOk ? firstOk.txHash : undefined,
+        ? `Burst mint on ${ok.length}/${armed.length} armed (${allWallets.length} configured): ${summary}`
+        : `Burst failed on all ${armed.length} armed wallets: ${summary}`,
+    txHash: firstOk?.txHash,
   };
+}
+
+async function executeJob(job: ScheduledMint): Promise<ScheduledMintResult> {
+  return executeJobCold(job);
 }
 
 async function runSharpJob(
@@ -364,7 +501,6 @@ async function runSharpJob(
     while (Date.now() < armAt - 50) {
       const left = armAt - Date.now();
       await sleep(Math.min(Math.max(left - 25, 50), 2_000));
-      // Cancelled?
       const cur = getState().scheduledMints.find((j) => j.id === job.id);
       if (!cur || cur.status !== "pending") {
         console.log(`[schedule] sharp aborted ${job.id} status=${cur?.status}`);
@@ -372,19 +508,115 @@ async function runSharpJob(
       }
     }
 
+    const state = getState();
+    clearWalletReadinessCache();
+    const allWallets = getAllMintWallets();
+    const readiness = await checkMintWalletReadiness(allWallets);
+    const wallets =
+      readiness.ready.length > 0 ? readiness.ready : allWallets;
+
     console.log(
-      `[schedule] ⚡ sharp armed #${job.scheduleNumber ?? "?"} ` +
-        `T-${Math.round(leadMs / 1000)}s → ${job.executeAt}`
+      `[schedule] ⚡ sharp PRE-ARM #${job.scheduleNumber ?? "?"} ` +
+        `T-${Math.round(leadMs / 1000)}s → ${job.executeAt} · wallets=${wallets.length}`
     );
+
+    if (state.dryRun) {
+      await waitUntilExact(fireAt);
+      const result: ScheduledMintResult = {
+        success: true,
+        dryRun: true,
+        reason: `DRY RUN — pre-armed ${wallets.length}/${allWallets.length} wallet(s) for sharp burst at ${job.executeAt}${
+          job.openSeaSlug ? ` (OpenSea ${job.openSeaSlug})` : ""
+        }`,
+      };
+      await markScheduledMint(job.id, {
+        status: "done",
+        resultReason: result.reason,
+        finishedAt: new Date().toISOString(),
+      });
+      await onDone(job, result);
+      return;
+    }
+
+    if (wallets.length === 0) {
+      await markScheduledMint(job.id, {
+        status: "failed",
+        resultReason: "No mint wallets configured.",
+        finishedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    // REAL PREP before window open (OpenSea + gas + nonce).
+    const prepStarted = Date.now();
+    let armed = await prepareArmedTxs(job, wallets);
+    const prepMs = Date.now() - prepStarted;
+    console.log(
+      `[schedule] ✅ pre-armed ${armed.length}/${wallets.length} wallet(s) in ${prepMs}ms — waiting for exact open`
+    );
+
+    // Retry thin arms until ~1.5s before open (OpenSea 429 recovery).
+    while (armed.length < wallets.length && Date.now() < fireAt - 1_500) {
+      const have = new Set(armed.map((a) => a.wallet.address.toLowerCase()));
+      const missing = wallets.filter((w) => !have.has(w.address.toLowerCase()));
+      if (missing.length === 0) break;
+      console.log(
+        `[schedule] retry-arm ${missing.length} wallet(s) still missing…`
+      );
+      const more = await prepareArmedTxs(job, missing);
+      armed = [...armed, ...more];
+      await sleep(200);
+    }
 
     await waitUntilExact(fireAt);
 
     const cur = getState().scheduledMints.find((j) => j.id === job.id);
     if (!cur || cur.status !== "pending") return;
 
-    await markScheduledMint(job.id, { status: "running" });
-    console.log(`[schedule] 🚀 sharp BURST ${job.id} -> ${job.to}`);
-    const result = await executeJob(job);
+    // Don't block the burst on disk I/O.
+    void markScheduledMint(job.id, { status: "running" });
+
+    if (armed.length === 0) {
+      console.warn(`[schedule] ⚠️ no pre-armed txs — cold fallback (slower)`);
+      const result = await executeJobCold(job);
+      await markScheduledMint(job.id, {
+        status: result.success ? "done" : "failed",
+        resultReason: result.reason,
+        resultTxHash: result.txHash,
+        finishedAt: new Date().toISOString(),
+      });
+      await onDone(job, result);
+      return;
+    }
+
+    console.log(
+      `[schedule] 🚀 sharp SEND-ONLY BURST ${job.id} → ${armed.length} wallet(s)`
+    );
+    const burstStarted = Date.now();
+    const results = await burstArmedSends(armed);
+    const burstMs = Date.now() - burstStarted;
+    const ok = results.filter((r) => r.ok);
+    const summary = results
+      .map(
+        (r) =>
+          `${r.address.slice(0, 6)}…${
+            r.ok
+              ? ` OK ${r.txHash?.slice(0, 10)}…${r.detail ? ` ${r.detail}` : ""}`
+              : ` FAIL (${r.error})`
+          }`
+      )
+      .join(" | ");
+    const firstOk = results.find((r) => r.ok && r.txHash);
+    const result: ScheduledMintResult = {
+      success: ok.length > 0,
+      dryRun: false,
+      reason:
+        ok.length > 0
+          ? `Sharp SEND-ONLY burst ${ok.length}/${armed.length} in ${burstMs}ms (pre-arm ${prepMs}ms): ${summary}`
+          : `Sharp SEND-ONLY burst failed all ${armed.length} in ${burstMs}ms: ${summary}`,
+      txHash: firstOk?.txHash,
+    };
+
     await markScheduledMint(job.id, {
       status: result.success ? "done" : "failed",
       resultReason: result.reason,
@@ -427,14 +659,12 @@ export async function startMintScheduler(
         const useSharp = job.sharpMode !== false; // default ON
 
         if (useSharp) {
-          // Arm when within lead window (+ small buffer for poll lag).
           if (fireAt - now <= leadMs + 3_000 && !sharpArmed.has(job.id)) {
             void runSharpJob(job, onDone);
           }
           continue;
         }
 
-        // Legacy non-sharp: fire when due (2s poll).
         if (fireAt <= now && !sharpArmed.has(job.id)) {
           sharpArmed.add(job.id);
           try {
@@ -466,7 +696,7 @@ export async function startMintScheduler(
   void tick();
 
   console.log(
-    "[schedule] sharp mode ON — T-15s exact timer + burst (Keep the bot running)"
+    "[schedule] sharp mode ON — T-30s REAL pre-arm (OpenSea+gas) → exact timer → SEND-ONLY burst"
   );
 
   return () => {

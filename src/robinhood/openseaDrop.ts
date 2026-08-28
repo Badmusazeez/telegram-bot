@@ -389,7 +389,7 @@ export async function resolveScheduleFromOpenSeaLink(
     );
   }
 
-  const leadMs = 15_000;
+  const leadMs = 30_000;
   return {
     slug: drop.collection_slug || slug,
     name: drop.collection_name || slug,

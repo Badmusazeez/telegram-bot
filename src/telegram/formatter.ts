@@ -206,14 +206,14 @@ export function helpText(): string {
     `/schedules — list scheduled mints`,
     `/cancelschedule &lt;id&gt; — cancel a pending schedule`,
     ``,
-    `<i>Sharp mode:</i> T-15s arm → exact timer → burst all keys. Keep the bot running.`,
+    `<i>Sharp mode:</i> T-30s REAL pre-arm (OpenSea+gas) → exact timer → SEND-ONLY burst. Keep the bot running.`,
     `<i>Slot race:</i> when a contract exposes nextFreeAt/startTime/etc., the bot arms wallets and bursts at window open.`,
   ].join("\n");
 }
 
 export function formatScheduleCreated(job: ScheduledMint): string {
   const n = job.scheduleNumber ?? "?";
-  const leadSec = Math.round((job.leadMs ?? 15_000) / 1000);
+  const leadSec = Math.round((job.leadMs ?? 30_000) / 1000);
   const sharp = job.sharpMode !== false;
   return [
     `<b>📅 Scheduled #${n}</b>`,
@@ -222,7 +222,7 @@ export function formatScheduleCreated(job: ScheduledMint): string {
     `<b>Contract:</b> <code>${escHtml(job.to)}</code>`,
     `<b>Keys:</b> all`,
     sharp
-      ? `<b>T-${leadSec}s · sharp mode (exact timer + burst)</b>`
+      ? `<b>T-${leadSec}s · sharp PRE-ARM → exact timer → SEND-ONLY burst</b>`
       : `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
     sharp ? `<b>Opens:</b> <code>${escHtml(job.executeAt)}</code>` : "",
     job.stageLabel

@@ -81,7 +81,7 @@ describe("formatScheduleCreated sharp mode", () => {
       status: "pending",
       openSeaSlug: "phoenix-in-the-hood",
       sharpMode: true,
-      leadMs: 15_000,
+      leadMs: 30_000,
       stageLabel: "Public",
       stageType: "public_sale",
       stagesSummary: "• Allowlist — …\n• Public — … ← TARGET",
@@ -90,7 +90,7 @@ describe("formatScheduleCreated sharp mode", () => {
     assert.match(html, /Scheduled #213/);
     assert.match(html, /phoenix-in-the-hood/);
     assert.match(html, /Keys:<\/b> all/);
-    assert.match(html, /T-15s · sharp mode \(exact timer \+ burst\)/);
+    assert.match(html, /T-30s · sharp PRE-ARM → exact timer → SEND-ONLY burst/);
     assert.match(html, /Keep the bot running/);
   });
 });

@@ -66,6 +66,17 @@ export function invalidateWalletNonce(address: string): void {
   localNonce.delete(addrKey(address));
 }
 
+/** Prefetch pending nonce during pre-arm so fire path skips eth_getTransactionCount. */
+export async function warmWalletNonce(
+  address: string,
+  provider: JsonRpcProvider
+): Promise<number> {
+  const key = addrKey(address);
+  const nonce = await provider.getTransactionCount(address, "pending");
+  localNonce.set(key, nonce);
+  return nonce;
+}
+
 export function peekCachedNonce(address: string): number | undefined {
   return localNonce.get(addrKey(address));
 }

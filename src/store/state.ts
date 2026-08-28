@@ -260,7 +260,7 @@ export async function addScheduledMint(params: {
     sourceTxHash: params.sourceTxHash?.toLowerCase(),
     openSeaSlug: params.openSeaSlug?.trim() || undefined,
     sharpMode: params.sharpMode ?? true,
-    leadMs: params.leadMs ?? 15_000,
+    leadMs: params.leadMs ?? 30_000,
     stageLabel: params.stageLabel,
     stageType: params.stageType,
     stagesSummary: params.stagesSummary,

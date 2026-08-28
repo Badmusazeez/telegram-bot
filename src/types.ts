@@ -62,7 +62,7 @@ export interface ScheduledMint {
   openSeaSlug?: string;
   /** Sharp mode: arm early, fire at exact stage start with burst. */
   sharpMode?: boolean;
-  /** ms before executeAt to start fine wait / pre-arm (default 15000). */
+  /** ms before executeAt to start fine wait / pre-arm (default 30000). */
   leadMs?: number;
   stageLabel?: string;
   stageType?: string;
