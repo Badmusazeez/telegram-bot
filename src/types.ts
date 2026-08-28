@@ -55,6 +55,10 @@ export interface ScheduledMint {
   createdAt: string;
   status: ScheduledMintStatus;
   sourceTxHash?: string;
+  /** Sharp mode: arm early, fire at exact time with SEND-ONLY burst (default ON). */
+  sharpMode?: boolean;
+  /** ms before executeAt to start pre-arm (default 30000). */
+  leadMs?: number;
   resultTxHash?: string;
   resultReason?: string;
   finishedAt?: string;

@@ -158,6 +158,8 @@ export function helpText(): string {
     `/schedulemintfromtx &lt;txHash&gt; &lt;when&gt; — copy whale mint calldata`,
     `/schedules — list scheduled mints`,
     `/cancelschedule &lt;id&gt; — cancel a pending schedule`,
+    ``,
+    `<i>Schedules use SHARP mode by default: T−30s pre-arm (gas+nonce), then SEND-ONLY burst at exact time — same fast path as @${BOT.siblingBot}.</i>`,
   ].join("\n");
 }
 
@@ -166,13 +168,18 @@ export function formatScheduleCreated(job: ScheduledMint): string {
     job.valueWei && job.valueWei !== "0"
       ? (Number(job.valueWei) / 1e18).toFixed(6)
       : "0";
+  const sharp = job.sharpMode !== false;
+  const leadSec = Math.round((job.leadMs ?? 30_000) / 1000);
   return [
-    `<b>Mint scheduled</b>`,
+    `<b>Mint scheduled${sharp ? " (SHARP)" : ""}</b>`,
     `<b>ID:</b> <code>${escHtml(job.id)}</code>`,
     `<b>Label:</b> ${escHtml(job.label)}`,
     `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
     `<b>To:</b> <code>${escHtml(job.to)}</code>`,
     `<b>Value:</b> ${valueEth} ETH`,
+    sharp
+      ? `<b>Mode:</b> T−${leadSec}s PRE-ARM (gas+nonce) → exact timer → SEND-ONLY burst`
+      : `<b>Mode:</b> cold (estimateGas at fire)`,
     `<b>Data:</b> <code>${escHtml(job.data.slice(0, 66))}${job.data.length > 66 ? "…" : ""}</code>`,
     job.sourceTxHash
       ? `<b>Source tx:</b> <a href="${config.chain.explorerTxUrl(job.sourceTxHash)}">explorer</a>`

@@ -457,7 +457,7 @@ export function createTelegramBot(): Bot {
     const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
     if (parts.length < 3) {
       await ctx.reply(
-        "Usage:\n/schedulemint <when> <contract> <calldata|mint|mint1>\n\nExamples:\n/schedulemint +5m 0xContract mint1\n/schedulemint 2026-07-25T18:00:00Z 0xContract 0x1249c58b"
+        "Usage:\n/schedulemint <when> <contract> <calldata|mint|mint1>\n\nSharp mode (default): T−30s pre-arm → SEND-ONLY burst at exact time.\n\nExamples:\n/schedulemint +5m 0xContract mint1\n/schedulemint 2026-08-28T18:00:00Z 0xContract 0x1249c58b"
       );
       return;
     }
@@ -465,7 +465,7 @@ export function createTelegramBot(): Bot {
     const contract = parts[1];
     const dataRaw = parts[2];
     if (!when || when.getTime() <= Date.now()) {
-      await ctx.reply("Invalid/past time. Use +5m, +2h, or ISO like 2026-07-25T18:00:00Z");
+      await ctx.reply("Invalid/past time. Use +5m, +2h, or ISO like 2026-08-28T18:00:00Z");
       return;
     }
     if (!isAddress(contract)) {
@@ -484,6 +484,8 @@ export function createTelegramBot(): Bot {
       data,
       executeAt: when,
       valueWei: "0",
+      sharpMode: true,
+      leadMs: 30_000,
     });
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });
@@ -537,6 +539,8 @@ export function createTelegramBot(): Bot {
         executeAt: when,
         sourceTxHash: txHash,
         valueWei: tx.value.toString(),
+        sharpMode: true,
+        leadMs: 30_000,
       });
       await registerNotifyChat(chatId(ctx));
       await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });

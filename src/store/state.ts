@@ -275,6 +275,8 @@ export async function addScheduledMint(params: {
   executeAt: Date;
   sourceTxHash?: string;
   valueWei?: string;
+  sharpMode?: boolean;
+  leadMs?: number;
 }): Promise<ScheduledMint> {
   const job: ScheduledMint = {
     id: newScheduleId(),
@@ -286,6 +288,9 @@ export async function addScheduledMint(params: {
     createdAt: new Date().toISOString(),
     status: "pending",
     sourceTxHash: params.sourceTxHash?.toLowerCase(),
+    // Default sharp ON — same fast path as Robinhood scheduler.
+    sharpMode: params.sharpMode !== false,
+    leadMs: params.leadMs ?? 30_000,
   };
   state.scheduledMints.push(job);
   await persistState();
