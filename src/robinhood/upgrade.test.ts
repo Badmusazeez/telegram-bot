@@ -50,6 +50,55 @@ describe("classifyMintCalldata", () => {
     );
     assert.equal(c.isMint, true);
   });
+
+  it("accepts Outlaws-style mint(uint256,bytes32[]) selector", () => {
+    const data =
+      "0xba41b0c6" +
+      "0000000000000000000000000000000000000000000000000000000000000001" +
+      "0000000000000000000000000000000000000000000000000000000000000040" +
+      "0000000000000000000000000000000000000000000000000000000000000000";
+    const c = classifyMintCalldata(
+      "0xe0ed3a7db90a18852010b1374a677db6a5821174",
+      data,
+      undefined,
+      0n
+    );
+    assert.equal(c.isMint, true);
+    assert.equal(c.confidence, "medium");
+  });
+
+  it("treats unknown 0-value custom calls as free-mint candidates when enabled", () => {
+    const c = classifyMintCalldata(
+      "0x1111111111111111111111111111111111111111",
+      "0xdeadbeef" + "00".repeat(64),
+      undefined,
+      0n,
+      { acceptUnknownZeroValue: true }
+    );
+    assert.equal(c.isMint, true);
+    assert.equal(c.confidence, "low");
+  });
+
+  it("does not treat unknown 0-value calls as mint without opt-in", () => {
+    const c = classifyMintCalldata(
+      "0x1111111111111111111111111111111111111111",
+      "0xdeadbeef" + "00".repeat(64),
+      undefined,
+      0n
+    );
+    assert.equal(c.isMint, false);
+  });
+
+  it("still rejects unknown paid (value>0) custom calls", () => {
+    const c = classifyMintCalldata(
+      "0x1111111111111111111111111111111111111111",
+      "0xdeadbeef" + "00".repeat(64),
+      undefined,
+      10n ** 15n,
+      { acceptUnknownZeroValue: true }
+    );
+    assert.equal(c.isMint, false);
+  });
 });
 
 describe("strategyCache", () => {

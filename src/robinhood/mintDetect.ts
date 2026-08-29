@@ -22,9 +22,11 @@ export const MINT_SELECTORS = new Set([
   "0x84bb1e42", // claim(address,uint256,...) common
   "0x1e83409a", // claim(address)
   "0x3593564c", // execute (router / multicall-ish — only if method name says mint)
+  "0xba41b0c6", // mint(uint256,bytes32[]) — Outlaws-style public/WL free mint
+  "0xd2b4b861", // common mintWithProof variants (seen on custom drops)
 ]);
 
-/** Selectors that are clearly NOT freemints — never copy. */
+/** Selectors that are clearly NOT freemints — never copy (unless Transfer-confirmed free mint). */
 export const NON_MINT_SELECTORS = new Set([
   "0xa9059cbb", // transfer(address,uint256)
   "0x23b872dd", // transferFrom
@@ -62,20 +64,31 @@ export function decodeNftFromMintCalldata(input?: string): string | null {
 export function isMintLikeCalldata(
   to: string | null | undefined,
   data: string | null | undefined,
-  methodName?: string
+  methodName?: string,
+  valueWei?: bigint
 ): boolean {
-  return classifyMintCalldata(to, data, methodName).isMint;
+  const value = valueWei ?? 0n;
+  return classifyMintCalldata(to, data, methodName, value, {
+    // Only treat unknown selectors as mint when caller passed an explicit 0 value.
+    acceptUnknownZeroValue: valueWei !== undefined && valueWei === 0n,
+  }).isMint;
+}
+
+export function isClearNonMintSelector(selector: string): boolean {
+  return NON_MINT_SELECTORS.has((selector || "").toLowerCase().slice(0, 10));
 }
 
 /**
  * Sharper mint classifier — rejects transfers/approvals; accepts SeaDrop,
- * known mint selectors, and method names containing mint/claim/drop.
+ * known mint selectors, method names containing mint/claim/drop, and
+ * (optionally) any other 0-value contract call as a custom free-mint candidate.
  */
 export function classifyMintCalldata(
   to: string | null | undefined,
   data: string | null | undefined,
   methodName?: string,
-  valueWei: bigint = 0n
+  valueWei: bigint = 0n,
+  opts?: { acceptUnknownZeroValue?: boolean }
 ): DecodedMintTx {
   const raw = (data || "").toLowerCase();
   const selector = raw.slice(0, 10) || "0x";
@@ -142,7 +155,16 @@ export function classifyMintCalldata(
     };
   }
 
-  // Heuristic: calldata mentions "mint" in ASCII (rare) — skip.
+  // Custom public / WL free-mint candidate (opt-in): unknown 0-value call.
+  if (opts?.acceptUnknownZeroValue && valueWei === 0n) {
+    return {
+      ...base,
+      isMint: true,
+      confidence: "low",
+      reason: `custom 0-value call ${selector} (free-mint candidate)`,
+    };
+  }
+
   return {
     ...base,
     isMint: false,

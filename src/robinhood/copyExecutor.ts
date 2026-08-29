@@ -35,7 +35,7 @@ import {
   withWalletNonce,
 } from "./nonceManager";
 import { checkMintWalletReadiness, clearWalletReadinessCache } from "./walletReady";
-import { classifyMintCalldata } from "./mintDetect";
+import { classifyMintCalldata, isClearNonMintSelector } from "./mintDetect";
 import { probeMintSlot, classifyMintFailure } from "./slotProbe";
 import { runSlotRace } from "./slotRace";
 import {
@@ -197,14 +197,22 @@ async function executeCopy(
     };
   }
 
-  // Safety: only copy confident mint txs (skip transfers/approvals/unknown).
+  // Classify calldata. Confirmed free mints (Transfer from 0x0 + 0 value) are
+  // NEVER skipped — custom/unknown selectors still go through replay.
   const classified = classifyMintCalldata(
     sourceTx.to,
     sourceTx.data,
     undefined,
-    sourceTx.value
+    sourceTx.value,
+    { acceptUnknownZeroValue: sourceTx.value === 0n }
   );
-  if (!classified.isMint) {
+  const freeMintConfirmed =
+    purchase.isFreeMint &&
+    sourceTx.value === 0n &&
+    !purchase.isPaid &&
+    purchase.valueRobinhood <= 0;
+
+  if (!classified.isMint && !freeMintConfirmed) {
     return {
       attempted: false,
       success: false,
@@ -212,10 +220,28 @@ async function executeCopy(
       reason: `Skipped non-mint tx (${classified.reason}).`,
     };
   }
+
+  // Free mint with a clear approve/transfer selector can't be replayed as a
+  // mint — still attempt OpenSea/public/SeaDrop paths below, but log it.
+  if (
+    freeMintConfirmed &&
+    !classified.isMint &&
+    isClearNonMintSelector(classified.selector)
+  ) {
+    console.warn(
+      `[mint:decode] free-mint Transfer confirmed but selector=${classified.selector} is non-mint — will still try OpenSea/public/replay paths`
+    );
+  }
+
   console.log(
     `[mint:decode] tracker=${purchase.buyer.slice(0, 10)}… fn=${classified.functionLabel} ` +
       `conf=${classified.confidence} nft=${(classified.nftContract || purchase.contract).slice(0, 12)}… ` +
-      `value=${sourceTx.value}`
+      `value=${sourceTx.value}` +
+      (freeMintConfirmed && classified.confidence === "low"
+        ? " (custom free mint — forcing copy)"
+        : freeMintConfirmed && !classified.isMint
+          ? " (free-mint confirmed — forcing copy)"
+          : "")
   );
 
   // Paid whale tx (value > 0): skip — we never send native value. Sending value=0
@@ -412,9 +438,12 @@ async function executeCopy(
   timer.mark("strategy");
 
   const preferReplayFirst =
-    !openSeaLike &&
-    cached &&
-    (cached.kind === "replay" || cached.kind === "public");
+    (!openSeaLike &&
+      cached &&
+      (cached.kind === "replay" || cached.kind === "public")) ||
+    // Custom / unknown free mints → replay whale calldata first (Outlaws etc.)
+    (freeMintConfirmed && !openSeaLike) ||
+    classified.confidence === "low";
 
   const finishIfComplete = (label: StrategyKind | string, kind?: StrategyKind) => {
     const s = summarize(String(label));

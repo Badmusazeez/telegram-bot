@@ -122,11 +122,14 @@ function isMintLikeTx(tx: BsTx): boolean {
   if (status && status !== "ok" && status !== "success") return false;
   if (result && result !== "success" && result !== "ok") return false;
 
-  return isMintLikeCalldata(
-    tx.to?.hash,
-    tx.raw_input,
-    tx.method
-  );
+  let valueWei = 0n;
+  try {
+    if (tx.value && tx.value !== "0") valueWei = BigInt(tx.value);
+  } catch {
+    valueWei = 0n;
+  }
+
+  return isMintLikeCalldata(tx.to?.hash, tx.raw_input, tx.method, valueWei);
 }
 
 async function fetchRecentTxs(address: string): Promise<BsTx[]> {

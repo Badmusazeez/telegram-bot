@@ -96,6 +96,8 @@ export function mintSelectorLabel(data: string | null | undefined): string {
     "0x94bf804d": "mint(address,uint256)",
     "0x2db11544": "claim(uint256)",
     "0x26db764c": "mintPublic?",
+    "0xba41b0c6": "mint(uint256,bytes32[])",
+    "0xd2b4b861": "mintWithProof?",
   };
   return known[sel] || sel || "(no data)";
 }

@@ -262,7 +262,13 @@ export function decodeWhaleMintQuantity(data: string): number | undefined {
   }
 
   // mint(uint256) / claim(uint256) — single arg
-  if (raw.length === 10 + 64 || sel === "0xa0712d68" || sel === "0x2db11544") {
+  // mint(uint256,bytes32[]) Outlaws-style — quantity is first word
+  if (
+    raw.length === 10 + 64 ||
+    sel === "0xa0712d68" ||
+    sel === "0x2db11544" ||
+    sel === "0xba41b0c6"
+  ) {
     try {
       const word = raw.slice(10, 10 + 64);
       const q = Number(BigInt(`0x${word}`));

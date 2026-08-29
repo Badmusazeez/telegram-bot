@@ -65,7 +65,9 @@ export async function startPendingWatcher(
     const valueRobinhood = valueFromWei(tx.value);
     const valueWei =
       tx.value && tx.value !== "0" ? BigInt(tx.value) : 0n;
-    const classified = classifyMintCalldata(to, input, undefined, valueWei);
+    const classified = classifyMintCalldata(to, input, undefined, valueWei, {
+      acceptUnknownZeroValue: valueWei === 0n,
+    });
     if (!classified.isMint) return;
 
     // Fire immediately on mint-like calldata. Paid (value>0) skipped only when

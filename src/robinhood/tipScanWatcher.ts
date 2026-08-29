@@ -71,7 +71,8 @@ export async function startTipScanWatcher(
           const fromAddr = (tx.from || "").toLowerCase();
           if (!buyers.has(fromAddr)) continue;
           if (!tx.to || !tx.data || tx.data === "0x") continue;
-          if (!isMintLikeCalldata(tx.to, tx.data)) continue;
+          const valueWei = tx.value != null ? BigInt(tx.value) : 0n;
+          if (!isMintLikeCalldata(tx.to, tx.data, undefined, valueWei)) continue;
 
           const valueRobinhood = valueFromWei(tx.value);
           if (state.freeMintsOnly && valueRobinhood > 0) continue;
