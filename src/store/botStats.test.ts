@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  formatGasUsedEstimate,
   formatMonthlyStatsPlain,
   parseWalletOkFail,
   type MonthlyBotStats,
@@ -32,6 +33,7 @@ describe("formatMonthlyStatsPlain", () => {
       disbursements: 1668,
       sweeps: 4,
       tracks: 9,
+      gasUsedEstimate: 12_450_000,
     };
     const text = formatMonthlyStatsPlain(stats);
     assert.equal(
@@ -43,7 +45,15 @@ describe("formatMonthlyStatsPlain", () => {
         "Disbursements: 1668",
         "Sweeps: 4",
         "Tracks: 9",
+        "Gas used (est): 12,450,000",
       ].join("\n")
     );
+  });
+});
+
+describe("formatGasUsedEstimate", () => {
+  it("formats thousands with commas", () => {
+    assert.equal(formatGasUsedEstimate(0), "0");
+    assert.equal(formatGasUsedEstimate(12_450_000), "12,450,000");
   });
 });

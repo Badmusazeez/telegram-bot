@@ -459,6 +459,11 @@ async function executeJobCold(job: ScheduledMint): Promise<ScheduledMintResult> 
 
   const results = await burstArmedSends(armed);
   const ok = results.filter((r) => r.ok);
+  const gasUsedEstimate = armed
+    .filter((a) =>
+      ok.some((r) => r.address === a.wallet.address.toLowerCase())
+    )
+    .reduce((sum, a) => sum + a.gasLimit, 0n);
   const summary = results
     .map(
       (r) =>
@@ -479,6 +484,7 @@ async function executeJobCold(job: ScheduledMint): Promise<ScheduledMintResult> 
         ? `Burst mint on ${ok.length}/${armed.length} armed (${allWallets.length} configured): ${summary}`
         : `Burst failed on all ${armed.length} armed wallets: ${summary}`,
     txHash: firstOk?.txHash,
+    gasUsedEstimate,
   };
 }
 
@@ -591,6 +597,7 @@ async function runSharpJob(
         success: result.success,
         attempted: true,
         reason: result.reason,
+        gasUsedEstimate: result.gasUsedEstimate,
       });
       await onDone(job, result);
       return;
@@ -603,6 +610,11 @@ async function runSharpJob(
     const results = await burstArmedSends(armed);
     const burstMs = Date.now() - burstStarted;
     const ok = results.filter((r) => r.ok);
+    const gasUsedEstimate = armed
+      .filter((a) =>
+        ok.some((r) => r.address === a.wallet.address.toLowerCase())
+      )
+      .reduce((sum, a) => sum + a.gasLimit, 0n);
     const summary = results
       .map(
         (r) =>
@@ -635,6 +647,9 @@ async function runSharpJob(
       success: result.success,
       attempted: true,
       reason: result.reason,
+      okWallets: ok.length,
+      failWallets: armed.length - ok.length,
+      gasUsedEstimate,
     });
     await onDone(job, result);
   } catch (err) {
@@ -695,6 +710,7 @@ export async function startMintScheduler(
               success: result.success,
               attempted: true,
               reason: result.reason,
+              gasUsedEstimate: result.gasUsedEstimate,
             });
             await onDone(job, result);
           } finally {

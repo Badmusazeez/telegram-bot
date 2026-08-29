@@ -42,6 +42,7 @@ export type SlugMintWalletResult = {
   ok: boolean;
   txHash?: string;
   quantity?: number;
+  gasLimit?: bigint;
   error?: string;
 };
 
@@ -251,7 +252,10 @@ async function buildFreeMintForWallet(
 async function sendMint(
   wallet: Wallet,
   params: { to: string; data: string; valueWei: bigint; strategy?: string }
-): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; txHash: string; gasLimit: bigint }
+  | { ok: false; error: string }
+> {
   const gate = getMintRpcGate();
   const tryProvider = async (
     provider: ReturnType<typeof getMintProvider>,
@@ -298,7 +302,11 @@ async function sendMint(
           })
         );
         void sent.wait().catch(() => undefined);
-        return { ok: true as const, txHash: sent.hash };
+        return {
+          ok: true as const,
+          txHash: sent.hash,
+          gasLimit: resolved.gasLimit,
+        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (/nonce/i.test(msg)) invalidateWalletNonce(wallet.address);
@@ -516,6 +524,7 @@ export async function mintOpenSeaSlugNow(
         ok: true,
         txHash: sent.txHash,
         quantity: built.quantity,
+        gasLimit: sent.gasLimit,
       };
     } catch (err) {
       return {
@@ -590,6 +599,7 @@ export async function mintOpenSeaSlugNow(
     attempted: true,
     okWallets: ok.length,
     failWallets: results.length - ok.length,
+    gasUsedEstimate: ok.reduce((sum, r) => sum + (r.gasLimit ?? 0n), 0n),
   });
 
   return {

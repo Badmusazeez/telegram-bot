@@ -13,6 +13,8 @@ export type MonthlyBotStats = {
   sweeps: number;
   /** Tracked-whale mint detections. */
   tracks: number;
+  /** Sum of gasLimit (estimateGas-based) across successful mint txs. */
+  gasUsedEstimate: number;
 };
 
 type StatsFile = {
@@ -26,6 +28,7 @@ const emptyMonth = (month: string): MonthlyBotStats => ({
   disbursements: 0,
   sweeps: 0,
   tracks: 0,
+  gasUsedEstimate: 0,
 });
 
 let cache: StatsFile = { months: {} };
@@ -66,6 +69,8 @@ async function persist(): Promise<void> {
 function ensureMonth(month: string): MonthlyBotStats {
   if (!cache.months[month]) {
     cache.months[month] = emptyMonth(month);
+  } else if (cache.months[month]!.gasUsedEstimate == null) {
+    cache.months[month]!.gasUsedEstimate = 0;
   }
   return cache.months[month]!;
 }
@@ -73,7 +78,12 @@ function ensureMonth(month: string): MonthlyBotStats {
 export type StatsDelta = Partial<
   Pick<
     MonthlyBotStats,
-    "mintsOk" | "mintsFailed" | "disbursements" | "sweeps" | "tracks"
+    | "mintsOk"
+    | "mintsFailed"
+    | "disbursements"
+    | "sweeps"
+    | "tracks"
+    | "gasUsedEstimate"
   >
 >;
 
@@ -90,6 +100,9 @@ export async function recordBotStats(delta: StatsDelta): Promise<void> {
   }
   if (delta.sweeps) row.sweeps += Math.max(0, Math.floor(delta.sweeps));
   if (delta.tracks) row.tracks += Math.max(0, Math.floor(delta.tracks));
+  if (delta.gasUsedEstimate) {
+    row.gasUsedEstimate += Math.max(0, Math.floor(delta.gasUsedEstimate));
+  }
   await persist();
 }
 
@@ -97,7 +110,13 @@ export async function getMonthlyStats(
   month = currentMonthKey()
 ): Promise<MonthlyBotStats> {
   await loadBotStats();
-  return cache.months[month] ? { ...cache.months[month]! } : emptyMonth(month);
+  const row = cache.months[month];
+  if (!row) return emptyMonth(month);
+  return {
+    ...emptyMonth(month),
+    ...row,
+    gasUsedEstimate: row.gasUsedEstimate ?? 0,
+  };
 }
 
 /** Parse "N/M wallet(s)" style reasons into ok/fail counts. */
@@ -134,6 +153,8 @@ export async function recordMintSession(params: {
   /** Explicit wallet-level counts when known. */
   okWallets?: number;
   failWallets?: number;
+  /** Sum of gasLimit across successful wallet txs (estimateGas-based). */
+  gasUsedEstimate?: number | bigint;
 }): Promise<void> {
   if (params.dryRun) return;
   if (params.attempted === false) return;
@@ -159,17 +180,33 @@ export async function recordMintSession(params: {
   ok = ok ?? 0;
   fail = fail ?? 0;
 
+  const gas =
+    params.gasUsedEstimate != null
+      ? Number(
+          typeof params.gasUsedEstimate === "bigint"
+            ? params.gasUsedEstimate
+            : params.gasUsedEstimate
+        )
+      : 0;
+
   await recordBotStats({
     mintsOk: ok,
     mintsFailed: fail,
     disbursements: ok, // live mint txs that left the wallets
     sweeps: params.success ? 1 : 0,
+    gasUsedEstimate: Number.isFinite(gas) && gas > 0 ? gas : 0,
   });
 }
 
 /** Whale detection from a tracked wallet. */
 export async function recordTrackHit(): Promise<void> {
   await recordBotStats({ tracks: 1 });
+}
+
+/** Format gas units for Telegram (e.g. 12450000 → 12,450,000). */
+export function formatGasUsedEstimate(gas: number): string {
+  const n = Math.max(0, Math.floor(gas || 0));
+  return n.toLocaleString("en-US");
 }
 
 export function formatMonthlyStatsMessage(
@@ -185,10 +222,11 @@ export function formatMonthlyStatsMessage(
     `Disbursements: ${stats.disbursements}`,
     `Sweeps: ${stats.sweeps}`,
     `Tracks: ${tracks}`,
+    `Gas used (est): ${formatGasUsedEstimate(stats.gasUsedEstimate ?? 0)}`,
   ].join("\n");
 }
 
-/** Plain-text twin of the screenshot style (optional). */
+/** Plain-text twin of the screenshot style (+ gas). */
 export function formatMonthlyStatsPlain(stats: MonthlyBotStats): string {
   return [
     `📊 Stats`,
@@ -197,5 +235,6 @@ export function formatMonthlyStatsPlain(stats: MonthlyBotStats): string {
     `Disbursements: ${stats.disbursements}`,
     `Sweeps: ${stats.sweeps}`,
     `Tracks: ${stats.tracks}`,
+    `Gas used (est): ${formatGasUsedEstimate(stats.gasUsedEstimate ?? 0)}`,
   ].join("\n");
 }

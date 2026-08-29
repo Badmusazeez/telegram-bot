@@ -79,9 +79,20 @@ function rememberCopyResult(purchase: NftPurchase, result: CopyResult): void {
         success: result.success,
         attempted: result.attempted,
         reason: result.reason,
+        gasUsedEstimate: result.gasUsedEstimate,
       })
     )
     .catch(() => undefined);
+}
+
+function sumGasLimits(
+  hits: Iterable<{ ok: boolean; gasLimit?: bigint }>
+): bigint {
+  let sum = 0n;
+  for (const h of hits) {
+    if (h.ok && h.gasLimit != null) sum += h.gasLimit;
+  }
+  return sum;
 }
 
 /**
@@ -330,7 +341,14 @@ async function executeCopy(
   // Track per-wallet hits across strategies — NEVER stop at 1/N success.
   const hits = new Map<
     string,
-    { address: string; ok: boolean; txHash?: string; detail?: string; error?: string }
+    {
+      address: string;
+      ok: boolean;
+      txHash?: string;
+      detail?: string;
+      error?: string;
+      gasLimit?: bigint;
+    }
   >();
   for (const w of wallets) {
     hits.set(w.address.toLowerCase(), {
@@ -350,6 +368,7 @@ async function executeCopy(
       txHash?: string;
       detail?: string;
       error?: string;
+      gasLimit?: bigint;
     }>
   ) => {
     for (const r of batch) {
@@ -382,6 +401,7 @@ async function executeCopy(
         1400
       ),
       txHash: ok[0]?.txHash,
+      gasUsedEstimate: sumGasLimits(list),
     };
   };
 
@@ -417,6 +437,7 @@ async function executeCopy(
         dryRun: false as const,
         reason: s.reason,
         txHash: s.txHash,
+        gasUsedEstimate: s.gasUsedEstimate,
       };
     }
     return null;
@@ -525,6 +546,7 @@ async function executeCopy(
       dryRun: false,
       reason: `${final.reason}\n\n${statsText}`,
       txHash: final.txHash,
+      gasUsedEstimate: final.gasUsedEstimate,
     };
   }
 
@@ -573,6 +595,7 @@ type WalletHit = {
   txHash?: string;
   detail?: string;
   error?: string;
+  gasLimit?: bigint;
 };
 
 type BatchMintResult = { hits: WalletHit[]; reason: string };
@@ -595,6 +618,7 @@ async function mintSeaDropPublic(
       txHash?: string;
       detail?: string;
       error?: string;
+      gasLimit?: bigint;
     }
   >();
 
@@ -644,6 +668,7 @@ async function mintSeaDropPublic(
             ok: true,
             txHash: sent.txHash,
             detail: `SeaDrop mintPublic x${q}`,
+            gasLimit: sent.gasLimit,
           });
         } else {
           byAddr.set(address, {
@@ -690,6 +715,7 @@ async function mintSeaDropPublic(
               ok: true,
               txHash: sent.txHash,
               detail: `SeaDrop mintPublic x${q}`,
+              gasLimit: sent.gasLimit,
             });
           } else {
             byAddr.set(address, {
@@ -784,6 +810,7 @@ async function mintOpenSea(
           ok: true as const,
           txHash: sent.txHash,
           detail: `OpenSea ${prepared.slug} x${prepared.quantity} (${prepared.stageLabel})`,
+          gasLimit: sent.gasLimit,
         };
       } catch (err) {
         return {
@@ -810,6 +837,7 @@ async function mintOpenSea(
       txHash: r.ok ? r.txHash : undefined,
       detail: r.ok ? r.detail : undefined,
       error: r.ok ? undefined : r.error,
+      gasLimit: r.ok ? r.gasLimit : undefined,
     })),
     reason:
       ok.length > 0
@@ -854,6 +882,7 @@ async function mintPublicMax(
               ok: true as const,
               txHash: sent.txHash,
               detail: `${c.label} @ ${shortAddr(to)}`,
+              gasLimit: sent.gasLimit,
             };
           }
           errors.push(`${c.label}:${sent.error}`);
@@ -883,6 +912,7 @@ async function mintPublicMax(
       txHash: r.ok ? r.txHash : undefined,
       detail: r.ok ? r.detail : undefined,
       error: r.ok ? undefined : r.error,
+      gasLimit: r.ok ? r.gasLimit : undefined,
     })),
     reason:
       ok.length > 0
@@ -932,6 +962,7 @@ async function mintByReplay(
     ok: !!r.ok,
     txHash: r.ok ? r.txHash : undefined,
     error: r.ok ? undefined : r.error,
+    gasLimit: r.ok ? r.gasLimit : undefined,
   }));
 
   if (ok.length > 0) {
@@ -1054,12 +1085,18 @@ async function sendMintTx(
     tracker?: string;
     contract?: string;
   }
-): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; txHash: string; gasLimit: bigint }
+  | { ok: false; error: string }
+> {
   const gate = getMintRpcGate();
   const trySend = async (
     provider: ReturnType<typeof getMintProvider>,
     label: string
-  ): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> => {
+  ): Promise<
+    | { ok: true; txHash: string; gasLimit: bigint }
+    | { ok: false; error: string }
+  > => {
     const connected = wallet.connect(provider);
     const maxAttempts = 4;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1136,7 +1173,7 @@ async function sendMintTx(
         console.log(`[mint] broadcast ${sent.hash}`);
 
         void sent.wait().catch(() => undefined);
-        return { ok: true, txHash: sent.hash };
+        return { ok: true, txHash: sent.hash, gasLimit: resolved.gasLimit };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (/nonce|already known|replacement/i.test(errMsg)) {
@@ -1196,7 +1233,13 @@ async function mintWithWallet(
   rawData: string,
   whale: string,
   whaleQty: number
-): Promise<{ address: string; ok: boolean; txHash?: string; error?: string }> {
+): Promise<{
+  address: string;
+  ok: boolean;
+  txHash?: string;
+  error?: string;
+  gasLimit?: bigint;
+}> {
   const address = wallet.address.toLowerCase();
   const candidates = buildCalldataCandidates(rawData, whale, address, whaleQty);
   const errors: string[] = [];
@@ -1218,7 +1261,12 @@ async function mintWithWallet(
         contract: to,
       });
       if (sent.ok) {
-        return { address, ok: true, txHash: sent.txHash };
+        return {
+          address,
+          ok: true,
+          txHash: sent.txHash,
+          gasLimit: sent.gasLimit,
+        };
       }
       errors.push(`${shortAddr(to)} v${index + 1} ${sent.error}`);
       // If clearly wallet-bound / signature, don't burn the window on more qty bumps.

@@ -53,6 +53,7 @@ export type CadenceSnipeWalletResult = {
   ok: boolean;
   txHash?: string;
   round?: number;
+  gasLimit?: bigint;
   error?: string;
 };
 
@@ -334,7 +335,10 @@ async function waitForCadenceWindow(params: {
 async function sendMintFree(
   wallet: Wallet,
   contract: string
-): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; txHash: string; gasLimit: bigint }
+  | { ok: false; error: string }
+> {
   const gate = getMintRpcGate();
   const data = MINT_FREE_SELECTOR;
   const tryProvider = async (
@@ -400,14 +404,22 @@ async function sendMintFree(
             return { ok: false as const, error: "tx reverted on-chain" };
           }
           if (receipt && receipt.status === 1) {
-            return { ok: true as const, txHash: sent.hash };
+            return {
+              ok: true as const,
+              txHash: sent.hash,
+              gasLimit: resolved.gasLimit,
+            };
           }
         } catch {
           // pending — check balance below
         }
         const bal = await readBalance(provider, contract, wallet.address);
         if (bal > 0n) {
-          return { ok: true as const, txHash: sent.hash };
+          return {
+            ok: true as const,
+            txHash: sent.hash,
+            gasLimit: resolved.gasLimit,
+          };
         }
         // Submitted but not winner / not confirmed yet.
         return {
@@ -612,6 +624,7 @@ export async function runCadenceSnipe(
           ok: true as const,
           txHash: sent.txHash,
           round,
+          gasLimit: sent.gasLimit,
         };
       }
       // Re-check balance in case we raced and still won.
@@ -689,6 +702,9 @@ export async function runCadenceSnipe(
     attempted: true,
     okWallets: uniqueOk,
     failWallets: Math.max(0, funded.length - uniqueOk),
+    gasUsedEstimate: [...won.values()]
+      .filter((r) => r.ok)
+      .reduce((sum, r) => sum + (r.gasLimit ?? 0n), 0n),
   });
 
   return {

@@ -78,6 +78,8 @@ export interface ScheduledMintResult {
   dryRun: boolean;
   reason: string;
   txHash?: string;
+  /** Sum of gasLimit across successful wallet txs (estimateGas-based). */
+  gasUsedEstimate?: number | bigint;
 }
 
 export interface BotState {
@@ -102,6 +104,8 @@ export interface CopyResult {
   dryRun: boolean;
   reason: string;
   txHash?: string;
+  /** Sum of gasLimit across successful wallet txs (estimateGas-based). */
+  gasUsedEstimate?: number | bigint;
 }
 
 export interface PriceChangeAlert {
