@@ -35,6 +35,7 @@ import {
   formatMintResultStats,
   type MintWalletOutcome,
 } from "./mintResultReport";
+import { recordMintSession } from "../store/botStats";
 
 export type SlugMintWalletResult = {
   address: string;
@@ -582,6 +583,14 @@ export async function mintOpenSeaSlugNow(
         : `${r.address.slice(0, 6)}… FAIL (${r.error})`
     )
     .join(" | ");
+
+  void recordMintSession({
+    dryRun: false,
+    success: ok.length > 0,
+    attempted: true,
+    okWallets: ok.length,
+    failWallets: results.length - ok.length,
+  });
 
   return {
     ...baseMeta,

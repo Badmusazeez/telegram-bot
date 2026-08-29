@@ -46,6 +46,7 @@ async function main(): Promise<void> {
   console.log(`Starting robinhood-nft-copy-bot on ${config.chain.name}…`);
   await loadState();
   await loadMintWallets();
+  await import("./store/botStats").then((m) => m.loadBotStats());
 
   const bootState = getState();
   if (!bootState.copyEnabled) {
@@ -178,6 +179,10 @@ async function main(): Promise<void> {
   }
 
   const onPurchase = async (purchase: NftPurchase) => {
+    // Count every tracked-whale mint detection toward monthly Tracks.
+    void import("./store/botStats")
+      .then(({ recordTrackHit }) => recordTrackHit())
+      .catch(() => undefined);
     console.log(
       `[hit] ${purchase.buyer} got ${purchase.contract} #${purchase.tokenId} ~${purchase.valueRobinhood} via ${purchase.marketplace}`
     );

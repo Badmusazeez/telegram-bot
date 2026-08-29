@@ -72,6 +72,16 @@ function rememberCopyResult(purchase: NftPurchase, result: CopyResult): void {
     success: result.success && !result.dryRun,
     reason: result.reason.slice(0, 280),
   };
+  void import("../store/botStats")
+    .then(({ recordMintSession }) =>
+      recordMintSession({
+        dryRun: result.dryRun,
+        success: result.success,
+        attempted: result.attempted,
+        reason: result.reason,
+      })
+    )
+    .catch(() => undefined);
 }
 
 /**

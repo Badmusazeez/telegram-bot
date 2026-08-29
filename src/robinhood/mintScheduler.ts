@@ -32,6 +32,7 @@ import {
   isMissingRevertData,
 } from "./rpcGate";
 import type { Wallet } from "ethers";
+import { recordMintSession } from "../store/botStats";
 
 export type ScheduleHandler = (
   job: ScheduledMint,
@@ -585,6 +586,12 @@ async function runSharpJob(
         resultTxHash: result.txHash,
         finishedAt: new Date().toISOString(),
       });
+      void recordMintSession({
+        dryRun: result.dryRun,
+        success: result.success,
+        attempted: true,
+        reason: result.reason,
+      });
       await onDone(job, result);
       return;
     }
@@ -622,6 +629,12 @@ async function runSharpJob(
       resultReason: result.reason,
       resultTxHash: result.txHash,
       finishedAt: new Date().toISOString(),
+    });
+    void recordMintSession({
+      dryRun: result.dryRun,
+      success: result.success,
+      attempted: true,
+      reason: result.reason,
     });
     await onDone(job, result);
   } catch (err) {
@@ -676,6 +689,12 @@ export async function startMintScheduler(
               resultReason: result.reason,
               resultTxHash: result.txHash,
               finishedAt: new Date().toISOString(),
+            });
+            void recordMintSession({
+              dryRun: result.dryRun,
+              success: result.success,
+              attempted: true,
+              reason: result.reason,
             });
             await onDone(job, result);
           } finally {

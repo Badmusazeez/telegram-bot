@@ -49,6 +49,12 @@ import {
   formatStatus,
   helpText,
 } from "./formatter";
+import {
+  getMonthlyStats,
+  formatMonthlyStatsPlain,
+  currentMonthKey,
+  loadBotStats,
+} from "../store/botStats";
 import { getLastCopySummary } from "../robinhood/copyExecutor";
 import { getBlockscoutStatus } from "../robinhood/blockscoutWatcher";
 import {
@@ -102,6 +108,23 @@ export function createTelegramBot(): Bot {
 
   bot.command("help", async (ctx) => {
     await ctx.reply(helpText(), { parse_mode: "HTML" });
+  });
+
+  bot.command("stats", async (ctx) => {
+    await registerNotifyChat(chatId(ctx));
+    try {
+      await loadBotStats();
+      const raw = (ctx.match || "").trim();
+      // Optional: /stats 2026-08
+      const month =
+        /^\d{4}-\d{2}$/.test(raw) ? raw : currentMonthKey();
+      const stats = await getMonthlyStats(month);
+      await ctx.reply(formatMonthlyStatsPlain(stats));
+    } catch (err) {
+      await ctx.reply(
+        `Stats failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   });
 
   bot.command("rpcquota", async (ctx) => {

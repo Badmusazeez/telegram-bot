@@ -24,6 +24,7 @@ import {
   getOpenSeaApiKey,
 } from "./openseaAuth";
 import { fetchOpenSeaJson } from "./openseaDrop";
+import { recordMintSession } from "../store/botStats";
 import {
   buildMintResultStats,
   classifyMintError,
@@ -681,6 +682,14 @@ export async function runCadenceSnipe(
   const uniqueOk = new Set(
     results.filter((r) => r.ok).map((r) => r.address)
   ).size;
+
+  void recordMintSession({
+    dryRun: false,
+    success: uniqueOk > 0,
+    attempted: true,
+    okWallets: uniqueOk,
+    failWallets: Math.max(0, funded.length - uniqueOk),
+  });
 
   return {
     dryRun: false,
