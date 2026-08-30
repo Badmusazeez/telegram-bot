@@ -136,10 +136,24 @@ function looksLikeChainstack(url: string): boolean {
   return /chainstack\.com/i.test(url);
 }
 
+/** Dedicated Chainstack node for Alchemy track failover (full URL + access token). */
+const DEFAULT_CHAINSTACK_TRACK_BACKUP =
+  "https://robinhood-mainnet.core.chainstack.com/0de02611a620b584f19ab104aed415b4";
+
 const trackBackupExplicit = env.TRACK_RPC_BACKUP_URL.trim();
 const trackBackupRpcUrl = (() => {
   if (trackBackupExplicit && trackBackupExplicit !== trackRpcUrl) {
     return trackBackupExplicit;
+  }
+  if (
+    !trackBackupExplicit &&
+    looksLikeAlchemy(trackRpcUrl) &&
+    trackRpcUrl !== DEFAULT_CHAINSTACK_TRACK_BACKUP
+  ) {
+    console.log(
+      "[config] TRACK_RPC_BACKUP_URL defaulted to Chainstack track backup for Alchemy quota failover"
+    );
+    return DEFAULT_CHAINSTACK_TRACK_BACKUP;
   }
   if (
     !trackBackupExplicit &&
