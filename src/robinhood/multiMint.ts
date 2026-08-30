@@ -278,6 +278,17 @@ export function decodeWhaleMintQuantity(data: string): number | undefined {
     }
   }
 
+  // Scatter mint(auth, quantity, affiliate, signature) — quantity is 2nd word
+  if (sel === "0x4a21a2df" && raw.length >= 10 + 64 * 2) {
+    try {
+      const word = raw.slice(10 + 64, 10 + 64 * 2);
+      const q = Number(BigInt(`0x${word}`));
+      if (Number.isFinite(q) && q >= 1 && q <= 100) return q;
+    } catch {
+      // ignore
+    }
+  }
+
   // Fallback: trailing word (many mint ABIs)
   try {
     const word = raw.slice(-64);

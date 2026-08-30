@@ -14,6 +14,11 @@ import {
   prepareOpenSeaFreeMint,
   replaceCalldataQuantity,
 } from "./multiMint";
+import {
+  buildScatterFreeMintTx,
+  decodeScatterMintQuantity,
+  isScatterMintCalldata,
+} from "./scatterMint";
 import { ensureOpenSeaApiKey, getOpenSeaApiKey } from "./openseaAuth";
 import { maxMintQuantityLadder } from "./mintQuantity";
 import {
@@ -304,7 +309,11 @@ async function executeCopy(
 
   const openSeaLike =
     isSeaDropAddress(sourceTx.to) || isSeaDropMintPublic(sourceTx.data);
-  const whaleQty = decodeWhaleMintQuantity(sourceTx.data) || 1;
+  const scatterLike = isScatterMintCalldata(sourceTx.data);
+  const whaleQty =
+    decodeScatterMintQuantity(sourceTx.data) ||
+    decodeWhaleMintQuantity(sourceTx.data) ||
+    1;
   const collection = purchase.contract;
   const mintTargets = [
     ...new Set(
@@ -443,7 +452,8 @@ async function executeCopy(
       (cached.kind === "replay" || cached.kind === "public")) ||
     // Custom / unknown free mints → replay whale calldata first (Outlaws etc.)
     (freeMintConfirmed && !openSeaLike) ||
-    classified.confidence === "low";
+    classified.confidence === "low" ||
+    scatterLike;
 
   const finishIfComplete = (label: StrategyKind | string, kind?: StrategyKind) => {
     const s = summarize(String(label));
@@ -482,6 +492,17 @@ async function executeCopy(
     // Partial — keep filling remaining wallets via OpenSea / other paths.
   }
 
+  // --- Path Scatter: free invite-list mint via Scatter API (MeowPop etc.) ---
+  if (scatterLike) {
+    timer.mark("simulate");
+    const sc = await mintScatterFree(purchase, remaining(), whaleQty);
+    if (sc.hits.length > 0) {
+      mergeHits(sc.hits);
+      const done = finishIfComplete("Scatter", "replay");
+      if (done) return done;
+    }
+  }
+
   const runOpenSea = async () => {
     if (!getOpenSeaApiKey() || remaining().length === 0) return null;
     timer.mark("simulate");
@@ -507,6 +528,8 @@ async function executeCopy(
   const runPublic = async () => {
     if (remaining().length === 0) return null;
     if (openSeaLike && isSeaDropMintPublic(sourceTx.data)) return null;
+    // Scatter uses its own ABI — generic mint(100)/publicMint probes always revert.
+    if (scatterLike) return null;
     timer.mark("simulate");
     const publicTry = await mintPublicMax(remaining(), mintTargets, whaleQty);
     mergeHits(publicTry.hits);
@@ -782,6 +805,92 @@ async function mintSeaDropPublic(
             1200
           )
         : `SeaDrop mintPublic failed: ${summary}`.slice(0, 500),
+  };
+}
+
+async function mintScatterFree(
+  purchase: NftPurchase,
+  wallets: Wallet[],
+  whaleQty: number
+): Promise<BatchMintResult> {
+  if (wallets.length === 0) return { hits: [], reason: "no wallets left" };
+
+  const results = await mapPool(wallets, 3, async (wallet, index) => {
+    if (index > 0) await sleep(Math.min(index * 40, 400));
+    const address = wallet.address.toLowerCase();
+    try {
+      const built = await buildScatterFreeMintTx({
+        collectionAddress: purchase.contract,
+        minterAddress: wallet.address,
+        quantity: whaleQty,
+        collectionName: purchase.collectionName,
+      });
+      if (!built) {
+        return {
+          address,
+          ok: false as const,
+          error: "scatter API: no free mint tx",
+        };
+      }
+      if (built.valueWei > 0n) {
+        return {
+          address,
+          ok: false as const,
+          error: `scatter paid value=${built.valueWei}`,
+        };
+      }
+      const sent = await sendMintTx(wallet, {
+        to: built.to,
+        data: built.data,
+        valueWei: 0n,
+        strategy: `Scatter.${built.listName}(x${built.quantity})`,
+        contract: purchase.contract,
+      });
+      if (!sent.ok) {
+        return {
+          address,
+          ok: false as const,
+          error: sent.error || "scatter send failed",
+        };
+      }
+      return {
+        address,
+        ok: true as const,
+        txHash: sent.txHash,
+        detail: `Scatter ${built.listName} x${built.quantity}`,
+        gasLimit: sent.gasLimit,
+      };
+    } catch (err) {
+      return {
+        address,
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
+
+  const ok = results.filter((r) => r.ok);
+  const summary = results
+    .map((r) =>
+      r.ok
+        ? `${shortAddr(r.address)} OK ${r.txHash?.slice(0, 10)}… ${r.detail || ""}`
+        : `${shortAddr(r.address)} FAIL (${r.error})`
+    )
+    .join(" | ");
+
+  return {
+    hits: results.map((r) => ({
+      address: r.address,
+      ok: r.ok,
+      txHash: r.ok ? r.txHash : undefined,
+      detail: r.ok ? r.detail : undefined,
+      error: r.ok ? undefined : r.error,
+      gasLimit: r.ok ? r.gasLimit : undefined,
+    })),
+    reason:
+      ok.length > 0
+        ? `Scatter minted on ${ok.length}/${wallets.length} wallet(s): ${summary}`
+        : `Scatter mint failed: ${summary}`,
   };
 }
 
@@ -1319,18 +1428,27 @@ function buildCalldataCandidates(
   const base = rewritten !== original ? rewritten : original;
   const out: string[] = [];
 
-  // Always try MAX quantity first on rewritten calldata, then step down.
-  for (const q of maxMintQuantityLadder(whaleQty)) {
+  // ALWAYS try exact whale calldata first (Scatter signatures break if we
+  // rewrite the trailing word as a fake quantity).
+  if (!out.includes(base)) out.push(base);
+  if (rewritten !== original && !out.includes(original)) {
+    out.push(original);
+  }
+
+  // Scatter mint ABI is not a trailing-qty encoding — never bump quantity.
+  if (isScatterMintCalldata(original)) {
+    return out;
+  }
+
+  // Simple mint selectors: try whale qty / 1 bumps after exact.
+  for (const q of [whaleQty, 1, ...maxMintQuantityLadder(whaleQty)]) {
+    if (q < 1) continue;
     const bumped = replaceCalldataQuantity(base, q);
     if (bumped && !out.includes(bumped)) {
       out.push(bumped);
     }
   }
 
-  if (!out.includes(base)) out.push(base);
-  if (rewritten !== original && !out.includes(original)) {
-    out.push(original);
-  }
   return out;
 }
 
