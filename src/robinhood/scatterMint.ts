@@ -91,24 +91,38 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T | null> 
 }
 
 /** Resolve Scatter collection slug for invite-list lookup. */
+const slugCache = new Map<string, string>();
+
 export async function resolveScatterSlug(params: {
   contract: string;
   hintName?: string | null;
   openSeaSlug?: string | null;
 }): Promise<string | null> {
+  const key = params.contract.toLowerCase();
+  if (slugCache.has(key)) return slugCache.get(key)!;
+
   const tried = new Set<string>();
   const candidates = [
     ...slugCandidates(params.contract, params.hintName),
     ...(params.openSeaSlug ? [params.openSeaSlug] : []),
   ];
 
-  for (const slug of candidates) {
-    if (tried.has(slug.toLowerCase())) continue;
+  const trySlug = async (slug: string): Promise<string | null> => {
+    if (!slug || tried.has(slug.toLowerCase())) return null;
     tried.add(slug.toLowerCase());
     const lists = await fetchJson<ScatterInviteList[]>(
       `${SCATTER_API}/collection/${encodeURIComponent(slug)}/eligible-invite-lists`
     );
-    if (Array.isArray(lists) && lists.length > 0) return slug;
+    if (Array.isArray(lists) && lists.length > 0) {
+      slugCache.set(key, slug);
+      return slug;
+    }
+    return null;
+  };
+
+  for (const slug of candidates) {
+    const hit = await trySlug(slug);
+    if (hit) return hit;
   }
 
   // OpenSea contract → collection slug (no key required on some endpoints).
@@ -117,19 +131,18 @@ export async function resolveScatterSlug(params: {
       `https://api.opensea.io/api/v2/chain/${config.chain.openseaChain}/contract/${params.contract.toLowerCase()}`
     );
     if (os?.collection) {
-      const slug = os.collection;
-      const lists = await fetchJson<ScatterInviteList[]>(
-        `${SCATTER_API}/collection/${encodeURIComponent(slug)}/eligible-invite-lists`
+      const hit =
+        (await trySlug(os.collection)) ||
+        (await trySlug(os.collection.split("-")[0] || ""));
+      if (hit) return hit;
+    }
+    if (os?.name) {
+      const hit = await trySlug(
+        os.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
       );
-      if (Array.isArray(lists) && lists.length > 0) return slug;
-      // OpenSea slug may differ from Scatter — try name stem.
-      const stem = slug.split("-")[0];
-      if (stem && stem !== slug) {
-        const lists2 = await fetchJson<ScatterInviteList[]>(
-          `${SCATTER_API}/collection/${encodeURIComponent(stem)}/eligible-invite-lists`
-        );
-        if (Array.isArray(lists2) && lists2.length > 0) return stem;
-      }
+      if (hit) return hit;
+      const hit2 = await trySlug(os.name);
+      if (hit2) return hit2;
     }
   } catch {
     // ignore

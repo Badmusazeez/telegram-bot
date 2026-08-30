@@ -191,7 +191,25 @@ async function executeCopy(
 
   // Load calldata FIRST (prefer pending/Blockscout sourceData) — do not wait on
   // free/paid classification from Transfer logs.
-  const sourceTx = await loadSourceTx(purchase);
+  let sourceTx = await loadSourceTx(purchase);
+  // Confirmed free mint with RPC lag: still proceed using NFT contract so
+  // Scatter/OpenSea/public rebuild can run (never drop the hit).
+  if (
+    !sourceTx &&
+    purchase.isFreeMint &&
+    !purchase.isPaid &&
+    purchase.valueRobinhood <= 0
+  ) {
+    console.warn(
+      `[mint] free mint ${purchase.txHash.slice(0, 10)}… — source tx lag; forcing contract-only rebuild paths`
+    );
+    sourceTx = {
+      to: purchase.contract,
+      data: "0x",
+      value: 0n,
+      from: purchase.buyer,
+    };
+  }
   timer.mark("decode");
   if (!sourceTx) {
     return {
@@ -209,13 +227,13 @@ async function executeCopy(
     sourceTx.data,
     undefined,
     sourceTx.value,
-    { acceptUnknownZeroValue: sourceTx.value === 0n }
+    { acceptUnknownZeroValue: sourceTx.value === 0n || purchase.isFreeMint }
   );
   const freeMintConfirmed =
-    purchase.isFreeMint &&
-    sourceTx.value === 0n &&
+    (purchase.isFreeMint || purchase.marketplace === "free-mint") &&
     !purchase.isPaid &&
-    purchase.valueRobinhood <= 0;
+    purchase.valueRobinhood <= 0 &&
+    (sourceTx.value === 0n || purchase.isFreeMint);
 
   if (!classified.isMint && !freeMintConfirmed) {
     return {
@@ -242,16 +260,17 @@ async function executeCopy(
     `[mint:decode] tracker=${purchase.buyer.slice(0, 10)}… fn=${classified.functionLabel} ` +
       `conf=${classified.confidence} nft=${(classified.nftContract || purchase.contract).slice(0, 12)}… ` +
       `value=${sourceTx.value}` +
-      (freeMintConfirmed && classified.confidence === "low"
-        ? " (custom free mint — forcing copy)"
-        : freeMintConfirmed && !classified.isMint
-          ? " (free-mint confirmed — forcing copy)"
-          : "")
+      (freeMintConfirmed
+        ? " (FREE MINT CONFIRMED — never skip)"
+        : "")
   );
 
   // Paid whale tx (value > 0): skip — we never send native value. Sending value=0
   // against a paid stage simply reverts on-chain (no spend).
-  if (sourceTx.value > 0n || purchase.valueRobinhood > 0 || purchase.isPaid) {
+  if (
+    !freeMintConfirmed &&
+    (sourceTx.value > 0n || purchase.valueRobinhood > 0 || purchase.isPaid)
+  ) {
     if (state.freeMintsOnly) {
       const priceEth = formatEther(sourceTx.value || 0n);
       return {
@@ -264,15 +283,26 @@ async function executeCopy(
   }
 
   if (!sourceTx.to || !sourceTx.data || sourceTx.data === "0x") {
-    return {
-      attempted: false,
-      success: false,
-      dryRun: state.dryRun,
-      reason: "Source tx has no calldata to replay.",
-    };
+    // Free mint Transfer with no calldata — still try OpenSea/Scatter/public by contract.
+    if (!freeMintConfirmed) {
+      return {
+        attempted: false,
+        success: false,
+        dryRun: state.dryRun,
+        reason: "Source tx has no calldata to replay.",
+      };
+    }
+    console.warn(
+      `[mint] free mint confirmed but empty calldata — will try Scatter/OpenSea/public on contract`
+    );
   }
 
-  if (sourceTx.from.toLowerCase() !== purchase.buyer.toLowerCase()) {
+  // Airdrop / mint-to-wallet: whale received NFT but didn't send the tx.
+  // For confirmed free mints, do NOT hard-skip — rebuild public/SeaDrop/Scatter paths.
+  const whaleSentMint =
+    !sourceTx.from ||
+    sourceTx.from.toLowerCase() === purchase.buyer.toLowerCase();
+  if (!whaleSentMint && !freeMintConfirmed) {
     return {
       attempted: false,
       success: false,
@@ -280,6 +310,11 @@ async function executeCopy(
       reason:
         "Skipped airdrop/mint-to-wallet — whale did not send the mint tx.",
     };
+  }
+  if (!whaleSentMint && freeMintConfirmed) {
+    console.warn(
+      `[mint] free-mint Transfer to whale but tx.from≠buyer — forcing public/SeaDrop/Scatter rebuild (no whale-bound replay)`
+    );
   }
 
   const allWallets = getAllMintWallets();
@@ -303,9 +338,25 @@ async function executeCopy(
         `empty=${readiness.empty.length} lowGas=${readiness.lowGas.length} — blasting ready+unknown`
     );
   }
-  // Prefer funded/ready wallets; if none classified ready (all unknown), blast all.
-  const wallets =
-    readiness.ready.length > 0 ? readiness.ready : allWallets;
+  // Prefer funded/ready wallets; for confirmed free mints also include low_gas
+  // (better to attempt than silently drop). Empty (0 balance) stays out.
+  const wallets = (() => {
+    if (readiness.ready.length === 0) return allWallets;
+    if (!freeMintConfirmed) return readiness.ready;
+    const lowGasAddrs = new Set(
+      readiness.lowGas.map((w) => w.address.toLowerCase())
+    );
+    const extra = allWallets.filter((w) =>
+      lowGasAddrs.has(w.address.toLowerCase())
+    );
+    const merged = [...readiness.ready];
+    for (const w of extra) {
+      if (!merged.some((x) => x.address.toLowerCase() === w.address.toLowerCase())) {
+        merged.push(w);
+      }
+    }
+    return merged.length > 0 ? merged : allWallets;
+  })();
 
   const openSeaLike =
     isSeaDropAddress(sourceTx.to) || isSeaDropMintPublic(sourceTx.data);
@@ -339,31 +390,48 @@ async function executeCopy(
     };
   }
 
-  // Slot-aware gate: if contract exposes a FUTURE window, arm race engine
-  // instead of wasting gas. Contracts WITHOUT timing → immediate 20/20 path.
+  // Slot probe: NEVER abort a confirmed live free mint to "arm next slot".
+  // Whale already minted → stage is live → blast NOW. Arm race only as
+  // parallel recovery when probe shows a future window AND this isn't a live hit.
   try {
     const slot = await probeMintSlot(getMintProvider(), collection);
     if (slot.hasTiming && slot.isFuture && slot.opensAtMs) {
-      console.log(
-        `[mint:slot] future window detected via ${slot.source} → ARMED ${new Date(slot.opensAtMs).toISOString()}`
-      );
-      // Fire-and-forget race; return armed status to Telegram immediately.
-      void runSlotRace({
-        contract: collection,
-        whaleData: sourceTx.data,
-        to: sourceTx.to,
-        buyer: purchase.buyer,
-        quantityHint: whaleQty,
-        slot,
-      }).then((r) => {
-        console.log(`[mint:slot] race finished: ${r.reason}`);
-      });
-      return {
-        attempted: true,
-        success: false,
-        dryRun: false,
-        reason: `⏱ ARMED for next slot (${slot.source}) at ${new Date(slot.opensAtMs).toISOString()} — ${slot.detail}`,
-      };
+      if (freeMintConfirmed) {
+        console.log(
+          `[mint:slot] future window via ${slot.source} BUT free mint confirmed NOW — blasting immediate (also arming race as backup)`
+        );
+        void runSlotRace({
+          contract: collection,
+          whaleData: sourceTx.data || "0x",
+          to: sourceTx.to || collection,
+          buyer: purchase.buyer,
+          quantityHint: whaleQty,
+          slot,
+        }).then((r) => {
+          console.log(`[mint:slot] backup race finished: ${r.reason}`);
+        });
+        // fall through to immediate blast
+      } else {
+        console.log(
+          `[mint:slot] future window detected via ${slot.source} → ARMED ${new Date(slot.opensAtMs).toISOString()}`
+        );
+        void runSlotRace({
+          contract: collection,
+          whaleData: sourceTx.data,
+          to: sourceTx.to,
+          buyer: purchase.buyer,
+          quantityHint: whaleQty,
+          slot,
+        }).then((r) => {
+          console.log(`[mint:slot] race finished: ${r.reason}`);
+        });
+        return {
+          attempted: true,
+          success: false,
+          dryRun: false,
+          reason: `⏱ ARMED for next slot (${slot.source}) at ${new Date(slot.opensAtMs).toISOString()} — ${slot.detail}`,
+        };
+      }
     }
   } catch (err) {
     console.warn(
@@ -483,20 +551,26 @@ async function executeCopy(
   };
 
   // --- Path A: SeaDrop mintPublic rebuild (UNCHANGED blast-all logic) ---
-  if (openSeaLike && isSeaDropMintPublic(sourceTx.data)) {
-    timer.mark("simulate");
-    const sd = await mintSeaDropPublic(remaining(), sourceTx.data, whaleQty);
-    mergeHits(sd.hits);
-    const done = finishIfComplete("SeaDrop", "seadrop");
-    if (done) return done;
-    // Partial — keep filling remaining wallets via OpenSea / other paths.
+  if (
+    (openSeaLike && isSeaDropMintPublic(sourceTx.data)) ||
+    (freeMintConfirmed && isSeaDropAddress(sourceTx.to))
+  ) {
+    if (sourceTx.data && sourceTx.data !== "0x") {
+      timer.mark("simulate");
+      const sd = await mintSeaDropPublic(remaining(), sourceTx.data, whaleQty);
+      mergeHits(sd.hits);
+      const done = finishIfComplete("SeaDrop", "seadrop");
+      if (done) return done;
+    }
   }
 
-  // --- Path Scatter: free invite-list mint via Scatter API (MeowPop etc.) ---
-  if (scatterLike) {
+  // --- Path Scatter: FREE invite-list via API (MeowPop etc.) ---
+  // Always try on Scatter calldata; also probe API on any confirmed free mint
+  // (covers slug-based FREE lists even if detection missed the selector).
+  if (scatterLike || freeMintConfirmed) {
     timer.mark("simulate");
     const sc = await mintScatterFree(purchase, remaining(), whaleQty);
-    if (sc.hits.length > 0) {
+    if (sc.hits.some((h) => h.ok) || scatterLike) {
       mergeHits(sc.hits);
       const done = finishIfComplete("Scatter", "replay");
       if (done) return done;
@@ -513,6 +587,9 @@ async function executeCopy(
 
   const runReplay = async () => {
     if (remaining().length === 0) return null;
+    // Don't waste RPS replaying whale-bound signatures when whale didn't send.
+    if (!whaleSentMint) return null;
+    if (!sourceTx.data || sourceTx.data === "0x") return null;
     timer.mark("simulate");
     const replay = await mintByReplay(
       remaining(),
@@ -1139,46 +1216,33 @@ async function loadSourceTx(purchase: NftPurchase): Promise<{
   value: bigint;
   from: string;
 } | null> {
-  if (
+  const watcherCalldata =
     purchase.sourceTo &&
     purchase.sourceData &&
     purchase.sourceData.length >= 10
-  ) {
-    return {
-      to: purchase.sourceTo,
-      data: purchase.sourceData,
-      value: 0n,
-      from: purchase.buyer,
-    };
-  }
+      ? {
+          to: purchase.sourceTo,
+          data: purchase.sourceData,
+        }
+      : null;
 
   const txHash = purchase.txHash;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      const tx = await getProvider().getTransaction(txHash);
-      if (tx?.to && tx.data && tx.data !== "0x") {
-        return {
-          to: tx.to,
-          data: tx.data,
-          value: tx.value,
-          from: tx.from,
-        };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    // Prefer live RPC for accurate value/from; keep watcher calldata if present.
+    for (const provider of [getProvider, getMintProvider]) {
+      try {
+        const tx = await provider().getTransaction(txHash);
+        if (tx?.to && tx.data && tx.data !== "0x") {
+          return {
+            to: (watcherCalldata?.to || tx.to).toLowerCase(),
+            data: (watcherCalldata?.data || tx.data).toLowerCase(),
+            value: tx.value ?? 0n,
+            from: (tx.from || purchase.buyer).toLowerCase(),
+          };
+        }
+      } catch {
+        // try next
       }
-    } catch {
-      // try mint rpc
-    }
-    try {
-      const tx = await getMintProvider().getTransaction(txHash);
-      if (tx?.to && tx.data && tx.data !== "0x") {
-        return {
-          to: tx.to,
-          data: tx.data,
-          value: tx.value,
-          from: tx.from,
-        };
-      }
-    } catch {
-      // continue
     }
     try {
       const res = await fetch(
@@ -1192,22 +1256,37 @@ async function loadSourceTx(purchase: NftPurchase): Promise<{
           raw_input?: string;
           value?: string;
         };
-        const to = (j.to?.hash || "").toLowerCase();
-        const data = (j.raw_input || "").toLowerCase();
+        const to = (j.to?.hash || watcherCalldata?.to || "").toLowerCase();
+        const data = (
+          j.raw_input ||
+          watcherCalldata?.data ||
+          ""
+        ).toLowerCase();
         const from = (j.from?.hash || "").toLowerCase();
         if (to && data && data !== "0x") {
           return {
             to,
             data,
             value: j.value ? BigInt(j.value) : 0n,
-            from: from || purchase.buyer,
+            from: from || purchase.buyer.toLowerCase(),
           };
         }
       }
     } catch {
       // continue
     }
-    await sleep(200 * (attempt + 1));
+
+    // Last resort: watcher calldata alone (pending path) — assume free/outbound.
+    if (watcherCalldata) {
+      return {
+        to: watcherCalldata.to.toLowerCase(),
+        data: watcherCalldata.data.toLowerCase(),
+        value: 0n,
+        from: purchase.buyer.toLowerCase(),
+      };
+    }
+
+    await sleep(150 * (attempt + 1));
   }
   return null;
 }

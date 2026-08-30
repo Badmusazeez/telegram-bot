@@ -9,13 +9,19 @@ const SEADROP_IFACE = new Interface([
 ]);
 
 const MINT_PUBLIC_SELECTOR = "0x161ac21f";
+/** Legacy SeaDrop mintPublic selector (same ABI layout). */
+const MINT_PUBLIC_SELECTOR_LEGACY = "0x9b4f3f25";
 
 export function isSeaDropAddress(to: string | null | undefined): boolean {
   return (to || "").toLowerCase() === SEADROP_ADDRESS;
 }
 
 export function isSeaDropMintPublic(data: string | null | undefined): boolean {
-  return (data || "").toLowerCase().startsWith(MINT_PUBLIC_SELECTOR);
+  const raw = (data || "").toLowerCase();
+  return (
+    raw.startsWith(MINT_PUBLIC_SELECTOR) ||
+    raw.startsWith(MINT_PUBLIC_SELECTOR_LEGACY)
+  );
 }
 
 export type SeaDropMintPublicArgs = {
@@ -30,13 +36,18 @@ export function decodeSeaDropMintPublic(
   data: string
 ): SeaDropMintPublicArgs | null {
   const raw = data.toLowerCase();
-  if (!raw.startsWith(MINT_PUBLIC_SELECTOR) || raw.length < 10 + 64 * 4) {
+  if (
+    (!raw.startsWith(MINT_PUBLIC_SELECTOR) &&
+      !raw.startsWith(MINT_PUBLIC_SELECTOR_LEGACY)) ||
+    raw.length < 10 + 64 * 4
+  ) {
     return null;
   }
   try {
-    // Parse only the 4-arg mintPublic prefix (ignore trailing bytes some explorers append).
-    const trimmed = raw.slice(0, 10 + 64 * 4);
-    const parsed = SEADROP_IFACE.parseTransaction({ data: trimmed });
+    // Normalize legacy selector to current for ethers Interface parse.
+    const normalized =
+      MINT_PUBLIC_SELECTOR + raw.slice(10, 10 + 64 * 4);
+    const parsed = SEADROP_IFACE.parseTransaction({ data: normalized });
     if (!parsed || parsed.name !== "mintPublic") return null;
     const qty = Number(parsed.args[3]);
     if (!Number.isFinite(qty) || qty < 1) return null;

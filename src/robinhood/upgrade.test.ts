@@ -36,6 +36,22 @@ describe("classifyMintCalldata", () => {
     assert.equal(c.confidence, "high");
   });
 
+  it("accepts legacy SeaDrop mintPublic selector", async () => {
+    const { isSeaDropMintPublic, decodeSeaDropMintPublic } = await import(
+      "./seaDrop"
+    );
+    const data =
+      "0x9b4f3f25" +
+      "000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+      "0000000000000000000000000000a26b00c1f0df003000390027140000faa719" +
+      "000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" +
+      "0000000000000000000000000000000000000000000000000000000000000002";
+    assert.equal(isSeaDropMintPublic(data), true);
+    const decoded = decodeSeaDropMintPublic(data);
+    assert.ok(decoded);
+    assert.equal(decoded!.quantity, 2);
+  });
+
   it("rejects ERC-20 transfer / approve selectors", () => {
     for (const sel of ["0xa9059cbb", "0x095ea7b3", "0xa22cb465"]) {
       assert.equal(NON_MINT_SELECTORS.has(sel), true);
