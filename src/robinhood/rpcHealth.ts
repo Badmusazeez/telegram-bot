@@ -131,7 +131,7 @@ export function formatRpcLimitAlert(
     `<b>Detail:</b> <code>${escapeHtml(issue.message)}</code>`,
     ``,
     role === "track"
-      ? `Update <code>TRACK_RPC_URL</code> / <code>ALCHEMY_API_KEY</code> in VPS <code>.env</code>, then: <code>pm2 restart robinhood-nft-bot --update-env</code>`
+      ? `Update <code>TRACK_RPC_URL</code> / <code>ALCHEMY_API_KEY</code> in VPS <code>.env</code> (or rely on <code>TRACK_RPC_BACKUP_URL</code> Chainstack failover), then: <code>pm2 restart robinhood-nft-bot --update-env</code>`
       : `Update <code>MINT_RPC_URL</code> in VPS <code>.env</code>, then: <code>pm2 restart robinhood-nft-bot --update-env</code>`,
     ``,
     `Blockscout detection may still catch free mints while you swap the RPC.`,
