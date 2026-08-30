@@ -121,13 +121,41 @@ const trackRpcUrl =
   env.TRACK_RPC_URL.trim() ||
   env.ROBINHOOD_RPC_URL.trim() ||
   chain.defaultRpcUrl;
-const trackBackupRpcUrl = env.TRACK_RPC_BACKUP_URL.trim();
 const mintRpcUrl = env.MINT_RPC_URL.trim() || trackRpcUrl;
 const mintBackupCandidate = env.MINT_RPC_BACKUP_URL.trim();
 const mintBackupRpcUrl =
   mintBackupCandidate && mintBackupCandidate !== mintRpcUrl
     ? mintBackupCandidate
     : "";
+
+/** When track is Alchemy and mint is Chainstack, default track backup → mint RPC. */
+function looksLikeAlchemy(url: string): boolean {
+  return /alchemy\.com/i.test(url);
+}
+function looksLikeChainstack(url: string): boolean {
+  return /chainstack\.com/i.test(url);
+}
+
+const trackBackupExplicit = env.TRACK_RPC_BACKUP_URL.trim();
+const trackBackupRpcUrl = (() => {
+  if (trackBackupExplicit && trackBackupExplicit !== trackRpcUrl) {
+    return trackBackupExplicit;
+  }
+  if (
+    !trackBackupExplicit &&
+    looksLikeAlchemy(trackRpcUrl) &&
+    looksLikeChainstack(mintRpcUrl) &&
+    mintRpcUrl !== trackRpcUrl
+  ) {
+    console.log(
+      "[config] TRACK_RPC_BACKUP_URL defaulted to MINT_RPC_URL (Chainstack) for Alchemy quota failover"
+    );
+    return mintRpcUrl;
+  }
+  return trackBackupExplicit && trackBackupExplicit !== trackRpcUrl
+    ? trackBackupExplicit
+    : "";
+})();
 
 if (!trackRpcUrl.startsWith("http")) {
   throw new Error("TRACK_RPC_URL / ROBINHOOD_RPC_URL must be a valid RPC URL");
@@ -141,7 +169,7 @@ if (!mintRpcUrl.startsWith("http")) {
 if (mintBackupCandidate && !mintBackupCandidate.startsWith("http")) {
   throw new Error("MINT_RPC_BACKUP_URL must be a valid RPC URL");
 }
-if (trackBackupRpcUrl && trackBackupRpcUrl === trackRpcUrl) {
+if (trackBackupExplicit && trackBackupExplicit === trackRpcUrl) {
   console.warn(
     "[config] TRACK_RPC_BACKUP_URL equals TRACK_RPC_URL — failover disabled"
   );

@@ -3,11 +3,16 @@ import {
   collectRpcQuotaReport,
   formatRpcQuotaReport,
 } from "./rpcQuota";
+import { forceTrackBackup, hasTrackBackup } from "./trackRpc";
 
 export type RpcQuotaSender = (html: string) => Promise<void>;
 
+/** Auto-failover Alchemy → Chainstack track backup at this CU %. */
+const ALCHEMY_FAILOVER_PCT = 90;
+
 /**
  * Telegram RPC quota % pulse every 6 hours (Alchemy + Chainstack).
+ * When Alchemy is FULL / ≥90%, force tracker onto Chainstack backup.
  */
 export function startRpcQuotaWatcher(send: RpcQuotaSender): () => void {
   let stopped = false;
@@ -23,6 +28,26 @@ export function startRpcQuotaWatcher(send: RpcQuotaSender): () => void {
           `${report.alchemy.status} chainstack=${report.chainstack.percentUsed ?? "?"}%% ` +
           `${report.chainstack.status}`
       );
+
+      const pct = report.alchemy.percentUsed;
+      const alchemyDead =
+        report.alchemy.status === "FULL" ||
+        (pct != null && pct >= ALCHEMY_FAILOVER_PCT);
+      if (alchemyDead && hasTrackBackup()) {
+        const ok = await forceTrackBackup(
+          `Alchemy quota ${pct ?? "?"}% (${report.alchemy.status}) — using Chainstack track backup`
+        );
+        if (ok) {
+          await send(
+            [
+              `<b>🔀 Alchemy nearly full — tracker switched to Chainstack</b>`,
+              `Alchemy: <b>${pct ?? "?"}%</b> (${report.alchemy.status})`,
+              `Tracking continues on Chainstack backup so mints keep firing.`,
+              `Mint RPC was already Chainstack.`,
+            ].join("\n")
+          );
+        }
+      }
     } catch (err) {
       console.warn(
         `[rpc-quota] failed: ${err instanceof Error ? err.message : err}`

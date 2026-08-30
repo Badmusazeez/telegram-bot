@@ -21,9 +21,13 @@ let onSwitch: SwitchHandler | null = null;
 const RECOVER_EVERY_MS = 2 * 60 * 1000;
 /** Treat tracker calls slower than this as "slow" and failover. */
 const SLOW_MS = 8_000;
+/** Stay on backup at least this long after a quota/FULL forced switch. */
+const QUOTA_STICKY_MS = 6 * 60 * 60 * 1000;
 
 let lastFailoverAt = 0;
 let lastPrimaryProbeAt = 0;
+/** Do not auto-recover to Alchemy before this timestamp (quota sticky). */
+let stickyBackupUntil = 0;
 
 function ensureProviders(): void {
   if (!primary) {
@@ -127,10 +131,31 @@ async function switchTo(role: TrackRpcRole, reason: string): Promise<void> {
   await emitSwitch(from, role, reason);
 }
 
-/** Probe primary and move back when healthy. */
+/**
+ * Force tracker onto backup (Chainstack) when Alchemy quota is nearly/full.
+ * Sticky for several hours so we don't flap back onto a dead Alchemy key.
+ */
+export async function forceTrackBackup(
+  reason: string,
+  stickyMs = QUOTA_STICKY_MS
+): Promise<boolean> {
+  ensureProviders();
+  if (!backup) {
+    console.warn(
+      `[track-rpc] cannot force backup — TRACK_RPC_BACKUP_URL not set (${reason})`
+    );
+    return false;
+  }
+  stickyBackupUntil = Date.now() + stickyMs;
+  await switchTo("backup", reason);
+  return true;
+}
+
+/** Probe primary and move back when healthy (skipped while quota-sticky). */
 export async function maybeRecoverPrimary(): Promise<void> {
   ensureProviders();
   if (active !== "backup" || !primary) return;
+  if (Date.now() < stickyBackupUntil) return;
 
   const now = Date.now();
   if (now - lastFailoverAt < RECOVER_EVERY_MS) return;
@@ -167,6 +192,10 @@ export async function withTrackRpc<T>(
     return await withTimeout(op(provider), SLOW_MS);
   } catch (err) {
     if (role === "primary" && backup && shouldFailover(err)) {
+      const issue = classifyTrackRpcError(err);
+      if (issue?.kind === "quota") {
+        stickyBackupUntil = Date.now() + QUOTA_STICKY_MS;
+      }
       await switchTo(
         "backup",
         err instanceof Error ? err.message : String(err)
