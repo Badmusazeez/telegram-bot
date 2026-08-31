@@ -15,7 +15,7 @@ import {
 } from "./robinhood/openseaAuth";
 import { startPriceWatcher } from "./robinhood/priceWatcher";
 import { rpcLabels } from "./config";
-import { getAllMintWallets, getMintProvider, getProvider, getWallet } from "./robinhood/provider";
+import { getAllMintWallets, getMintProvider, getWallet } from "./robinhood/provider";
 import { loadMintWallets } from "./store/mintWallets";
 import { addWatchedPrice, getState, loadState } from "./store/state";
 import type { NftPurchase } from "./types";
@@ -24,7 +24,12 @@ import {
   formatTrackRpcSwitch,
   type TrackRpcIssue,
 } from "./robinhood/rpcHealth";
-import { setTrackRpcSwitchHandler } from "./robinhood/trackRpc";
+import {
+  forceTrackBackup,
+  hasTrackBackup,
+  withTrackRpc,
+  setTrackRpcSwitchHandler,
+} from "./robinhood/trackRpc";
 import { setMintRpcIssueHandler } from "./robinhood/mintRpcAlerts";
 import {
   broadcastHtml,
@@ -39,6 +44,33 @@ import { setSlotRaceHandler } from "./robinhood/slotRace";
 
 /** Throttle LOST_RACE Telegram spam (one per contract every 2s). */
 const lostRaceTelegramAt = new Map<string, number>();
+
+async function withBootTimeout<T>(
+  label: string,
+  ms: number,
+  fn: () => Promise<T>
+): Promise<T | null> {
+  let timer: NodeJS.Timeout | undefined;
+  const work = fn().catch((err) => {
+    console.warn(
+      `[boot] ${label} failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return null;
+  });
+  try {
+    return await Promise.race([
+      work,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => {
+          console.warn(`[boot] ${label} timed out after ${ms}ms — continuing`);
+          resolve(null);
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 async function main(): Promise<void> {
   // Ensure relative paths / cwd issues never break state persistence under pm2
@@ -60,7 +92,26 @@ async function main(): Promise<void> {
     );
   }
 
-  try {
+  // Create Telegram bot early so a hung RPC never leaves you with "online" pm2
+  // but zero replies to /status. bot.start() still runs last (long-poll loop).
+  const bot = createTelegramBot();
+  console.log(
+    `[boot] Telegram token loaded (allowed chats: ${
+      config.allowedChatIds.size === 0
+        ? "ANY"
+        : [...config.allowedChatIds].join(",")
+    })`
+  );
+  const me = await withBootTimeout("telegram-getMe", 8_000, () => bot.api.getMe());
+  if (!me) {
+    console.error(
+      "[boot] Telegram getMe failed — check TELEGRAM_BOT_TOKEN and network egress to api.telegram.org"
+    );
+  } else {
+    console.log(`[boot] Telegram API ok — @${me.username} (id=${me.id})`);
+  }
+
+  await withBootTimeout("opensea-key", 12_000, async () => {
     await ensureOpenSeaApiKey();
     const os = getOpenSeaKeyStatus();
     console.log(
@@ -93,42 +144,58 @@ async function main(): Promise<void> {
         }
       }
     }
-  } catch (err) {
+  });
+
+  // Never call raw provider.getNetwork() — ethers retries forever when Alchemy
+  // is FULL and Telegram never reaches bot.start().
+  let trackChainId: bigint | null = null;
+  const trackNet = await withBootTimeout("track-rpc", 10_000, async () => {
+    try {
+      return await withTrackRpc((p) => p.getNetwork());
+    } catch (err) {
+      if (hasTrackBackup()) {
+        console.warn(
+          `[boot] track primary failed — forcing Chainstack backup: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        await forceTrackBackup(
+          `boot: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return await withTrackRpc((p) => p.getNetwork());
+      }
+      throw err;
+    }
+  });
+  if (trackNet) {
+    trackChainId = trackNet.chainId;
+    if (trackNet.chainId !== config.chain.chainId) {
+      console.warn(
+        `Warning: track RPC chainId=${trackNet.chainId} (expected ${config.chain.chainId} for ${config.chain.name})`
+      );
+    }
+  } else {
     console.warn(
-      `OpenSea API key auto-fetch failed: ${err instanceof Error ? err.message : String(err)}`
-    );
-    console.warn(
-      "Tip: SeaDrop public free mints work without OpenSea API. Or: curl -s -X POST https://api.opensea.io/api/v2/auth/keys"
+      "[boot] track RPC unreachable — starting Telegram anyway (detection may lag until RPC recovers)"
     );
   }
 
-  const trackProvider = getProvider();
   const mintProvider = getMintProvider();
-  const network = await trackProvider.getNetwork();
-  if (network.chainId !== config.chain.chainId) {
-    console.warn(
-      `Warning: track RPC chainId=${network.chainId} (expected ${config.chain.chainId} for ${config.chain.name})`
-    );
-  }
-  try {
+  await withBootTimeout("mint-rpc", 8_000, async () => {
     const mintNet = await mintProvider.getNetwork();
     if (mintNet.chainId !== config.chain.chainId) {
       console.warn(
         `Warning: mint RPC chainId=${mintNet.chainId} (expected ${config.chain.chainId} for ${config.chain.name})`
       );
     }
-  } catch (err) {
-    console.warn(
-      `Warning: mint RPC check failed: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
+    return mintNet;
+  });
 
-  const bot = createTelegramBot();
   const wallets = getAllMintWallets();
   const wallet = wallets[0] ?? getWallet();
 
   console.log(
-    `RPC ready (chain=${config.chain.key} chainId=${network.chainId})`
+    `RPC ready (chain=${config.chain.key} chainId=${trackChainId ?? "?"})`
   );
   console.log(`Track RPC (Alchemy): ${rpcLabels.track}`);
   console.log(`Mint  RPC (Chainstack): ${rpcLabels.mint}`);
@@ -219,23 +286,44 @@ async function main(): Promise<void> {
   };
 
   // Fastest → confirmed backups. Shared rememberTxFast dedupes across paths.
-  const stopPending = await startPendingWatcher(onPurchase, onTrackRpcIssue);
-  const stopBlockscout = await startBlockscoutWatcher(onPurchase);
-  const stopTipScan = await startTipScanWatcher(onPurchase, onTrackRpcIssue);
+  // Never let a watcher hang block Telegram — each has its own timeout.
+  const stopPending =
+    (await withBootTimeout("pending-watcher", 5_000, () =>
+      startPendingWatcher(onPurchase, onTrackRpcIssue)
+    )) ?? (() => undefined);
+  const stopBlockscout =
+    (await withBootTimeout("blockscout-watcher", 5_000, () =>
+      startBlockscoutWatcher(onPurchase)
+    )) ?? (() => undefined);
+  const stopTipScan =
+    (await withBootTimeout("tip-scan-watcher", 5_000, () =>
+      startTipScanWatcher(onPurchase, onTrackRpcIssue)
+    )) ?? (() => undefined);
 
-  const stopMonitor = await startMonitor(onPurchase, onTrackRpcIssue);
+  const stopMonitor =
+    (await withBootTimeout("monitor", 5_000, () =>
+      startMonitor(onPurchase, onTrackRpcIssue)
+    )) ?? (() => undefined);
 
-  const stopPrices = await startPriceWatcher(async (alert) => {
-    console.log(
-      `[price] ${alert.item.label} ${alert.oldPrice} -> ${alert.newPrice} (${alert.changePct?.toFixed(2)}%)`
-    );
-    await broadcastPriceAlert(bot, alert);
-  });
+  const stopPrices =
+    (await withBootTimeout("price-watcher", 5_000, () =>
+      startPriceWatcher(async (alert) => {
+        console.log(
+          `[price] ${alert.item.label} ${alert.oldPrice} -> ${alert.newPrice} (${alert.changePct?.toFixed(2)}%)`
+        );
+        await broadcastPriceAlert(bot, alert);
+      })
+    )) ?? (() => undefined);
 
-  const stopSchedules = await startMintScheduler(async (job, result) => {
-    console.log(`[schedule] ${job.id} ${result.success ? "ok" : "fail"}: ${result.reason}`);
-    await broadcastScheduleResult(bot, job, result);
-  });
+  const stopSchedules =
+    (await withBootTimeout("mint-scheduler", 5_000, () =>
+      startMintScheduler(async (job, result) => {
+        console.log(
+          `[schedule] ${job.id} ${result.success ? "ok" : "fail"}: ${result.reason}`
+        );
+        await broadcastScheduleResult(bot, job, result);
+      })
+    )) ?? (() => undefined);
 
   const stopHeartbeat = startHeartbeat(async (html) => {
     await broadcastHtml(bot, html);
@@ -272,9 +360,10 @@ async function main(): Promise<void> {
   process.once("SIGINT", () => shutdown("SIGINT"));
   process.once("SIGTERM", () => shutdown("SIGTERM"));
 
+  console.log("[boot] starting Telegram long-poll (bot.start)…");
   await bot.start({
     onStart: (info) => {
-      console.log(`Telegram bot @${info.username} is online`);
+      console.log(`Telegram bot @${info.username} is online — send /status`);
     },
   });
 }
