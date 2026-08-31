@@ -90,6 +90,8 @@ export function classifyRpcError(err: unknown): RpcIssue | null {
   return null;
 }
 
+export { isNonArchiveRpcError, NON_ARCHIVE_LOOKBACK_BLOCKS } from "./rpcArchive";
+
 /** @deprecated use classifyRpcError */
 export function classifyTrackRpcError(err: unknown): RpcIssue | null {
   return classifyRpcError(err);

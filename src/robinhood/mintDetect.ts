@@ -186,7 +186,14 @@ export function valueFromWei(raw?: string | bigint | null): number {
 }
 
 export function httpRpcToWss(rpcUrl: string): string {
-  return rpcUrl
-    .replace(/^https:/i, "wss:")
-    .replace(/^http:/i, "ws:");
+  const url = (rpcUrl || "").trim();
+  if (!url) return url;
+  // Chainstack HTTP: https://host/<token> → WSS: wss://host/ws/<token>
+  if (/chainstack\.com/i.test(url)) {
+    return url
+      .replace(/^https:/i, "wss:")
+      .replace(/^http:/i, "ws:")
+      .replace(/^(wss?:\/\/[^/?#]+)\/(?!ws\/)([^/?#]+)(\?.*)?$/i, "$1/ws/$2$3");
+  }
+  return url.replace(/^https:/i, "wss:").replace(/^http:/i, "ws:");
 }

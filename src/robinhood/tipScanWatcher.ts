@@ -7,7 +7,11 @@ import {
   isMintLikeCalldata,
   valueFromWei,
 } from "./mintDetect";
-import { classifyTrackRpcError } from "./rpcHealth";
+import {
+  classifyTrackRpcError,
+  isNonArchiveRpcError,
+  NON_ARCHIVE_LOOKBACK_BLOCKS,
+} from "./rpcHealth";
 import { withTrackRpc } from "./trackRpc";
 
 /**
@@ -52,6 +56,14 @@ export async function startTipScanWatcher(
       }
       if (tip <= lastBlock) return;
 
+      // Stay inside non-archive window (Chainstack Developer ~100 blocks).
+      if (tip - lastBlock > NON_ARCHIVE_LOOKBACK_BLOCKS) {
+        console.warn(
+          `[tip-scan] cursor ${lastBlock} too far behind tip ${tip} — jumping`
+        );
+        lastBlock = Math.max(0, tip - 3);
+      }
+
       const from = lastBlock + 1;
       const to = tip - from > 3 ? from + 3 : tip;
       const buyers = new Map(
@@ -62,9 +74,19 @@ export async function startTipScanWatcher(
       );
 
       for (let bn = from; bn <= to; bn++) {
-        const block = await withTrackRpc((p) =>
-          p.getBlock(bn, true)
-        );
+        let block;
+        try {
+          block = await withTrackRpc((p) => p.getBlock(bn, true));
+        } catch (err) {
+          if (isNonArchiveRpcError(err)) {
+            console.warn(
+              `[tip-scan] non-archive skip block ${bn} — jumping to tip`
+            );
+            lastBlock = tip;
+            break;
+          }
+          throw err;
+        }
         if (!block?.prefetchedTransactions?.length) continue;
 
         for (const tx of block.prefetchedTransactions) {

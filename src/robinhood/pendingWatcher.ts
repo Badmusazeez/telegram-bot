@@ -11,24 +11,38 @@ import { config } from "../config";
 import { classifyTrackRpcError } from "./rpcHealth";
 
 /**
- * Alchemy pending-tx watcher — fires BEFORE block confirmation when supported.
- * Falls back silently if WSS / alchemy_pendingTransactions is unavailable.
+ * Pending-tx watcher — fires BEFORE block confirmation when supported.
+ * Prefers Chainstack backup WSS when Alchemy track is primary (CU exhaustion).
+ * Alchemy → alchemy_pendingTransactions; others → newPendingTransactions + getTx.
  */
 export async function startPendingWatcher(
   onPurchase: PurchaseHandler,
   onRpcIssue?: RpcIssueHandler
 ): Promise<() => void> {
-  const wssUrl = httpRpcToWss(config.trackRpcUrl);
+  // Prefer Chainstack backup WSS when Alchemy is the primary track RPC —
+  // Alchemy pending dies when monthly CU is full.
+  const httpUrl =
+    config.trackBackupRpcUrl && /alchemy\.com/i.test(config.trackRpcUrl)
+      ? config.trackBackupRpcUrl
+      : config.trackRpcUrl;
+  const wssUrl = httpRpcToWss(httpUrl);
+  const useAlchemyPending = /alchemy\.com/i.test(httpUrl);
   if (!wssUrl.startsWith("ws")) {
-    console.warn("[pending] no WSS URL derived from TRACK_RPC_URL — skipped");
+    console.warn("[pending] no WSS URL derived from track RPC — skipped");
     return () => undefined;
   }
+  console.log(
+    `[pending] WSS via ${/chainstack/i.test(httpUrl) ? "Chainstack backup" : "primary track RPC"}` +
+      ` (${useAlchemyPending ? "alchemy_pendingTransactions" : "newPendingTransactions"})`
+  );
 
   let stopped = false;
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   let subId: string | null = null;
+  let rpcId = 2;
+  const pendingHashFetches = new Set<string>();
 
   const fire = (purchase: NftPurchase) => {
     void (async () => {
@@ -125,21 +139,32 @@ export async function startPendingWatcher(
       if (addresses.length === 0) {
         console.warn("[pending] no tracked wallets yet — waiting");
       }
-      const payload = {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_subscribe",
-        params: [
-          "alchemy_pendingTransactions",
-          {
-            fromAddress: addresses.length ? addresses : undefined,
-            hashesOnly: false,
-          },
-        ],
-      };
+      const payload = useAlchemyPending
+        ? {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_subscribe",
+            params: [
+              "alchemy_pendingTransactions",
+              {
+                fromAddress: addresses.length ? addresses : undefined,
+                hashesOnly: false,
+              },
+            ],
+          }
+        : {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_subscribe",
+            params: ["newPendingTransactions"],
+          };
       ws.send(JSON.stringify(payload));
       console.log(
-        `[pending] subscribed alchemy_pendingTransactions for ${addresses.length} wallet(s) via WSS`
+        `[pending] subscribed ${
+          useAlchemyPending
+            ? "alchemy_pendingTransactions"
+            : "newPendingTransactions"
+        } for ${addresses.length} wallet(s) via WSS`
       );
 
       pingTimer = setInterval(() => {
@@ -153,11 +178,29 @@ export async function startPendingWatcher(
       }, 25_000);
     };
 
+    const fetchPendingByHash = (hash: string) => {
+      if (stopped || !ws || ws.readyState !== WebSocket.OPEN) return;
+      const h = hash.toLowerCase();
+      if (!h || pendingHashFetches.has(h) || pendingHashFetches.size > 40) return;
+      pendingHashFetches.add(h);
+      const id = rpcId++;
+      ws.send(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method: "eth_getTransactionByHash",
+          params: [h],
+        })
+      );
+      // Drop from in-flight set shortly even if no reply (avoid leak).
+      setTimeout(() => pendingHashFetches.delete(h), 8_000);
+    };
+
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(String(ev.data)) as {
           id?: number;
-          result?: string;
+          result?: unknown;
           method?: string;
           params?: { subscription?: string; result?: unknown };
           error?: { message?: string };
@@ -172,6 +215,24 @@ export async function startPendingWatcher(
           subId = msg.result;
           return;
         }
+        // Chainstack path: eth_getTransactionByHash replies
+        if (
+          !useAlchemyPending &&
+          typeof msg.id === "number" &&
+          msg.id >= 2 &&
+          msg.result &&
+          typeof msg.result === "object"
+        ) {
+          const tx = msg.result as {
+            hash?: string;
+            from?: string;
+            to?: string;
+            input?: string;
+            value?: string;
+          };
+          if (tx.hash) handlePendingTx(tx);
+          return;
+        }
         if (msg.method === "eth_subscription" && msg.params?.result) {
           const result = msg.params.result;
           if (typeof result === "object" && result && "hash" in result) {
@@ -184,6 +245,12 @@ export async function startPendingWatcher(
                 value?: string;
               }
             );
+          } else if (
+            !useAlchemyPending &&
+            typeof result === "string" &&
+            result.startsWith("0x")
+          ) {
+            fetchPendingByHash(result);
           }
         }
       } catch {

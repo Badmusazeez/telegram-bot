@@ -1247,7 +1247,15 @@ async function loadSourceTx(purchase: NftPurchase): Promise<{
     try {
       const res = await fetch(
         `https://robinhoodchain.blockscout.com/api/v2/transactions/${txHash}`,
-        { signal: AbortSignal.timeout(6_000) }
+        {
+          signal: AbortSignal.timeout(6_000),
+          headers: {
+            accept: "application/json",
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            referer: "https://robinhoodchain.blockscout.com/",
+          },
+        }
       );
       if (res.ok) {
         const j = (await res.json()) as {

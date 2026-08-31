@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it, beforeEach } from "node:test";
 import {
   classifyMintCalldata,
+  httpRpcToWss,
   isMintLikeCalldata,
   NON_MINT_SELECTORS,
 } from "./mintDetect";
@@ -114,6 +115,30 @@ describe("classifyMintCalldata", () => {
       { acceptUnknownZeroValue: true }
     );
     assert.equal(c.isMint, false);
+  });
+});
+
+describe("non-archive RPC + Chainstack WSS", () => {
+  it("detects Chainstack archive plan errors", async () => {
+    const { isNonArchiveRpcError } = await import("./rpcArchive");
+    assert.equal(
+      isNonArchiveRpcError(
+        new Error(
+          "Archive, Debug and Trace requests are not available on your current plan"
+        )
+      ),
+      true
+    );
+    assert.equal(isNonArchiveRpcError(new Error("execution reverted")), false);
+  });
+
+  it("maps Chainstack HTTP URL to /ws/ path", () => {
+    assert.equal(
+      httpRpcToWss(
+        "https://robinhood-mainnet.core.chainstack.com/0de02611a620b584f19ab104aed415b4"
+      ),
+      "wss://robinhood-mainnet.core.chainstack.com/ws/0de02611a620b584f19ab104aed415b4"
+    );
   });
 });
 

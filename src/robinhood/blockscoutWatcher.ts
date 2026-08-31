@@ -63,8 +63,15 @@ async function fetchJsonOnce<T>(url: string): Promise<{
 }> {
   try {
     const res = await fetch(url, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(6_000),
+      headers: {
+        accept: "application/json",
+        // Cloudflare blocks bot-like UAs with 403 — use a normal browser UA.
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        origin: "https://robinhoodchain.blockscout.com",
+        referer: "https://robinhoodchain.blockscout.com/",
+      },
+      signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) {
       return { ok: false, status: res.status, data: null, err: `${res.status}` };

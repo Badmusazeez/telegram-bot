@@ -8,7 +8,7 @@ import {
 } from "../store/state";
 import type { NftPurchase } from "../types";
 import { marketplaceName } from "./marketplaces";
-import { classifyTrackRpcError, type TrackRpcIssue } from "./rpcHealth";
+import { classifyTrackRpcError, isNonArchiveRpcError, NON_ARCHIVE_LOOKBACK_BLOCKS, type TrackRpcIssue } from "./rpcHealth";
 import { withTrackRpc } from "./trackRpc";
 
 const ERC721_IFACE = new Interface([
@@ -164,6 +164,10 @@ async function logsForTrackedChunk(
       );
     } catch (err) {
       lastErr = err;
+      // Non-archive plans fail every retry for old ranges — fail fast.
+      if (isNonArchiveRpcError(err)) {
+        throw err instanceof Error ? err : new Error(String(err));
+      }
       const msg = err instanceof Error ? err.message : String(err);
       if (
         (msg.includes("10 block") || /block range/i.test(msg)) &&
@@ -247,20 +251,34 @@ export async function scanForPurchases(
   // Leave 1 block cushion — tip block logs can still be incomplete on some RPCs.
   const tip = Math.max(0, latest - 1);
 
+  // Chainstack Developer (non-archive) only serves ~100 recent blocks for
+  // getLogs. If our cursor is further behind, jump into the live window or
+  // we spin forever on "Archive… not available on your current plan".
+  const minLiveFrom = Math.max(0, tip - NON_ARCHIVE_LOOKBACK_BLOCKS);
+
   let fromBlock = state.lastProcessedBlock
     ? state.lastProcessedBlock + 1
-    : Math.max(0, tip - config.lookbackBlocks);
+    : minLiveFrom;
+
+  if (fromBlock < minLiveFrom) {
+    console.warn(
+      `[monitor] cursor ${fromBlock} is outside non-archive window — jumping to ${minLiveFrom} (tip ${tip})`
+    );
+    fromBlock = minLiveFrom;
+  }
 
   if (fromBlock > tip) {
     return [];
   }
 
   /**
-   * NEVER jump the cursor to the tip (that permanently skips mints).
-   * Robinhood ≈ 10 blocks/sec — only advance through a bounded window per tick
-   * and leave the rest for the next poll.
+   * NEVER jump the cursor past unscanned live blocks.
+   * Robinhood ≈ 10 blocks/sec — only advance through a bounded window per tick.
    */
-  const maxScan = Math.max(50, config.chain.maxScanBlocks);
+  const maxScan = Math.min(
+    Math.max(50, config.chain.maxScanBlocks),
+    NON_ARCHIVE_LOOKBACK_BLOCKS
+  );
   const toBlock = Math.min(tip, fromBlock + maxScan - 1);
 
   const buyers = state.trackedWallets.map((w) => w.address.toLowerCase());
@@ -278,7 +296,17 @@ export async function scanForPurchases(
     if (issue && onRpcIssue) {
       await onRpcIssue(issue);
     }
-    // Do not advance cursor — retry same window.
+    // Archive plan errors: skip dead history and resume near tip next tick.
+    if (isNonArchiveRpcError(err)) {
+      const jumpTo = Math.max(0, tip - Math.floor(NON_ARCHIVE_LOOKBACK_BLOCKS / 2));
+      console.warn(
+        `[monitor] non-archive RPC — advancing cursor ${fromBlock} → ${jumpTo}`
+      );
+      await updateState((s) => {
+        s.lastProcessedBlock = jumpTo;
+      });
+    }
+    // Otherwise do not advance — retry same window.
     return [];
   }
 
