@@ -4,5 +4,6 @@ dist/
 data/state.json
 data/mint-wallets.json
 data/opensea-api-key.json
+data/bot-stats.json
 *.log
 .DS_Store

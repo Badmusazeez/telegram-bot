@@ -8,7 +8,7 @@ import {
 } from "../store/state";
 import type { NftPurchase } from "../types";
 import { marketplaceName } from "./marketplaces";
-import { classifyTrackRpcError, type TrackRpcIssue } from "./rpcHealth";
+import { classifyTrackRpcError, isNonArchiveRpcError, NON_ARCHIVE_LOOKBACK_BLOCKS, type TrackRpcIssue } from "./rpcHealth";
 import { withTrackRpc } from "./trackRpc";
 
 const ERC721_IFACE = new Interface([
@@ -164,6 +164,10 @@ async function logsForTrackedChunk(
       );
     } catch (err) {
       lastErr = err;
+      // Non-archive plans fail every retry for old ranges — fail fast.
+      if (isNonArchiveRpcError(err)) {
+        throw err instanceof Error ? err : new Error(String(err));
+      }
       const msg = err instanceof Error ? err.message : String(err);
       if (
         (msg.includes("10 block") || /block range/i.test(msg)) &&
@@ -180,15 +184,22 @@ async function logsForTrackedChunk(
         (/query returned more than|too many|response size|payload/i.test(msg) ||
           msg.includes("413"))
       ) {
-        const parts = await Promise.all(
-          buyerTopics.map((t) => logsForTrackedChunk(fromBlock, toBlock, [t]))
-        );
-        return parts.flat();
+        const parts: Log[] = [];
+        for (const t of buyerTopics) {
+          parts.push(
+            ...(await logsForTrackedChunk(fromBlock, toBlock, [t]))
+          );
+        }
+        return parts;
       }
+      const rateLimited = /429|rate limit|capacity|too many requests/i.test(
+        msg
+      );
       console.warn(
         `[monitor] getLogs retry ${attempt}/3 blocks ${fromBlock}-${toBlock}: ${msg}`
       );
-      await sleep(400 * attempt);
+      // Back off hard on Alchemy 429 — Blockscout watcher still detects mints.
+      await sleep(rateLimited ? 2_500 * attempt : 500 * attempt);
     }
   }
 
@@ -210,13 +221,9 @@ async function logsForTrackedWallets(
     ranges.push({ start, end: Math.min(toBlock, start + chunkSize - 1) });
   }
 
-  const concurrency = 4;
-  for (let i = 0; i < ranges.length; i += concurrency) {
-    const batch = ranges.slice(i, i + concurrency);
-    const parts = await Promise.all(
-      batch.map((r) => logsForTrackedChunk(r.start, r.end, buyerTopics))
-    );
-    for (const part of parts) all.push(...part);
+  // Sequential chunks — parallel getLogs burns Alchemy CU and triggers 429s.
+  for (const r of ranges) {
+    all.push(...(await logsForTrackedChunk(r.start, r.end, buyerTopics)));
   }
 
   return all;
@@ -244,20 +251,34 @@ export async function scanForPurchases(
   // Leave 1 block cushion — tip block logs can still be incomplete on some RPCs.
   const tip = Math.max(0, latest - 1);
 
+  // Chainstack Developer (non-archive) only serves ~100 recent blocks for
+  // getLogs. If our cursor is further behind, jump into the live window or
+  // we spin forever on "Archive… not available on your current plan".
+  const minLiveFrom = Math.max(0, tip - NON_ARCHIVE_LOOKBACK_BLOCKS);
+
   let fromBlock = state.lastProcessedBlock
     ? state.lastProcessedBlock + 1
-    : Math.max(0, tip - config.lookbackBlocks);
+    : minLiveFrom;
+
+  if (fromBlock < minLiveFrom) {
+    console.warn(
+      `[monitor] cursor ${fromBlock} is outside non-archive window — jumping to ${minLiveFrom} (tip ${tip})`
+    );
+    fromBlock = minLiveFrom;
+  }
 
   if (fromBlock > tip) {
     return [];
   }
 
   /**
-   * NEVER jump the cursor to the tip (that permanently skips mints).
-   * Robinhood ≈ 10 blocks/sec — only advance through a bounded window per tick
-   * and leave the rest for the next poll.
+   * NEVER jump the cursor past unscanned live blocks.
+   * Robinhood ≈ 10 blocks/sec — only advance through a bounded window per tick.
    */
-  const maxScan = Math.max(50, config.chain.maxScanBlocks);
+  const maxScan = Math.min(
+    Math.max(50, config.chain.maxScanBlocks),
+    NON_ARCHIVE_LOOKBACK_BLOCKS
+  );
   const toBlock = Math.min(tip, fromBlock + maxScan - 1);
 
   const buyers = state.trackedWallets.map((w) => w.address.toLowerCase());
@@ -275,7 +296,17 @@ export async function scanForPurchases(
     if (issue && onRpcIssue) {
       await onRpcIssue(issue);
     }
-    // Do not advance cursor — retry same window.
+    // Archive plan errors: skip dead history and resume near tip next tick.
+    if (isNonArchiveRpcError(err)) {
+      const jumpTo = Math.max(0, tip - Math.floor(NON_ARCHIVE_LOOKBACK_BLOCKS / 2));
+      console.warn(
+        `[monitor] non-archive RPC — advancing cursor ${fromBlock} → ${jumpTo}`
+      );
+      await updateState((s) => {
+        s.lastProcessedBlock = jumpTo;
+      });
+    }
+    // Otherwise do not advance — retry same window.
     return [];
   }
 
@@ -285,15 +316,13 @@ export async function scanForPurchases(
     string,
     { valueRobinhood: number; marketplace?: string }
   >();
+  /** One free-mint signal per source tx (not per token). */
+  const freeMintTxSeen = new Set<string>();
 
   for (const log of logs) {
     const decoded = decodeTransfer(log);
     if (!decoded) continue;
     if (!buyerSet.has(decoded.to)) continue;
-
-    const dedupeKey = `${log.transactionHash}:${decoded.contract}:${decoded.tokenId}`;
-    const isNew = rememberTxFast(dedupeKey);
-    if (!isNew) continue;
 
     const txKey = log.transactionHash.toLowerCase();
     let valued = valueCache.get(txKey);
@@ -308,6 +337,18 @@ export async function scanForPurchases(
 
     if (state.freeMintsOnly && !isFreeMint) {
       continue;
+    }
+
+    if (isFreeMint) {
+      // Align with Blockscout dedupe — one copy attempt per mint tx.
+      const mintKey = `${txKey}:${decoded.contract}:mint`;
+      if (freeMintTxSeen.has(mintKey) || !rememberTxFast(mintKey)) {
+        continue;
+      }
+      freeMintTxSeen.add(mintKey);
+    } else {
+      const dedupeKey = `${log.transactionHash}:${decoded.contract}:${decoded.tokenId}`;
+      if (!rememberTxFast(dedupeKey)) continue;
     }
 
     purchases.push({
@@ -354,26 +395,20 @@ export async function startMonitor(
 ): Promise<() => void> {
   let stopped = false;
   let scanning = false;
-  /** Handlers run in background so mint/Telegram never block the next scan. */
-  let handleTail: Promise<void> = Promise.resolve();
-
+  /** Handlers run in parallel so one mint never blocks another. */
   const enqueuePurchases = (purchases: NftPurchase[]) => {
     for (const purchase of purchases) {
-      handleTail = handleTail
-        .then(async () => {
-          if (stopped) return;
-          try {
-            await onPurchase(purchase);
-          } catch (err) {
-            console.error(
-              `[monitor] handler failed for ${purchase.txHash}:`,
-              err instanceof Error ? err.message : err
-            );
-          }
-        })
-        .catch(() => {
-          // keep queue alive
-        });
+      void (async () => {
+        if (stopped) return;
+        try {
+          await onPurchase(purchase);
+        } catch (err) {
+          console.error(
+            `[monitor] handler failed for ${purchase.txHash}:`,
+            err instanceof Error ? err.message : err
+          );
+        }
+      })();
     }
   };
 
@@ -399,7 +434,8 @@ export async function startMonitor(
     }
   };
 
-  await tick();
+  // Non-blocking first tick — Blockscout already covers live detection.
+  void tick();
   // Catch up faster when behind: poll often; scan itself is the rate limiter.
   const timer = setInterval(() => {
     void tick();

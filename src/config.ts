@@ -15,13 +15,35 @@ const schema = z.object({
   /** Primary tracker RPC (Alchemy). */
   ROBINHOOD_RPC_URL: z.string().optional().default(""),
   TRACK_RPC_URL: z.string().optional().default(""),
-  /** Optional backup tracker RPC. Leave empty for Alchemy-only. */
+  /** Optional backup tracker RPC. */
   TRACK_RPC_BACKUP_URL: z.string().optional().default(""),
-  /** Mint / send-tx RPC (Alchemy). Falls back to tracker RPC if empty. */
+  /** Mint / send-tx RPC (Chainstack). Falls back to tracker RPC if empty. */
   MINT_RPC_URL: z.string().optional().default(""),
-  /** Optional mint backup RPC. Leave empty for Alchemy-only. */
+  /** Optional mint backup RPC. */
   MINT_RPC_BACKUP_URL: z.string().optional().default(""),
   ALCHEMY_API_KEY: z.string().optional().default(""),
+  /** Alchemy Admin API access key (Usage API) — for exact CU % reports. */
+  ALCHEMY_ADMIN_KEY: z.string().optional().default(""),
+  /** Optional monthly CU ceiling when Admin API returns monthToDate without usageLimit. */
+  ALCHEMY_MONTHLY_CU_LIMIT: z
+    .string()
+    .optional()
+    .default("30000000")
+    .transform((v) => Number(v)),
+  /** Chainstack Platform API key — for exact RU % reports. */
+  CHAINSTACK_API_KEY: z.string().optional().default(""),
+  /** Monthly RU quota for Chainstack plan (Developer free = 3000000). */
+  CHAINSTACK_MONTHLY_RU_LIMIT: z
+    .string()
+    .optional()
+    .default("3000000")
+    .transform((v) => Number(v)),
+  /** How often to Telegram RPC quota % (default 6h). */
+  RPC_QUOTA_INTERVAL_MS: z
+    .string()
+    .optional()
+    .default(String(6 * 60 * 60 * 1000))
+    .transform((v) => Number(v)),
   COPY_ENABLED: z
     .string()
     .optional()
@@ -53,13 +75,15 @@ const schema = z.object({
   MAX_MINT_GAS_LIMIT: z
     .string()
     .optional()
-    .default("1500000")
+    // Absolute safety ceiling for eth_estimateGas (not a blind send gasLimit).
+    // Allows legitimate complex SeaDrop/multicall max-mints (~1.2M) with margin.
+    .default("2500000")
     .transform((v) => Number(v)),
   /** Always try this many (or stage wallet_limit if lower) on free mints. */
   MAX_MINT_QUANTITY: z
     .string()
     .optional()
-    .default("50")
+    .default("100")
     .transform((v) => Number(v)),
   POLL_INTERVAL_MS: z.string().optional().default(""),
   LOOKBACK_BLOCKS: z.string().optional().default(""),
@@ -97,13 +121,55 @@ const trackRpcUrl =
   env.TRACK_RPC_URL.trim() ||
   env.ROBINHOOD_RPC_URL.trim() ||
   chain.defaultRpcUrl;
-const trackBackupRpcUrl = env.TRACK_RPC_BACKUP_URL.trim();
 const mintRpcUrl = env.MINT_RPC_URL.trim() || trackRpcUrl;
 const mintBackupCandidate = env.MINT_RPC_BACKUP_URL.trim();
 const mintBackupRpcUrl =
   mintBackupCandidate && mintBackupCandidate !== mintRpcUrl
     ? mintBackupCandidate
     : "";
+
+/** When track is Alchemy and mint is Chainstack, default track backup → mint RPC. */
+function looksLikeAlchemy(url: string): boolean {
+  return /alchemy\.com/i.test(url);
+}
+function looksLikeChainstack(url: string): boolean {
+  return /chainstack\.com/i.test(url);
+}
+
+/** Dedicated Chainstack node for Alchemy track failover (full URL + access token). */
+const DEFAULT_CHAINSTACK_TRACK_BACKUP =
+  "https://robinhood-mainnet.core.chainstack.com/0de02611a620b584f19ab104aed415b4";
+
+const trackBackupExplicit = env.TRACK_RPC_BACKUP_URL.trim();
+const trackBackupRpcUrl = (() => {
+  if (trackBackupExplicit && trackBackupExplicit !== trackRpcUrl) {
+    return trackBackupExplicit;
+  }
+  if (
+    !trackBackupExplicit &&
+    looksLikeAlchemy(trackRpcUrl) &&
+    trackRpcUrl !== DEFAULT_CHAINSTACK_TRACK_BACKUP
+  ) {
+    console.log(
+      "[config] TRACK_RPC_BACKUP_URL defaulted to Chainstack track backup for Alchemy quota failover"
+    );
+    return DEFAULT_CHAINSTACK_TRACK_BACKUP;
+  }
+  if (
+    !trackBackupExplicit &&
+    looksLikeAlchemy(trackRpcUrl) &&
+    looksLikeChainstack(mintRpcUrl) &&
+    mintRpcUrl !== trackRpcUrl
+  ) {
+    console.log(
+      "[config] TRACK_RPC_BACKUP_URL defaulted to MINT_RPC_URL (Chainstack) for Alchemy quota failover"
+    );
+    return mintRpcUrl;
+  }
+  return trackBackupExplicit && trackBackupExplicit !== trackRpcUrl
+    ? trackBackupExplicit
+    : "";
+})();
 
 if (!trackRpcUrl.startsWith("http")) {
   throw new Error("TRACK_RPC_URL / ROBINHOOD_RPC_URL must be a valid RPC URL");
@@ -117,7 +183,7 @@ if (!mintRpcUrl.startsWith("http")) {
 if (mintBackupCandidate && !mintBackupCandidate.startsWith("http")) {
   throw new Error("MINT_RPC_BACKUP_URL must be a valid RPC URL");
 }
-if (trackBackupRpcUrl && trackBackupRpcUrl === trackRpcUrl) {
+if (trackBackupExplicit && trackBackupExplicit === trackRpcUrl) {
   console.warn(
     "[config] TRACK_RPC_BACKUP_URL equals TRACK_RPC_URL — failover disabled"
   );
@@ -178,6 +244,23 @@ export const config = {
     extractAlchemyKey(mintRpcUrl) ||
     extractAlchemyKey(trackBackupRpcUrl) ||
     "",
+  alchemyAdminKey: env.ALCHEMY_ADMIN_KEY.trim(),
+  alchemyMonthlyCuLimit:
+    Number.isFinite(env.ALCHEMY_MONTHLY_CU_LIMIT) &&
+    env.ALCHEMY_MONTHLY_CU_LIMIT > 0
+      ? Math.floor(env.ALCHEMY_MONTHLY_CU_LIMIT)
+      : 30_000_000,
+  chainstackApiKey: env.CHAINSTACK_API_KEY.trim(),
+  chainstackMonthlyRuLimit:
+    Number.isFinite(env.CHAINSTACK_MONTHLY_RU_LIMIT) &&
+    env.CHAINSTACK_MONTHLY_RU_LIMIT > 0
+      ? Math.floor(env.CHAINSTACK_MONTHLY_RU_LIMIT)
+      : 3_000_000,
+  rpcQuotaIntervalMs:
+    Number.isFinite(env.RPC_QUOTA_INTERVAL_MS) &&
+    env.RPC_QUOTA_INTERVAL_MS >= 60_000
+      ? env.RPC_QUOTA_INTERVAL_MS
+      : 6 * 60 * 60 * 1000,
   copyEnabled: env.COPY_ENABLED,
   dryRun: env.DRY_RUN,
   freeMintsOnly: env.FREE_MINTS_ONLY,
@@ -189,7 +272,7 @@ export const config = {
   maxMintQuantity:
     Number.isFinite(env.MAX_MINT_QUANTITY) && env.MAX_MINT_QUANTITY > 0
       ? Math.min(Math.floor(env.MAX_MINT_QUANTITY), 100)
-      : 50,
+      : 100,
   pollIntervalMs: numberOr(env.POLL_INTERVAL_MS, chain.defaultPollIntervalMs),
   lookbackBlocks: numberOr(env.LOOKBACK_BLOCKS, chain.defaultLookbackBlocks),
   allowedCollections: splitCsv(env.ALLOWED_COLLECTIONS).map((a) =>

@@ -1,12 +1,45 @@
-export type TrackRpcIssue = {
-  kind: "quota" | "rate_limit" | "unavailable";
+import { config } from "../config";
+
+export type RpcIssueKind = "quota" | "rate_limit" | "unavailable";
+
+export type RpcIssue = {
+  kind: RpcIssueKind;
   message: string;
 };
 
-/** Detect Alchemy / RPC "full" or throttled tracker errors. */
-export function classifyTrackRpcError(err: unknown): TrackRpcIssue | null {
-  const msg = err instanceof Error ? err.message : String(err);
+export type RpcRole = "track" | "mint";
+
+/**
+ * Strip raw tx hex dumps before classifying — otherwise substrings like
+ * "402" inside RLP/calldata falsely look like HTTP 402 / quota errors.
+ */
+function sanitizeRpcMessage(raw: string): string {
+  return raw
+    .replace(/transaction=["']?0x[0-9a-fA-F]+["']?/gi, "transaction=<hex>")
+    .replace(/data=["']?0x[0-9a-fA-F]+["']?/gi, "data=<hex>")
+    .replace(/0x[0-9a-fA-F]{64,}/g, "0x…")
+    .slice(0, 400);
+}
+
+/** Detect Alchemy / Chainstack / RPC "full" or throttled errors. */
+export function classifyRpcError(err: unknown): RpcIssue | null {
+  const raw = err instanceof Error ? err.message : String(err);
+  const msg = sanitizeRpcMessage(raw);
   const lower = msg.toLowerCase();
+
+  // Normal mint/tx failures — never treat as RPC quota.
+  if (
+    lower.includes("nonce has already been used") ||
+    lower.includes("nonce too low") ||
+    lower.includes("already known") ||
+    lower.includes("replacement transaction underpriced") ||
+    lower.includes("execution reverted") ||
+    /\breverted\b/.test(lower) ||
+    lower.includes("insufficient funds") ||
+    lower.includes("intrinsic gas too low")
+  ) {
+    return null;
+  }
 
   // Don't treat the known 10-block free-tier range rule as "RPC full".
   if (lower.includes("10 block") || lower.includes("block range")) {
@@ -22,50 +55,94 @@ export function classifyTrackRpcError(err: unknown): TrackRpcIssue | null {
     lower.includes("capacity limit") ||
     lower.includes("quota") ||
     lower.includes("payment required") ||
-    lower.includes("402")
+    /\bhttp\s*402\b/.test(lower) ||
+    /\bstatus(?:\s*code)?\s*402\b/.test(lower) ||
+    lower.includes("out of credits") ||
+    lower.includes("no credits") ||
+    (lower.includes("insufficient funds for") && lower.includes("plan"))
   ) {
-    return { kind: "quota", message: msg.slice(0, 280) };
+    return { kind: "quota", message: msg.slice(0, 220) };
   }
 
   if (
-    lower.includes("429") ||
+    /\b429\b/.test(lower) ||
     lower.includes("too many requests") ||
     lower.includes("rate limit") ||
     lower.includes("rate exceeded") ||
-    lower.includes("request limit")
+    lower.includes("request limit") ||
+    lower.includes("limit exceeded") ||
+    lower.includes("over rate") ||
+    lower.includes("try_again_in")
   ) {
-    return { kind: "rate_limit", message: msg.slice(0, 280) };
+    return { kind: "rate_limit", message: msg.slice(0, 220) };
   }
 
   if (
-    lower.includes("503") ||
-    lower.includes("502") ||
+    /\b503\b/.test(lower) ||
+    /\b502\b/.test(lower) ||
     lower.includes("overloaded") ||
     lower.includes("temporarily unavailable") ||
     lower.includes("service unavailable")
   ) {
-    return { kind: "unavailable", message: msg.slice(0, 280) };
+    return { kind: "unavailable", message: msg.slice(0, 220) };
   }
 
   return null;
 }
 
-export function formatTrackRpcIssue(issue: TrackRpcIssue): string {
-  const title =
-    issue.kind === "quota"
-      ? "Tracker RPC quota / capacity full"
-      : issue.kind === "rate_limit"
-        ? "Tracker RPC rate-limited"
-        : "Tracker RPC unavailable";
+export { isNonArchiveRpcError, NON_ARCHIVE_LOOKBACK_BLOCKS } from "./rpcArchive";
+
+/** @deprecated use classifyRpcError */
+export function classifyTrackRpcError(err: unknown): RpcIssue | null {
+  return classifyRpcError(err);
+}
+
+export type TrackRpcIssue = RpcIssue;
+
+function providerNameForRole(role: RpcRole): "ALCHEMY" | "CHAINSTACK" | "RPC" {
+  const url =
+    role === "track" ? config.trackRpcUrl : config.mintRpcUrl;
+  const lower = url.toLowerCase();
+  if (lower.includes("alchemy")) return "ALCHEMY";
+  if (lower.includes("chainstack")) return "CHAINSTACK";
+  return "RPC";
+}
+
+/**
+ * Clear Telegram alert when Alchemy / Chainstack hits its limit.
+ * Example: CHANGE YOUR ALCHEMY RPC, IT HAS REACHED ITS LIMIT
+ */
+export function formatRpcLimitAlert(
+  role: RpcRole,
+  issue: RpcIssue
+): string {
+  const provider = providerNameForRole(role);
+  const roleLabel = role === "track" ? "TRACKING (Alchemy)" : "MINTING (Chainstack)";
 
   return [
-    `<b>⚠️ ${title}</b>`,
+    `<b>🚨 CHANGE YOUR ${provider} RPC, IT HAS REACHED ITS LIMIT</b>`,
     ``,
-    `Whale tracking may miss free mints until this clears.`,
+    `<b>Which:</b> ${roleLabel}`,
+    `<b>Problem:</b> ${
+      issue.kind === "quota"
+        ? "quota / capacity / CU limit"
+        : issue.kind === "rate_limit"
+          ? "rate limit (429)"
+          : "RPC unavailable / overloaded"
+    }`,
     `<b>Detail:</b> <code>${escapeHtml(issue.message)}</code>`,
     ``,
-    `If TRACK_RPC_BACKUP_URL is set, bot will failover then return to Alchemy when healthy.`,
+    role === "track"
+      ? `Update <code>TRACK_RPC_URL</code> / <code>ALCHEMY_API_KEY</code> in VPS <code>.env</code> (or rely on <code>TRACK_RPC_BACKUP_URL</code> Chainstack failover), then: <code>pm2 restart robinhood-nft-bot --update-env</code>`
+      : `Update <code>MINT_RPC_URL</code> in VPS <code>.env</code>, then: <code>pm2 restart robinhood-nft-bot --update-env</code>`,
+    ``,
+    `Blockscout detection may still catch free mints while you swap the RPC.`,
   ].join("\n");
+}
+
+/** @deprecated use formatRpcLimitAlert("track", issue) */
+export function formatTrackRpcIssue(issue: RpcIssue): string {
+  return formatRpcLimitAlert("track", issue);
 }
 
 export function formatTrackRpcSwitch(event: {

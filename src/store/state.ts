@@ -227,6 +227,14 @@ function newScheduleId(): string {
   return `sch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function nextScheduleNumber(): number {
+  const nums = state.scheduledMints
+    .map((j) => j.scheduleNumber || 0)
+    .filter((n) => n > 0);
+  const max = nums.length > 0 ? Math.max(...nums) : 200;
+  return max + 1;
+}
+
 export async function addScheduledMint(params: {
   label: string;
   to: string;
@@ -234,9 +242,15 @@ export async function addScheduledMint(params: {
   executeAt: Date;
   sourceTxHash?: string;
   openSeaSlug?: string;
+  sharpMode?: boolean;
+  leadMs?: number;
+  stageLabel?: string;
+  stageType?: string;
+  stagesSummary?: string;
 }): Promise<ScheduledMint> {
   const job: ScheduledMint = {
     id: newScheduleId(),
+    scheduleNumber: nextScheduleNumber(),
     label: params.label,
     to: normalizeAddress(params.to),
     data: params.data.toLowerCase(),
@@ -245,6 +259,11 @@ export async function addScheduledMint(params: {
     status: "pending",
     sourceTxHash: params.sourceTxHash?.toLowerCase(),
     openSeaSlug: params.openSeaSlug?.trim() || undefined,
+    sharpMode: params.sharpMode ?? true,
+    leadMs: params.leadMs ?? 30_000,
+    stageLabel: params.stageLabel,
+    stageType: params.stageType,
+    stagesSummary: params.stagesSummary,
   };
   state.scheduledMints.push(job);
   await persistState();

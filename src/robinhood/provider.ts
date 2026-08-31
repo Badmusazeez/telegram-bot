@@ -12,7 +12,7 @@ export function getProvider(): JsonRpcProvider {
   return getTrackProvider();
 }
 
-/** Mint RPC — send txs / gas estimates (Alchemy). */
+/** Mint RPC — send txs / gas estimates (Chainstack). */
 export function getMintProvider(): JsonRpcProvider {
   if (!mintProvider) {
     mintProvider = new JsonRpcProvider(config.mintRpcUrl);
@@ -57,38 +57,22 @@ export async function getNativeBalance(address: string): Promise<string> {
 
 /** Minimum native balance required to attempt a mint (covers gas). */
 const MIN_MINT_BALANCE_WEI = 50_000_000_000_000n; // 0.00005 ETH
+void MIN_MINT_BALANCE_WEI;
 
 /**
- * Return only wallets with enough RH gas to mint.
- * Empty wallets are skipped so they don't waste the mint window.
+ * Return wallets with enough RH gas to mint.
+ * Uses shared readiness cache (one balance pass per mint window).
+ * On RPC balance errors, KEEP the wallet (optimistic).
  */
 export async function getFundedMintWallets(
   wallets?: Wallet[]
 ): Promise<{ funded: Wallet[]; skippedEmpty: number }> {
   const all = wallets ?? getAllMintWallets();
-  const provider = getMintProvider();
-  const funded: Wallet[] = [];
-  let skippedEmpty = 0;
-
-  const balances = await Promise.all(
-    all.map(async (w) => {
-      try {
-        const bal = await provider.getBalance(w.address);
-        return { w, bal };
-      } catch {
-        return { w, bal: 0n };
-      }
-    })
+  const { getFundedFromReadiness } = await import("./walletReady");
+  const { funded, skippedEmpty } = await getFundedFromReadiness(all);
+  console.log(
+    `[wallets] funded=${funded.length}/${all.length} skippedEmpty=${skippedEmpty}`
   );
-
-  for (const { w, bal } of balances) {
-    if (bal >= MIN_MINT_BALANCE_WEI) {
-      funded.push(w);
-    } else {
-      skippedEmpty += 1;
-    }
-  }
-
   return { funded, skippedEmpty };
 }
 

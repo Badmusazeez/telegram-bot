@@ -1,6 +1,5 @@
 import { config } from "../config";
-import { describeWallet } from "../robinhood/monitor";
-import { shortAddress } from "../store/state";
+import { getState, shortAddress } from "../store/state";
 import type {
   CopyResult,
   NftPurchase,
@@ -16,10 +15,20 @@ function escHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+/** Label for a tracked whale wallet (e.g. "davin"), else short address. */
+export function trackedWalletLabel(address: string): string {
+  const normalized = address.toLowerCase();
+  const wallet = getState().trackedWallets.find(
+    (w) => w.address.toLowerCase() === normalized
+  );
+  return wallet?.label?.trim() || shortAddress(normalized);
+}
+
 export function formatPurchaseAlert(
   purchase: NftPurchase,
   copy: CopyResult
 ): string {
+  const label = trackedWalletLabel(purchase.buyer);
   const title = purchase.tokenName || `Token #${purchase.tokenId}`;
   const collection = purchase.collectionName || shortAddress(purchase.contract);
   const kind = purchase.isFreeMint
@@ -29,27 +38,39 @@ export function formatPurchaseAlert(
       : "TRANSFER";
   const txUrl = config.chain.explorerTxUrl(purchase.txHash);
   const openSeaUrl = `https://opensea.io/assets/${config.chain.openseaChain}/${purchase.contract}/${purchase.tokenId}`;
+  const buyerUrl = config.chain.explorerAddressUrl(purchase.buyer);
+  const contractUrl = config.chain.explorerAddressUrl(purchase.contract);
+
   const copyTx = copy.txHash
     ? `\n<b>Our tx:</b> <a href="${config.chain.explorerTxUrl(copy.txHash)}">explorer</a>`
     : "";
 
+  const reason = escHtml((copy.reason || "").slice(0, 280));
   const mintLine =
     copy.success && !copy.dryRun
-      ? `<b>Auto-mint:</b> ✅ MINTED — ${escHtml(copy.reason)}${copyTx}`
+      ? `<b>Auto-mint:</b> ✅ MINTED — ${reason}${copyTx}`
       : copy.dryRun
-        ? `<b>Auto-mint:</b> ⚠️ ${escHtml(copy.reason)}`
-        : `<b>Auto-mint:</b> ❌ ${escHtml(copy.reason)}${copyTx}`;
+        ? `<b>Auto-mint:</b> ⚠️ ${reason}`
+        : `<b>Auto-mint:</b> ❌ ${reason}${copyTx}`;
+
+  const via =
+    purchase.marketplace === "free-mint"
+      ? "free mint"
+      : escHtml(purchase.marketplace || "on-chain");
 
   return [
-    `<b>robinhood-nft-copy-bot alert</b>`,
-    `<b>Chain:</b> ${escHtml(config.chain.name)}`,
+    `<b>Mint Detected (${escHtml(label)})</b>`,
     `<b>Type:</b> ${kind}`,
     ``,
-    `<b>Wallet:</b> ${escHtml(describeWallet(purchase.buyer))}`,
+    `<b>Tracked wallet:</b> <b>${escHtml(label)}</b>`,
+    `👛 <code>${escHtml(purchase.buyer)}</code>`,
+    `<a href="${buyerUrl}">view wallet</a>`,
+    ``,
     `<b>Collection:</b> ${escHtml(collection)}`,
     `<b>Item:</b> ${escHtml(title)}`,
-    `<b>Token ID:</b> <code>${escHtml(purchase.tokenId)}</code>`,
-    `<b>Contract:</b> <code>${escHtml(purchase.contract)}</code>`,
+    `📄 <b>Contract:</b> <code>${escHtml(purchase.contract)}</code>`,
+    `<a href="${contractUrl}">view contract</a>`,
+    `<b>Via:</b> ${via}`,
     `<b>Whale tx:</b> <a href="${txUrl}">explorer</a>`,
     `<b>OpenSea:</b> <a href="${openSeaUrl}">view</a>`,
     ``,
@@ -101,6 +122,11 @@ export function formatStatus(params: {
     success: boolean;
     reason: string;
   } | null;
+  blockscout?: {
+    lastOkAt: string | null;
+    lastError: string | null;
+    lastHitTx: string | null;
+  };
 }): string {
   const lag =
     params.tipBlock && params.lastBlock
@@ -118,12 +144,16 @@ export function formatStatus(params: {
     `Price watches: <b>${params.watchedPrices}</b>`,
     `Scheduled mints: <b>${params.pendingSchedules}</b> pending`,
     `Price alerts: <b>${params.priceAlertsEnabled ? "ON" : "OFF"}</b> (≥${params.priceAlertPct}%)`,
+    `Detect: Alchemy getLogs + Blockscout transfers`,
     `Auto-mint: <b>${params.copyEnabled ? "ON" : "OFF"}</b>`,
     `Dry run: <b>${params.dryRun ? "ON" : "OFF"}</b>`,
     `Max buy (ignored for free mints): <b>${params.maxBuyRobinhood}</b>`,
     `Last scanned: <code>${params.lastBlock || "—"}</code>`,
     params.tipBlock
       ? `Chain tip: <code>${params.tipBlock}</code>${lag !== null ? ` (behind <b>${lag}</b> blocks)` : ""}`
+      : "",
+    params.blockscout
+      ? `Blockscout: <b>${params.blockscout.lastOkAt ? "ok" : "—"}</b>${params.blockscout.lastOkAt ? ` <code>${escHtml(params.blockscout.lastOkAt)}</code>` : ""}${params.blockscout.lastHitTx ? `\nLast BS hit: <code>${escHtml(params.blockscout.lastHitTx.slice(0, 18))}…</code>` : ""}${params.blockscout.lastError ? `\nBS err: <code>${escHtml(params.blockscout.lastError.slice(0, 120))}</code>` : ""}`
       : "",
     lastCopyLine,
     params.walletAddress
@@ -139,13 +169,16 @@ export function helpText(): string {
     `<b>robinhood-nft-copy-bot</b>`,
     `Active chain: <b>${escHtml(config.chain.name)}</b>`,
     ``,
-    `Tracks whale wallets and auto-copies <b>free mints only</b> on Robinhood Chain (OpenSea / Scatter / contract / site). Always mints <b>MAX</b> qty allowed. Paid buys are skipped.`,
+    `Tracks whale wallets and auto-copies <b>free mints</b> from OpenSea, mint websites, and public contracts. Always tries <b>MAX</b> qty. Paid buys are skipped.`,
     `Also watches minted NFT / collection prices and alerts on Telegram.`,
     ``,
     `<b>Commands</b>`,
     `/start — register this chat for alerts`,
     `/help — show this help`,
     `/status — bot + wallet status`,
+    `/stats — monthly stats (Mints OK / failed / Disbursements / Sweeps / Tracks)`,
+    `/stats 2026-08 — stats for a specific month`,
+    `/rpcquota — Alchemy + Chainstack RPC limit % (also auto every 6h)`,
     `/wallets — list tracked wallets`,
     `/track &lt;address&gt; [label] — track a wallet`,
     `/untrack &lt;address&gt; — stop tracking`,
@@ -165,28 +198,47 @@ export function helpText(): string {
     `/pricepct &lt;percent&gt; — alert when price moves by this %`,
     `/openseakey — show OpenSea API key status`,
     `/openseakey refresh — force new instant key (7-day)`,
-    `/schedulemint &lt;opensea-url&gt; — auto schedule from OpenSea Drop time`,
+    `/schedulemint &lt;opensea-url&gt; — detect all stages, arm public/general at exact time (sharp mode)`,
     `/schedulemint &lt;when&gt; &lt;opensea-url&gt; — manual time + OpenSea link`,
     `/schedulemint &lt;when&gt; &lt;contract&gt; &lt;mint|mint1|0x...&gt; — advanced`,
+    `/mintslug &lt;opensea-url|slug&gt; [secs] — MAX-mint OpenSea drop now (optional sequential interval)`,
+    `/claim &lt;opensea-url|slug&gt; [secs] — free claim 1 NFT/wallet · default 10s between wallets`,
+    `/snipe &lt;collection|0x|url&gt; [secs] — cadence snipe (1 winner/interval, mintFree, all wallets)`,
     `/schedulemintfromtx &lt;txHash&gt; &lt;when&gt; — copy whale mint calldata`,
     `/schedules — list scheduled mints`,
     `/cancelschedule &lt;id&gt; — cancel a pending schedule`,
+    ``,
+    `<i>Sharp mode:</i> T-30s REAL pre-arm (OpenSea+gas) → exact timer → SEND-ONLY burst. Keep the bot running.`,
+    `<i>Slot race:</i> when a contract exposes nextFreeAt/startTime/etc., the bot arms wallets and bursts at window open.`,
   ].join("\n");
 }
 
 export function formatScheduleCreated(job: ScheduledMint): string {
+  const n = job.scheduleNumber ?? "?";
+  const leadSec = Math.round((job.leadMs ?? 30_000) / 1000);
+  const sharp = job.sharpMode !== false;
   return [
-    `<b>Mint scheduled</b>`,
-    `<b>ID:</b> <code>${escHtml(job.id)}</code>`,
-    `<b>Label:</b> ${escHtml(job.label)}`,
-    `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
-    `<b>To:</b> <code>${escHtml(job.to)}</code>`,
-    `<b>Data:</b> <code>${escHtml(job.data.slice(0, 66))}${job.data.length > 66 ? "…" : ""}</code>`,
-    job.sourceTxHash
-      ? `<b>Source tx:</b> <a href="${config.chain.explorerTxUrl(job.sourceTxHash)}">explorer</a>`
+    `<b>📅 Scheduled #${n}</b>`,
+    `<b>${escHtml(job.label)}</b>`,
+    job.openSeaSlug ? `<b>slug:</b> ${escHtml(job.openSeaSlug)}` : "",
+    `<b>Contract:</b> <code>${escHtml(job.to)}</code>`,
+    `<b>Keys:</b> all`,
+    sharp
+      ? `<b>T-${leadSec}s · sharp PRE-ARM → exact timer → SEND-ONLY burst</b>`
+      : `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
+    sharp ? `<b>Opens:</b> <code>${escHtml(job.executeAt)}</code>` : "",
+    job.stageLabel
+      ? `<b>Stage:</b> ${escHtml(job.stageLabel)}${
+          job.stageType ? ` (${escHtml(job.stageType)})` : ""
+        }`
       : "",
+    job.stagesSummary
+      ? `\n<b>Stages detected:</b>\n${escHtml(job.stagesSummary)}`
+      : "",
+    ``,
+    `<b>Keep the bot running.</b>`,
   ]
-    .filter(Boolean)
+    .filter((l) => l !== undefined && l !== "")
     .join("\n");
 }
 
@@ -203,5 +255,138 @@ export function formatScheduleResult(
     `<b>Label:</b> ${escHtml(job.label)}`,
     `<b>When:</b> <code>${escHtml(job.executeAt)}</code>`,
     `<b>Result:</b> ${escHtml(result.reason)}${tx}`,
+  ].join("\n");
+}
+
+export function formatSlotRaceEvent(event: {
+  phase: string;
+  contract: string;
+  slotSource?: string;
+  opensAtMs?: number | null;
+  wallet?: string;
+  strategy?: string;
+  txHash?: string;
+  reason?: string;
+  walletsArmed?: number;
+  detail?: string;
+  gasLimit?: string;
+  rpcLabel?: string;
+  mintType?: string;
+  failKind?: string;
+  latencyMs?: number;
+}): string {
+  const contractLine = `<b>Contract:</b> <code>${escHtml(event.contract)}</code>`;
+  const launchLine = event.opensAtMs
+    ? `<b>Launch:</b> <code>${escHtml(new Date(event.opensAtMs).toISOString())}</code>${
+        event.slotSource ? ` (${escHtml(event.slotSource)})` : ""
+      }`
+    : event.slotSource
+      ? `<b>Slot source:</b> ${escHtml(event.slotSource)}`
+      : "";
+
+  switch (event.phase) {
+    case "WINDOW_OPEN":
+      return [
+        `<b>🚀 MINT WINDOW OPEN</b>`,
+        contractLine,
+        event.mintType ? `<b>Mint type:</b> ${escHtml(event.mintType)}` : "",
+        launchLine,
+        event.walletsArmed != null
+          ? `<b>Wallets ready:</b> ${event.walletsArmed}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "BURST":
+      return [
+        `<b>📤 SUBMITTED</b>`,
+        contractLine,
+        event.wallet
+          ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
+          : "",
+        event.strategy ? `<b>Strategy:</b> ${escHtml(event.strategy)}` : "",
+        event.gasLimit ? `<b>Gas:</b> <code>${escHtml(event.gasLimit)}</code>` : "",
+        event.rpcLabel ? `<b>RPC:</b> ${escHtml(event.rpcLabel)}` : "",
+        event.detail ? escHtml(event.detail) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "SUCCESS":
+      return [
+        `<b>✅ SUCCESS</b>`,
+        event.wallet
+          ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
+          : "",
+        event.txHash
+          ? `<b>TX:</b> <a href="${config.chain.explorerTxUrl(event.txHash)}">explorer</a>`
+          : "",
+        event.latencyMs != null
+          ? `<b>Latency:</b> ${event.latencyMs}ms`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "LOST_RACE":
+      return [
+        `<b>❌ LOST RACE</b>`,
+        event.wallet
+          ? `<b>Wallet:</b> <code>${escHtml(event.wallet)}</code>`
+          : "",
+        `<b>Reason:</b> ${escHtml(
+          event.failKind
+            ? `${event.failKind}: ${event.reason || "slot consumed"}`
+            : event.reason || "another transaction consumed the slot"
+        )}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "NEXT_SLOT":
+      return [
+        `<b>⏱ NEXT OPPORTUNITY</b>`,
+        contractLine,
+        event.opensAtMs
+          ? `<b>Time:</b> <code>${escHtml(new Date(event.opensAtMs).toISOString())}</code>`
+          : "",
+        event.detail ? escHtml(event.detail) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "ARMED":
+      return [
+        `<b>⚡ SNIPER ARMED</b>`,
+        contractLine,
+        event.mintType ? `<b>Mint type:</b> ${escHtml(event.mintType)}` : "",
+        launchLine,
+        event.walletsArmed != null
+          ? `<b>Wallets ready:</b> ${event.walletsArmed}`
+          : "",
+        event.latencyMs != null
+          ? `<b>Prep latency:</b> ${event.latencyMs}ms`
+          : "",
+        event.detail ? escHtml(event.detail) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    default:
+      return [
+        `<b>Slot ${escHtml(event.phase)}</b>`,
+        contractLine,
+        event.detail ? escHtml(event.detail) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+  }
+}
+
+/** Paid mint detected — never auto-spend unless freeMintsOnly is off AND value path enabled. */
+export function formatPaidMintDetected(params: {
+  contract: string;
+  priceEth: string;
+}): string {
+  return [
+    `<b>PAID MINT DETECTED</b>`,
+    `<b>Price:</b> ${escHtml(params.priceEth)} ETH`,
+    `<b>Contract:</b> <code>${escHtml(params.contract)}</code>`,
+    `<b>Status:</b> NOT SUBMITTED`,
   ].join("\n");
 }

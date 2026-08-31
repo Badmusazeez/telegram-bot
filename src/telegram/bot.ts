@@ -11,6 +11,12 @@ import {
 } from "../robinhood/openseaAuth";
 import { resolveScheduleFromOpenSeaLink } from "../robinhood/openseaDrop";
 import { parseOpenSeaUrl } from "../robinhood/openseaUrl";
+import { mintOpenSeaSlugNow, parseSlugMintCommandArgs, type SlugMintResult } from "../robinhood/slugMint";
+import {
+  parseSnipeCommandArgs,
+  runCadenceSnipe,
+  type CadenceSnipeResult,
+} from "../robinhood/cadenceSnipe";
 import {
   getAllMintWallets,
   getNativeBalance,
@@ -43,7 +49,18 @@ import {
   formatStatus,
   helpText,
 } from "./formatter";
+import {
+  getMonthlyStats,
+  formatMonthlyStatsPlain,
+  currentMonthKey,
+  loadBotStats,
+} from "../store/botStats";
 import { getLastCopySummary } from "../robinhood/copyExecutor";
+import { getBlockscoutStatus } from "../robinhood/blockscoutWatcher";
+import {
+  collectRpcQuotaReport,
+  formatRpcQuotaReport,
+} from "../robinhood/rpcQuota";
 import type {
   CopyResult,
   NftPurchase,
@@ -91,6 +108,35 @@ export function createTelegramBot(): Bot {
 
   bot.command("help", async (ctx) => {
     await ctx.reply(helpText(), { parse_mode: "HTML" });
+  });
+
+  bot.command("stats", async (ctx) => {
+    await registerNotifyChat(chatId(ctx));
+    try {
+      await loadBotStats();
+      const raw = (ctx.match || "").trim();
+      // Optional: /stats 2026-08
+      const month =
+        /^\d{4}-\d{2}$/.test(raw) ? raw : currentMonthKey();
+      const stats = await getMonthlyStats(month);
+      await ctx.reply(formatMonthlyStatsPlain(stats));
+    } catch (err) {
+      await ctx.reply(
+        `Stats failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  });
+
+  bot.command("rpcquota", async (ctx) => {
+    await ctx.reply("Checking Alchemy + Chainstack RPC quotas…");
+    try {
+      const report = await collectRpcQuotaReport();
+      await ctx.reply(formatRpcQuotaReport(report), { parse_mode: "HTML" });
+    } catch (err) {
+      await ctx.reply(
+        `Quota check failed: ${err instanceof Error ? err.message : err}`
+      );
+    }
   });
 
   bot.command("status", async (ctx) => {
@@ -146,6 +192,7 @@ export function createTelegramBot(): Bot {
         walletAddress,
         balanceRobinhood,
         lastCopy: getLastCopySummary(),
+        blockscout: getBlockscoutStatus(),
       }),
       { parse_mode: "HTML" }
     );
@@ -277,7 +324,7 @@ export function createTelegramBot(): Bot {
     const wallet = await addTrackedWallet(address, label);
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      `Tracking <b>${escape(wallet.label)}</b>\n<code>${wallet.address}</code>`,
+      `👀 <b>Tracking ${escape(wallet.label)}</b>\n<code>${wallet.address}</code>\n\nYou'll get <b>Mint Detected (${escape(wallet.label)})</b> when this wallet free-mints.`,
       { parse_mode: "HTML" }
     );
   });
@@ -522,28 +569,23 @@ export function createTelegramBot(): Bot {
     // Link-only: /schedulemint <opensea-url>
     if (parts.length === 1 && parseOpenSeaUrl(parts[0])) {
       try {
-        await ctx.reply("Looking up OpenSea drop schedule…");
+        await ctx.reply(`⌛ Scheduling ${parts[0]}…`);
         const resolved = await resolveScheduleFromOpenSeaLink(parts[0]);
         const job = await addScheduledMint({
-          label: `opensea ${resolved.name} (${resolved.stageLabel})`,
+          label: resolved.name || resolved.slug,
           to: resolved.contract,
           // Placeholder; rebuilt from OpenSea Drops API at fire time.
           data: "0x",
           executeAt: resolved.executeAt,
           openSeaSlug: resolved.slug,
+          sharpMode: true,
+          leadMs: resolved.leadMs,
+          stageLabel: resolved.stageLabel,
+          stageType: resolved.stageType,
+          stagesSummary: resolved.stagesSummary,
         });
         await registerNotifyChat(chatId(ctx));
-        await ctx.reply(
-          [
-            formatScheduleCreated(job),
-            ``,
-            `<b>OpenSea drop:</b> <a href="${escape(resolved.openSeaUrl)}">${escape(resolved.name)}</a>`,
-            `<b>Stage:</b> ${escape(resolved.stageLabel)} (${escape(resolved.stageType)})`,
-            `<b>Time source:</b> OpenSea ${resolved.isLive ? "(live now → mint ASAP)" : "next stage start"}`,
-            `<i>Calldata will be built from OpenSea at mint time. Allowlist stages may still revert.</i>`,
-          ].join("\n"),
-          { parse_mode: "HTML" }
-        );
+        await ctx.reply(formatScheduleCreated(job), { parse_mode: "HTML" });
       } catch (err) {
         await ctx.reply(
           `❌ ${err instanceof Error ? err.message : String(err)}`
@@ -581,25 +623,32 @@ export function createTelegramBot(): Bot {
       try {
         const resolved = await resolveScheduleFromOpenSeaLink(targetRaw);
         const job = await addScheduledMint({
-          label: `opensea ${resolved.name} (manual time)`,
+          label: resolved.name || resolved.slug,
           to: resolved.contract,
           data: "0x",
           executeAt: when,
           openSeaSlug: resolved.slug,
+          sharpMode: true,
+          leadMs: resolved.leadMs,
+          stageLabel: resolved.stageLabel,
+          stageType: resolved.stageType,
+          stagesSummary: resolved.stagesSummary,
         });
         await registerNotifyChat(chatId(ctx));
         await ctx.reply(
           [
             formatScheduleCreated(job),
             ``,
-            `<b>OpenSea drop:</b> ${escape(resolved.name)}`,
-            `<b>Note:</b> using your manual time (OpenSea stage was ${escape(resolved.executeAt.toISOString())}).`,
+            `<i>Manual time override (OpenSea stage was ${escape(resolved.executeAt.toISOString())}).</i>`,
           ].join("\n"),
           { parse_mode: "HTML" }
         );
       } catch (err) {
         // Fallback: contract from asset URL + mint1
-        if (openSea.kind === "asset" && openSea.contract) {
+        if (
+          (openSea.kind === "asset" || openSea.kind === "contract") &&
+          openSea.contract
+        ) {
           const wallet = getWallet();
           const data = resolveCalldata(dataRaw, wallet?.address || openSea.contract);
           if (!data) {
@@ -701,6 +750,167 @@ export function createTelegramBot(): Bot {
     }
   });
 
+  bot.command("mintslug", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (!raw) {
+      await ctx.reply(
+        [
+          "MAX-mint an OpenSea drop now on all mint wallets:",
+          "",
+          "/mintslug https://opensea.io/assets/robinhood/0xdcd9…",
+          "/mintslug https://opensea.io/collection/your-drop",
+          "/mintslug 0xdcd9bc67dcd09bb37ef92175267741be973a7dbe",
+          "/mintslug your-drop 10   ← sequential, 10s between wallets",
+          "",
+          "Uses OpenSea Drop API · free stages only · max_per_wallet.",
+          "Contract-only OpenSea links (no token id) = whole collection.",
+          "For 1 NFT/wallet @ interval, use /claim instead.",
+          "Respects /dryrun. Independent of /copy on|off.",
+        ].join("\n")
+      );
+      return;
+    }
+
+    const parsed = parseSlugMintCommandArgs(raw);
+    if (!parsed) {
+      await ctx.reply(
+        "Invalid input. Example:\n/mintslug https://opensea.io/collection/your-drop\n/mintslug your-drop 10"
+      );
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    const intervalSec = parsed.intervalSec;
+    const sequential = (intervalSec ?? 0) > 0;
+    await ctx.reply(
+      sequential
+        ? `Resolving OpenSea drop + MAX-mint sequential (${intervalSec}s between wallets)…`
+        : "Resolving OpenSea drop + minting MAX on all wallets…"
+    );
+
+    try {
+      const result = await mintOpenSeaSlugNow(parsed.target, {
+        mode: "max",
+        intervalSec: intervalSec ?? 0,
+        onProgress: sequential
+          ? async (line) => {
+              await ctx.reply(line).catch(() => undefined);
+            }
+          : undefined,
+      });
+      await replySlugMintResult(ctx, result, "Mintslug");
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("claim", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (!raw) {
+      await ctx.reply(
+        [
+          "Claim 1 free OpenSea NFT per mint wallet (sequential):",
+          "",
+          "/claim https://opensea.io/assets/robinhood/0xdcd9… 10",
+          "/claim 0xdcd9bc67dcd09bb37ef92175267741be973a7dbe 10",
+          "/claim https://opensea.io/collection/your-drop 10",
+          "/claim your-drop          ← defaults to 10s interval",
+          "",
+          "Contract-only links (…/assets/robinhood/0xContract) = collection.",
+          "Free OpenSea Drop stages only · 1 NFT/wallet · waits N seconds between wallets.",
+          "For cadence mints (1 winner / 10s like Wrong Bird): /snipe",
+          "Respects /dryrun. Independent of /copy on|off.",
+        ].join("\n")
+      );
+      return;
+    }
+
+    const parsed = parseSlugMintCommandArgs(raw);
+    if (!parsed) {
+      await ctx.reply(
+        [
+          "Invalid OpenSea URL/slug/contract.",
+          "",
+          "Examples:",
+          "• /claim https://opensea.io/assets/robinhood/0xdcd9… 10",
+          "• /claim 0xdcd9bc67dcd09bb37ef92175267741be973a7dbe 10",
+          "• /claim https://opensea.io/collection/<slug> 10",
+        ].join("\n")
+      );
+      return;
+    }
+
+    const intervalSec = parsed.intervalSec ?? 10;
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(
+      `Claiming free mint: 1 NFT/wallet · ${intervalSec}s between wallets · all funded keys…`
+    );
+
+    try {
+      const result = await mintOpenSeaSlugNow(parsed.target, {
+        mode: "claim",
+        intervalSec,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replySlugMintResult(ctx, result, "Claim");
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("snipe", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (!raw) {
+      await ctx.reply(
+        [
+          "Cadence snipe — 1 on-chain winner per interval, 1 NFT per wallet:",
+          "",
+          "/snipe https://opensea.io/collection/wrong-bird 10",
+          "/snipe wrong-bird 10",
+          "/snipe 0xeb00d52ef95ea6aef1a7dfdc16337053eeedf5e6 10",
+          "",
+          "Uses mintFree() · bursts all remaining wallets each window",
+          "until every funded wallet holds 1 (or rounds exhausted).",
+          "Respects /dryrun. Independent of /copy on|off.",
+        ].join("\n")
+      );
+      return;
+    }
+
+    const parsed = parseSnipeCommandArgs(raw);
+    if (!parsed) {
+      await ctx.reply(
+        "Invalid target. Example:\n/snipe https://opensea.io/collection/wrong-bird 10"
+      );
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(
+      `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · mintFree · all funded wallets…`
+    );
+
+    try {
+      const result = await runCadenceSnipe(parsed.target, {
+        intervalSec: parsed.intervalSec,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyCadenceSnipeResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
   bot.command("schedules", async (ctx) => {
     const list = getState().scheduledMints.slice(-20).reverse();
     if (list.length === 0) {
@@ -737,6 +947,114 @@ function escape(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+async function replySlugMintResult(
+  ctx: Context,
+  result: SlugMintResult,
+  title: string
+): Promise<void> {
+  const modeLabel =
+    result.mode === "claim"
+      ? "claim x1"
+      : `MAX x${result.quantityTarget}`;
+  const pace =
+    (result.intervalSec ?? 0) > 0
+      ? `sequential · ${result.intervalSec}s gap`
+      : "parallel";
+
+  const lines = [
+    result.success
+      ? result.dryRun
+        ? `<b>🧪 ${escape(title)} DRY RUN</b>`
+        : `<b>✅ ${escape(title)} DONE</b>`
+      : `<b>❌ ${escape(title)} FAILED</b>`,
+    ``,
+    `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
+    `<b>Slug:</b> <code>${escape(result.slug)}</code>`,
+    result.contract
+      ? `<b>Contract:</b> <code>${escape(result.contract)}</code>`
+      : "",
+    `<b>Stage:</b> ${escape(result.stageLabel)}`,
+    `<b>Mode:</b> ${escape(modeLabel)} · ${escape(pace)}`,
+    `<b>Target qty:</b> ${result.quantityTarget}`,
+    ``,
+    `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
+  ].filter(Boolean);
+
+  if (result.results.length > 0 && result.results.length <= 25) {
+    lines.push(``);
+    for (const r of result.results) {
+      if (r.ok && r.txHash) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> <a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a> x${r.quantity ?? "?"}`
+        );
+      } else if (r.ok) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> OK x${r.quantity ?? "?"}`
+        );
+      } else {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape((r.error || "fail").slice(0, 80))}`
+        );
+      }
+    }
+  } else if (result.results.length > 25) {
+    lines.push(
+      ``,
+      `<i>${result.results.length} wallet results (see mint result summary)</i>`
+    );
+  }
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
+}
+
+async function replyCadenceSnipeResult(
+  ctx: Context,
+  result: CadenceSnipeResult
+): Promise<void> {
+  const lines = [
+    result.success
+      ? result.dryRun
+        ? `<b>🧪 Snipe DRY RUN</b>`
+        : `<b>✅ Snipe DONE</b>`
+      : `<b>❌ Snipe FAILED</b>`,
+    ``,
+    `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
+    `<b>Slug:</b> <code>${escape(result.slug)}</code>`,
+    `<b>Contract:</b> <code>${escape(result.contract)}</code>`,
+    `<b>Calldata:</b> <code>${escape(result.calldata)}</code> (mintFree)`,
+    `<b>Cadence:</b> 1 winner / ${result.intervalSec}s · 1 NFT/wallet`,
+    ``,
+    `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
+  ];
+
+  if (result.results.length > 0 && result.results.length <= 25) {
+    lines.push(``);
+    for (const r of result.results) {
+      if (r.ok && r.txHash) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> <a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a>${r.round ? ` r${r.round}` : ""}`
+        );
+      } else if (r.ok) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> OK${r.round ? ` r${r.round}` : ""}${r.error ? ` (${escape(r.error.slice(0, 40))})` : ""}`
+        );
+      } else {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape((r.error || "fail").slice(0, 80))}`
+        );
+      }
+    }
+  }
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
 }
 
 export async function broadcastPurchase(
@@ -810,8 +1128,8 @@ export async function broadcastScheduleResult(
   }
 }
 
-/** Avoid spamming Telegram when Alchemy keeps returning quota errors. */
-const RPC_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
+/** Avoid spamming Telegram when RPC keeps returning quota errors. */
+const RPC_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 let lastRpcAlertAt = 0;
 let lastRpcAlertKind = "";
 
@@ -821,6 +1139,7 @@ export async function broadcastRpcAlert(
   kind = "quota"
 ): Promise<void> {
   const now = Date.now();
+  // Separate cooldowns per kind so Alchemy + Chainstack can both alert.
   if (kind === lastRpcAlertKind && now - lastRpcAlertAt < RPC_ALERT_COOLDOWN_MS) {
     return;
   }
@@ -841,6 +1160,26 @@ export async function broadcastRpcAlert(
       });
     } catch (err) {
       console.error(`[telegram] failed RPC alert to ${id}:`, err);
+    }
+  }
+}
+
+/** Unthrottled HTML broadcast (heartbeat / status pulses). */
+export async function broadcastHtml(bot: Bot, text: string): Promise<void> {
+  const state = getState();
+  const targets =
+    state.notifyChatIds.length > 0
+      ? state.notifyChatIds
+      : [...config.allowedChatIds];
+
+  for (const id of targets) {
+    try {
+      await bot.api.sendMessage(id, text, {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
+    } catch (err) {
+      console.error(`[telegram] failed broadcast to ${id}:`, err);
     }
   }
 }

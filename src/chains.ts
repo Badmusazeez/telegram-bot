@@ -25,20 +25,17 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     name: "Robinhood Chain",
     chainId: 4663n,
     defaultRpcUrl:
-      "https://robinhood-mainnet.g.alchemy.com/v2/alch_ld9vD3xYwfRF3obL8qWT-",
+      "https://robinhood-mainnet.g.alchemy.com/v2/alch_bymc1xWSRXHwBC-Db5qOg",
     explorerTxUrl: (tx) => `https://robinhoodchain.blockscout.com/tx/${tx}`,
     explorerAddressUrl: (addr) =>
       `https://robinhoodchain.blockscout.com/address/${addr}`,
     openseaChain: "robinhood",
     alchemyNftNetwork: "robinhood-mainnet",
-    // RH ≈ 100ms/block (~10 blk/s). Scan windows must stay ahead of the tip
-    // without JUMPING (jumping permanently skips mints). 2000 ≈ ~3+ min/tick.
-    maxScanBlocks: 2000,
+    // Blockscout is the live free-mint detector (1.5s). Alchemy is backup catch-up.
+    maxScanBlocks: 300,
     getLogsMaxBlocks: 10,
-    // Fresh start / restart lookback (~2 min).
-    defaultLookbackBlocks: 1200,
-    // Scan often; copy/Telegram no longer block the scan loop.
-    defaultPollIntervalMs: 2_500,
+    defaultLookbackBlocks: 600,
+    defaultPollIntervalMs: 4_000,
   },
 };
 

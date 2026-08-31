@@ -3,6 +3,7 @@ import { config } from "../config";
 import {
   ensureOpenSeaApiKey,
   getOpenSeaApiKey,
+  invalidateOpenSeaApiKey,
 } from "./openseaAuth";
 import {
   buildOpenSeaDropMintTx,
@@ -30,31 +31,59 @@ export function openSeaStageMaxPerWallet(
   return clampMaxPerWallet(stage?.max_per_wallet ?? hardMaxMintQuantity());
 }
 
+const slugCache = new Map<string, string>();
+
 async function resolveOpenSeaSlug(contract: string): Promise<string | null> {
-  try {
-    await ensureOpenSeaApiKey();
-  } catch {
-    return null;
-  }
-  const key = getOpenSeaApiKey();
-  if (!key) return null;
-  try {
-    const chain = config.chain.openseaChain;
-    const res = await fetch(
-      `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}`,
-      {
-        headers: {
-          accept: "application/json",
-          "x-api-key": key,
-        },
+  const key = contract.toLowerCase();
+  const cached = slugCache.get(key);
+  if (cached) return cached;
+
+  const tryOnce = async (): Promise<string | null> => {
+    try {
+      await ensureOpenSeaApiKey();
+    } catch {
+      return null;
+    }
+    const apiKey = getOpenSeaApiKey();
+    if (!apiKey) return null;
+    try {
+      const chain = config.chain.openseaChain;
+      const res = await fetch(
+        `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}`,
+        {
+          headers: {
+            accept: "application/json",
+            "x-api-key": apiKey,
+          },
+          signal: AbortSignal.timeout(8_000),
+        }
+      );
+      if (res.status === 401 || res.status === 403) {
+        invalidateOpenSeaApiKey(`slug HTTP ${res.status}`);
+        return null;
       }
-    );
-    if (!res.ok) return null;
-    const data = (await res.json()) as { collection?: string };
-    return data.collection || null;
-  } catch {
-    return null;
+      if (!res.ok) return null;
+      const data = (await res.json()) as { collection?: string };
+      if (data.collection) {
+        slugCache.set(key, data.collection);
+        return data.collection;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  let slug = await tryOnce();
+  if (!slug) {
+    try {
+      await ensureOpenSeaApiKey({ forceRefresh: true });
+    } catch {
+      return null;
+    }
+    slug = await tryOnce();
   }
+  return slug;
 }
 
 /** Build a live free OpenSea Drop mint at max_per_wallet for our minter. */
@@ -132,6 +161,7 @@ export async function prepareOpenSeaFreeMint(params: {
 
 const MINT_IFACE = new Interface([
   "function mint()",
+  "function mintFree()",
   "function mint(uint256 quantity)",
   "function publicMint(uint256 quantity)",
   "function claim(uint256 quantity)",
@@ -160,28 +190,28 @@ export function buildPublicMaxMintCandidates(params: {
   for (const q of qtys) {
     out.push({
       to: params.to,
-      data: MINT_IFACE.encodeFunctionData("mint", [BigInt(q)]),
+      data: MINT_IFACE.encodeFunctionData("mint(uint256)", [BigInt(q)]),
       valueWei: 0n,
       label: `mint(${q})`,
       quantity: q,
     });
     out.push({
       to: params.to,
-      data: MINT_IFACE.encodeFunctionData("publicMint", [BigInt(q)]),
+      data: MINT_IFACE.encodeFunctionData("publicMint(uint256)", [BigInt(q)]),
       valueWei: 0n,
       label: `publicMint(${q})`,
       quantity: q,
     });
     out.push({
       to: params.to,
-      data: MINT_IFACE.encodeFunctionData("claim", [BigInt(q)]),
+      data: MINT_IFACE.encodeFunctionData("claim(uint256)", [BigInt(q)]),
       valueWei: 0n,
       label: `claim(${q})`,
       quantity: q,
     });
     out.push({
       to: params.to,
-      data: MINT_IFACE.encodeFunctionData("mintTo", [
+      data: MINT_IFACE.encodeFunctionData("mintTo(address,uint256)", [
         params.minter,
         BigInt(q),
       ]),
@@ -193,7 +223,15 @@ export function buildPublicMaxMintCandidates(params: {
 
   out.push({
     to: params.to,
-    data: MINT_IFACE.encodeFunctionData("mint", []),
+    data: MINT_IFACE.encodeFunctionData("mintFree()", []),
+    valueWei: 0n,
+    label: "mintFree()",
+    quantity: 1,
+  });
+
+  out.push({
+    to: params.to,
+    data: MINT_IFACE.encodeFunctionData("mint()", []),
     valueWei: 0n,
     label: "mint()",
     quantity: 1,
@@ -202,12 +240,58 @@ export function buildPublicMaxMintCandidates(params: {
   return out;
 }
 
-/** If whale calldata is mint(uint256)-like, return quantity. */
+/** If whale calldata encodes a quantity, return it (SeaDrop-aware). */
 export function decodeWhaleMintQuantity(data: string): number | undefined {
   const raw = data.toLowerCase();
   if (raw.length < 10 + 64) return undefined;
-  const word = raw.slice(-64);
+  const sel = raw.slice(0, 10);
+
+  // SeaDrop mintPublic(nft, feeRecipient, minterIfNotPayer, quantity, ...)
+  // quantity is the 4th ABI word (index 3).
+  if (
+    (sel === "0x161ac21f" || sel === "0x9b4f3f25") &&
+    raw.length >= 10 + 64 * 4
+  ) {
+    try {
+      const word = raw.slice(10 + 64 * 3, 10 + 64 * 4);
+      const q = Number(BigInt(`0x${word}`));
+      if (Number.isFinite(q) && q >= 1 && q <= 100) return q;
+    } catch {
+      // fall through
+    }
+  }
+
+  // mint(uint256) / claim(uint256) — single arg
+  // mint(uint256,bytes32[]) Outlaws-style — quantity is first word
+  if (
+    raw.length === 10 + 64 ||
+    sel === "0xa0712d68" ||
+    sel === "0x2db11544" ||
+    sel === "0xba41b0c6"
+  ) {
+    try {
+      const word = raw.slice(10, 10 + 64);
+      const q = Number(BigInt(`0x${word}`));
+      if (Number.isFinite(q) && q >= 1 && q <= 100) return q;
+    } catch {
+      // ignore
+    }
+  }
+
+  // Scatter mint(auth, quantity, affiliate, signature) — quantity is 2nd word
+  if (sel === "0x4a21a2df" && raw.length >= 10 + 64 * 2) {
+    try {
+      const word = raw.slice(10 + 64, 10 + 64 * 2);
+      const q = Number(BigInt(`0x${word}`));
+      if (Number.isFinite(q) && q >= 1 && q <= 100) return q;
+    } catch {
+      // ignore
+    }
+  }
+
+  // Fallback: trailing word (many mint ABIs)
   try {
+    const word = raw.slice(-64);
     const q = Number(BigInt(`0x${word}`));
     if (Number.isFinite(q) && q >= 1 && q <= 100) return q;
   } catch {

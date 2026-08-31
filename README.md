@@ -95,6 +95,40 @@ Or paste full calldata hex from a whale mint tx.
 
 Keep `DRY_RUN=false` and `PRIVATE_KEY` set for live scheduled mints.
 
+## OpenSea claim / mintslug
+
+Free claim **1 NFT per wallet** with a wait between wallets (default **10s**):
+
+```text
+/claim https://opensea.io/assets/robinhood/0xdcd9bc67dcd09bb37ef92175267741be973a7dbe 10
+/claim 0xdcd9bc67dcd09bb37ef92175267741be973a7dbe 10
+/claim https://opensea.io/collection/your-drop 10
+/dryrun on    ← simulate first
+/dryrun off   ← then go live
+```
+
+MAX-mint (stage `max_per_wallet`) in parallel, or sequential with interval:
+
+```text
+/mintslug https://opensea.io/assets/robinhood/0xdcd9bc67dcd09bb37ef92175267741be973a7dbe
+/mintslug your-drop 10
+```
+
+Contract-only OpenSea links (`/assets/robinhood/0xContract`, no token id) are treated as the **whole collection**.
+
+## Cadence snipe (Wrong Bird etc.)
+
+For mints with **1 on-chain winner every N seconds** (`mintFree()`), use `/snipe` — not `/claim`:
+
+```text
+/dryrun on
+/snipe https://opensea.io/collection/wrong-bird 10
+/dryrun off
+/snipe https://opensea.io/collection/wrong-bird 10
+```
+
+Bursts all remaining wallets each window until every funded wallet holds 1 NFT.
+
 ## Commands
 
-`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow` `/prices` `/watchprice` `/schedulemint` `/schedules`
+`/start` `/help` `/status` `/wallets` `/track` `/untrack` `/copy` `/dryrun` `/freemints` `/maxbuy` `/allow` `/prices` `/watchprice` `/schedulemint` `/mintslug` `/claim` `/snipe` `/schedules`
