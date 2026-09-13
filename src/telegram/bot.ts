@@ -56,6 +56,11 @@ import {
   helpText,
 } from "./formatter";
 import {
+  hideMenuKeyboard,
+  mainMenuKeyboard,
+  MenuBtn,
+} from "./menu";
+import {
   getMonthlyStats,
   formatMonthlyStatsPlain,
   currentMonthKey,
@@ -92,6 +97,276 @@ async function deny(ctx: Context): Promise<void> {
   );
 }
 
+async function replyHelp(ctx: Context): Promise<void> {
+  await ctx.reply(helpText(), { parse_mode: "HTML" });
+}
+
+async function replyStatus(ctx: Context): Promise<void> {
+  const state = getState();
+  const wallets = getAllMintWallets();
+  const wallet = wallets[0] ?? getWallet();
+  let balanceRobinhood: string | undefined;
+  let walletAddress = wallet?.address;
+  if (wallets.length > 1) {
+    walletAddress = `${wallets.length} wallets (see /listkeys)`;
+    try {
+      const bals = await Promise.all(
+        wallets.map(async (w) => {
+          const bal = await getNativeBalance(w.address);
+          return `${shortAddress(w.address.toLowerCase())}:${Number(bal).toFixed(4)}`;
+        })
+      );
+      balanceRobinhood = bals.join(" ");
+    } catch {
+      balanceRobinhood = "?";
+    }
+  } else if (wallet) {
+    try {
+      balanceRobinhood = Number(
+        await getNativeBalance(wallet.address)
+      ).toFixed(4);
+    } catch {
+      balanceRobinhood = "?";
+    }
+  }
+  const pendingSchedules = state.scheduledMints.filter(
+    (j) => j.status === "pending"
+  ).length;
+  let tipBlock: number | undefined;
+  try {
+    tipBlock = Number(await getProvider().getBlockNumber());
+  } catch {
+    tipBlock = undefined;
+  }
+  await ctx.reply(
+    formatStatus({
+      trackedCount: state.trackedWallets.length,
+      watchedPrices: state.watchedPrices.length,
+      pendingSchedules,
+      copyEnabled: state.copyEnabled,
+      dryRun: state.dryRun,
+      freeMintsOnly: state.freeMintsOnly,
+      priceAlertsEnabled: state.priceAlertsEnabled,
+      priceAlertPct: state.priceAlertPct,
+      maxBuyRobinhood: state.maxBuyRobinhood,
+      lastBlock: state.lastProcessedBlock,
+      tipBlock,
+      walletAddress,
+      balanceRobinhood,
+      lastCopy: getLastCopySummary(),
+      blockscout: getBlockscoutStatus(),
+    }),
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyTrackedWallets(ctx: Context): Promise<void> {
+  const { trackedWallets } = getState();
+  if (trackedWallets.length === 0) {
+    await ctx.reply("No wallets tracked yet. Use /track <address> [label]");
+    return;
+  }
+  const lines = trackedWallets.map(
+    (w, i) =>
+      `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
+  );
+  await ctx.reply(`<b>Tracked wallets</b>\n\n${lines.join("\n\n")}`, {
+    parse_mode: "HTML",
+  });
+}
+
+async function replyWatchlist(ctx: Context): Promise<void> {
+  const { trackedWallets, watchedPrices } = getState();
+  if (trackedWallets.length === 0 && watchedPrices.length === 0) {
+    await ctx.reply(
+      "Watchlist empty.\n• Track whales: /track 0xAddress [label]\n• Watch prices: /watchprice 0xContract [tokenId]"
+    );
+    return;
+  }
+  const whaleLines =
+    trackedWallets.length === 0
+      ? ["<i>No tracked wallets</i>"]
+      : trackedWallets.map(
+          (w, i) =>
+            `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
+        );
+  const priceLines =
+    watchedPrices.length === 0
+      ? ["<i>No price watches</i>"]
+      : watchedPrices.slice(0, 15).map((w, i) => {
+          const price = w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+          const token = w.tokenId ? `#${w.tokenId}` : "floor";
+          return `${i + 1}. <b>${escape(w.label)}</b> (${token}) · last ${price}`;
+        });
+  await ctx.reply(
+    [
+      `<b>👁️ Watchlist</b>`,
+      ``,
+      `<b>Tracked wallets</b> (/wallets · /track)`,
+      ...whaleLines,
+      ``,
+      `<b>Price watches</b> (/prices · /watchprice)`,
+      ...priceLines,
+      watchedPrices.length > 15
+        ? `\n…+${watchedPrices.length - 15} more — /prices`
+        : "",
+    ]
+      .filter((l) => l !== "")
+      .join("\n"),
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyNfts(ctx: Context): Promise<void> {
+  const list = getState().watchedPrices;
+  if (list.length === 0) {
+    await ctx.reply(
+      "No NFT price watches yet.\nSuccessful free mints are auto-watched.\nOr use /watchprice 0xContract [tokenId]"
+    );
+    return;
+  }
+  const lines = list.map((w, i) => {
+    const price = w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+    const token = w.tokenId ? `#${w.tokenId}` : "floor";
+    return `${i + 1}. <b>${escape(w.label)}</b> (${token})\n   <code>${w.contract}</code>\n   last: ${price}`;
+  });
+  await ctx.reply(`<b>🖼️ NFTs · watched prices</b>\n\n${lines.join("\n\n")}`, {
+    parse_mode: "HTML",
+  });
+}
+
+async function replyPrices(ctx: Context): Promise<void> {
+  const list = getState().watchedPrices;
+  if (list.length === 0) {
+    await ctx.reply(
+      "No price watches yet.\nSuccessful free mints are auto-watched.\nOr use /watchprice 0xContract [tokenId]"
+    );
+    return;
+  }
+  const lines = list.map((w, i) => {
+    const price = w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+    const token = w.tokenId ? `#${w.tokenId}` : "floor";
+    return `${i + 1}. <b>${escape(w.label)}</b> (${token})\n   <code>${w.contract}</code>\n   last: ${price}`;
+  });
+  await ctx.reply(`<b>Watched prices</b>\n\n${lines.join("\n\n")}`, {
+    parse_mode: "HTML",
+  });
+}
+
+async function replyContracts(ctx: Context): Promise<void> {
+  const list = getState().allowedCollections;
+  await ctx.reply(
+    list.length
+      ? `<b>📜 Contracts allowlist</b>\n${list
+          .map((c) => `<code>${c}</code>`)
+          .join("\n")}\n\nAdd: /allow 0xContract\nClear: /allow clear`
+      : "📜 Allowlist empty (all collections allowed).\nUsage: /allow 0xContract | /allow clear",
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyBalances(ctx: Context): Promise<void> {
+  const wallets = getAllMintWallets();
+  if (wallets.length === 0) {
+    await ctx.reply(
+      "No mint wallets.\n/addkey &lt;private_key&gt; or set PRIVATE_KEYS in .env",
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+  const lines: string[] = [];
+  for (let i = 0; i < wallets.length; i++) {
+    const w = wallets[i]!;
+    let bal = "?";
+    try {
+      bal = Number(await getNativeBalance(w.address)).toFixed(6);
+    } catch {
+      bal = "error";
+    }
+    lines.push(
+      `${i + 1}. <code>${w.address}</code>\n   <b>${bal}</b> RH`
+    );
+  }
+  await ctx.reply(
+    `<b>💰 Mint wallet balances</b>\n\n${lines.join("\n\n")}`,
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyKeys(ctx: Context): Promise<void> {
+  const wallets = listMintWalletPublic();
+  if (wallets.length === 0) {
+    await ctx.reply(
+      "No mint wallets yet.\nUse /addkey &lt;private_key&gt; or set PRIVATE_KEY / PRIVATE_KEYS in .env",
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+  const lines = wallets.map(
+    (w, i) =>
+      `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
+  );
+  await ctx.reply(
+    `<b>🔑 Mint wallets</b> (addresses only — keys never shown)\n\n${lines.join("\n\n")}\n\n/addkey · /removekey · /nbtc 1 2`,
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyOffers(ctx: Context): Promise<void> {
+  const state = getState();
+  const list = state.watchedPrices;
+  const lines =
+    list.length === 0
+      ? ["<i>No watched items yet</i>"]
+      : list.slice(0, 12).map((w, i) => {
+          const price = w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+          const token = w.tokenId ? `#${w.tokenId}` : "floor";
+          return `${i + 1}. <b>${escape(w.label)}</b> (${token}) · ${price}`;
+        });
+  await ctx.reply(
+    [
+      `<b>💰 Offers / price alerts</b>`,
+      `Alerts: <b>${state.priceAlertsEnabled ? "ON" : "OFF"}</b> (≥${state.priceAlertPct}%)`,
+      ``,
+      ...lines,
+      ``,
+      `/pricealerts on|off · /pricepct N · /watchprice 0x…`,
+    ].join("\n"),
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyScheduled(ctx: Context): Promise<void> {
+  const list = getState().scheduledMints.slice(-20).reverse();
+  if (list.length === 0) {
+    await ctx.reply(
+      "No scheduled mints.\nUse /schedulemint &lt;opensea-url&gt; or /nbtc for cadence snipes.",
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+  const lines = list.map((j) => {
+    return `• <code>${j.id}</code> [${j.status}]\n  ${escape(j.label)}\n  when: <code>${j.executeAt}</code>\n  to: <code>${j.to}</code>`;
+  });
+  await ctx.reply(`<b>🗓️ Scheduled mints</b>\n\n${lines.join("\n\n")}`, {
+    parse_mode: "HTML",
+  });
+}
+
+async function replyShowMenu(ctx: Context): Promise<void> {
+  await registerNotifyChat(chatId(ctx));
+  await ctx.reply(
+    "Menu ready — tap a button (slash commands still work).",
+    { reply_markup: mainMenuKeyboard() }
+  );
+}
+
+async function replyHideMenu(ctx: Context): Promise<void> {
+  await ctx.reply("Keyboard hidden. /menu to show again.", {
+    reply_markup: hideMenuKeyboard(),
+  });
+}
+
 export function createTelegramBot(): Bot {
   const bot = new Bot(config.telegramToken);
 
@@ -108,13 +383,21 @@ export function createTelegramBot(): Bot {
   bot.command("start", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      "robinhood-nft-copy-bot connected.\n\nTip: /track 0xWallet Label\n/help for all commands."
+      "robinhood-nft-copy-bot connected.\n\nTip: /track 0xWallet Label\n/menu for buttons · /help for all commands.",
+      { reply_markup: mainMenuKeyboard() }
     );
   });
 
-  bot.command("help", async (ctx) => {
-    await ctx.reply(helpText(), { parse_mode: "HTML" });
-  });
+  bot.command("menu", replyShowMenu);
+  bot.command("help", replyHelp);
+  bot.command("status", replyStatus);
+  bot.command("watchlist", replyWatchlist);
+  bot.command("nfts", replyNfts);
+  bot.command("contracts", replyContracts);
+  bot.command("balances", replyBalances);
+  bot.command("keys", replyKeys);
+  bot.command("offers", replyOffers);
+  bot.command("scheduled", replyScheduled);
 
   bot.command("stats", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
@@ -143,65 +426,6 @@ export function createTelegramBot(): Bot {
         `Quota check failed: ${err instanceof Error ? err.message : err}`
       );
     }
-  });
-
-  bot.command("status", async (ctx) => {
-    const state = getState();
-    const wallets = getAllMintWallets();
-    const wallet = wallets[0] ?? getWallet();
-    let balanceRobinhood: string | undefined;
-    let walletAddress = wallet?.address;
-    if (wallets.length > 1) {
-      walletAddress = `${wallets.length} wallets (see /listkeys)`;
-      try {
-        const bals = await Promise.all(
-          wallets.map(async (w) => {
-            const bal = await getNativeBalance(w.address);
-            return `${shortAddress(w.address.toLowerCase())}:${Number(bal).toFixed(4)}`;
-          })
-        );
-        balanceRobinhood = bals.join(" ");
-      } catch {
-        balanceRobinhood = "?";
-      }
-    } else if (wallet) {
-      try {
-        balanceRobinhood = Number(
-          await getNativeBalance(wallet.address)
-        ).toFixed(4);
-      } catch {
-        balanceRobinhood = "?";
-      }
-    }
-    const pendingSchedules = state.scheduledMints.filter(
-      (j) => j.status === "pending"
-    ).length;
-    let tipBlock: number | undefined;
-    try {
-      tipBlock = Number(await getProvider().getBlockNumber());
-    } catch {
-      tipBlock = undefined;
-    }
-    await ctx.reply(
-      formatStatus({
-        trackedCount: state.trackedWallets.length,
-        watchedPrices: state.watchedPrices.length,
-        pendingSchedules,
-        copyEnabled: state.copyEnabled,
-        dryRun: state.dryRun,
-        freeMintsOnly: state.freeMintsOnly,
-        priceAlertsEnabled: state.priceAlertsEnabled,
-        priceAlertPct: state.priceAlertPct,
-        maxBuyRobinhood: state.maxBuyRobinhood,
-        lastBlock: state.lastProcessedBlock,
-        tipBlock,
-        walletAddress,
-        balanceRobinhood,
-        lastCopy: getLastCopySummary(),
-        blockscout: getBlockscoutStatus(),
-      }),
-      { parse_mode: "HTML" }
-    );
   });
 
   bot.command("openseakey", async (ctx) => {
@@ -270,24 +494,7 @@ export function createTelegramBot(): Bot {
     }
   });
 
-  bot.command("listkeys", async (ctx) => {
-    const wallets = listMintWalletPublic();
-    if (wallets.length === 0) {
-      await ctx.reply(
-        "No mint wallets yet.\nUse /addkey &lt;private_key&gt; or set PRIVATE_KEY / PRIVATE_KEYS in .env",
-        { parse_mode: "HTML" }
-      );
-      return;
-    }
-    const lines = wallets.map(
-      (w, i) =>
-        `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
-    );
-    await ctx.reply(
-      `<b>Mint wallets</b> (addresses only — keys never shown)\n\n${lines.join("\n\n")}`,
-      { parse_mode: "HTML" }
-    );
-  });
+  bot.command("listkeys", replyKeys);
 
   bot.command("removekey", async (ctx) => {
     const address = (ctx.match || "").trim();
@@ -304,20 +511,7 @@ export function createTelegramBot(): Bot {
     );
   });
 
-  bot.command("wallets", async (ctx) => {
-    const { trackedWallets } = getState();
-    if (trackedWallets.length === 0) {
-      await ctx.reply("No wallets tracked yet. Use /track <address> [label]");
-      return;
-    }
-    const lines = trackedWallets.map(
-      (w, i) =>
-        `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
-    );
-    await ctx.reply(`<b>Tracked wallets</b>\n\n${lines.join("\n\n")}`, {
-      parse_mode: "HTML",
-    });
-  });
+  bot.command("wallets", replyTrackedWallets);
 
   bot.command("track", async (ctx) => {
     const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
@@ -438,13 +632,7 @@ export function createTelegramBot(): Bot {
   bot.command("allow", async (ctx) => {
     const arg = (ctx.match || "").trim().toLowerCase();
     if (!arg) {
-      const list = getState().allowedCollections;
-      await ctx.reply(
-        list.length
-          ? `Allowlist:\n${list.map((c) => `<code>${c}</code>`).join("\n")}`
-          : "Allowlist empty (all collections allowed).\nUsage: /allow 0xContract | /allow clear",
-        { parse_mode: "HTML" }
-      );
+      await replyContracts(ctx);
       return;
     }
     if (arg === "clear") {
@@ -468,24 +656,7 @@ export function createTelegramBot(): Bot {
     });
   });
 
-  bot.command("prices", async (ctx) => {
-    const list = getState().watchedPrices;
-    if (list.length === 0) {
-      await ctx.reply(
-        "No price watches yet.\nSuccessful free mints are auto-watched.\nOr use /watchprice 0xContract [tokenId]"
-      );
-      return;
-    }
-    const lines = list.map((w, i) => {
-      const price =
-        w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
-      const token = w.tokenId ? `#${w.tokenId}` : "floor";
-      return `${i + 1}. <b>${escape(w.label)}</b> (${token})\n   <code>${w.contract}</code>\n   last: ${price}`;
-    });
-    await ctx.reply(`<b>Watched prices</b>\n\n${lines.join("\n\n")}`, {
-      parse_mode: "HTML",
-    });
-  });
+  bot.command("prices", replyPrices);
 
   bot.command("watchprice", async (ctx) => {
     const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
@@ -1034,19 +1205,7 @@ export function createTelegramBot(): Bot {
     }
   });
 
-  bot.command("schedules", async (ctx) => {
-    const list = getState().scheduledMints.slice(-20).reverse();
-    if (list.length === 0) {
-      await ctx.reply("No scheduled mints.");
-      return;
-    }
-    const lines = list.map((j) => {
-      return `• <code>${j.id}</code> [${j.status}]\n  ${escape(j.label)}\n  when: <code>${j.executeAt}</code>\n  to: <code>${j.to}</code>`;
-    });
-    await ctx.reply(`<b>Scheduled mints</b>\n\n${lines.join("\n\n")}`, {
-      parse_mode: "HTML",
-    });
-  });
+  bot.command("schedules", replyScheduled);
 
   bot.command("cancelschedule", async (ctx) => {
     const id = (ctx.match || "").trim();
@@ -1057,6 +1216,18 @@ export function createTelegramBot(): Bot {
     const ok = await cancelScheduledMint(id);
     await ctx.reply(ok ? `Cancelled ${id}` : "Not found or not pending.");
   });
+
+  // Reply-keyboard buttons (same handlers as slash aliases).
+  bot.hears(MenuBtn.Status, replyStatus);
+  bot.hears(MenuBtn.Watchlist, replyWatchlist);
+  bot.hears(MenuBtn.Nfts, replyNfts);
+  bot.hears(MenuBtn.Contracts, replyContracts);
+  bot.hears(MenuBtn.Balances, replyBalances);
+  bot.hears(MenuBtn.Keys, replyKeys);
+  bot.hears(MenuBtn.Offers, replyOffers);
+  bot.hears(MenuBtn.Scheduled, replyScheduled);
+  bot.hears(MenuBtn.Help, replyHelp);
+  bot.hears(MenuBtn.Hide, replyHideMenu);
 
   bot.catch((err) => {
     console.error("[telegram] bot error:", err);
