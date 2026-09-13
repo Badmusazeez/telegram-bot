@@ -1,0 +1,40 @@
+{
+  "name": "porshmints-bot",
+  "version": "1.0.0",
+  "description": "@porshmints_bot — Ink free + private mint Telegram bot (separate from @Nftcopymint_bot / Robinhood)",
+  "main": "dist/index.js",
+  "scripts": {
+    "check": "node scripts/check-env.mjs",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:dev": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "vps:install": "bash scripts/vps-install.sh"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "porshmints",
+    "ink",
+    "inkchain",
+    "nft",
+    "telegram",
+    "free-mint",
+    "private-mint",
+    "bot"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "ethers": "^6.13.5",
+    "grammy": "^1.35.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
