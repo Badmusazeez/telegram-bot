@@ -1,5 +1,5 @@
 import { Bot, Context } from "grammy";
-import { isAddress } from "ethers";
+import { isAddress, formatEther } from "ethers";
 import { config } from "../config";
 import {
   parseScheduleTime,
@@ -22,6 +22,12 @@ import {
   NBTC_RIGS,
   type CadenceSnipeResult,
 } from "../robinhood/cadenceSnipe";
+import {
+  runUnwrittenAcquire,
+  readUnwrittenMintState,
+  UNWRITTEN,
+  type UnwrittenAcquireResult,
+} from "../robinhood/unwrittenMint";
 
 import {
   getAllMintWallets,
@@ -1155,6 +1161,82 @@ export function createTelegramBot(): Bot {
     }
   });
 
+  bot.command("unwritten", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    const rawLower = raw.toLowerCase();
+    const mintAddrs = listMintWalletPublic().map((w) => w.address);
+
+    if (rawLower === "help" || rawLower === "status") {
+      try {
+        const st = await readUnwrittenMintState();
+        await ctx.reply(
+          [
+            `<b>The Unwritten — ACQUIRE (fast paid)</b>`,
+            `Site: <a href="${UNWRITTEN.siteUrl}">theunwritten.xyz</a>`,
+            `OpenSea: <a href="${UNWRITTEN.openSeaUrl}">collection</a>`,
+            `Contract: <code>${UNWRITTEN.contract}</code>`,
+            ``,
+            `Minted: <b>${st.depth}</b> / ${UNWRITTEN.maxSupply}`,
+            `Open: <b>${st.open ? "yes" : "no"}</b> (tip ${st.tip} · openBlock ${st.nextOpenBlock})`,
+            `Price: <b>${formatEther(st.priceWei)}</b> ETH`,
+            `PoW hashes (decipher lane): ${st.expectedHashes.toString()}`,
+            ``,
+            `/unwritten — acquire on all funded keys`,
+            `/unwritten 1 2 — by /listkeys numbers`,
+            `/unwritten 0xA 0xB — by addresses`,
+            ``,
+            `Paid mint · needs /dryrun off · ~0.002+ ETH/wallet.`,
+            `Decipher/PoW is browser-only — this command uses ACQUIRE.`,
+          ].join("\n"),
+          {
+            parse_mode: "HTML",
+            link_preview_options: { is_disabled: true },
+          }
+        );
+      } catch (err) {
+        await ctx.reply(
+          `Status failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      return;
+    }
+
+    const parsed = parseNbtcWalletArgs(raw, mintAddrs);
+    if (!parsed.ok) {
+      if (parsed.error === "help") {
+        await ctx.reply(
+          "Usage:\n/unwritten\n/unwritten all\n/unwritten 1 2\n/unwritten 0xA\n/unwritten status"
+        );
+        return;
+      }
+      await ctx.reply(parsed.error);
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    const who =
+      parsed.filter === "all"
+        ? "all funded wallets"
+        : `${parsed.filter.length} key(s)`;
+    await ctx.reply(
+      `📜 /unwritten ACQUIRE · ${who}…\n(paid · /dryrun off required)`
+    );
+
+    try {
+      const result = await runUnwrittenAcquire({
+        walletFilter: parsed.filter,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyUnwrittenResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
   bot.command("snipe", async (ctx) => {
     const raw = (ctx.match || "").trim();
     if (!raw) {
@@ -1321,6 +1403,50 @@ async function replySlugMintResult(
       ``,
       `<i>${result.results.length} wallet results (see mint result summary)</i>`
     );
+  }
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
+}
+
+async function replyUnwrittenResult(
+  ctx: Context,
+  result: UnwrittenAcquireResult
+): Promise<void> {
+  const lines = [
+    result.success
+      ? result.dryRun
+        ? `<b>🧪 Unwritten DRY RUN</b>`
+        : `<b>✅ Unwritten ACQUIRE sent</b>`
+      : `<b>❌ Unwritten ACQUIRE failed</b>`,
+    ``,
+    `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
+    `<b>Site:</b> <a href="${escape(result.siteUrl)}">theunwritten.xyz</a>`,
+    `<b>Contract:</b> <code>${escape(result.contract)}</code>`,
+    `<b>Depth at fire:</b> ${result.depth} → next Nº ${result.depth + 1}`,
+    `<b>Price:</b> ${escape(formatEther(result.priceWei))} ETH`,
+    `<b>Send:</b> ${escape(formatEther(result.valueWei))} ETH (+slip)`,
+    ``,
+    `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
+  ];
+
+  if (result.results.length > 0 && result.results.length <= 25) {
+    lines.push(``);
+    for (const r of result.results) {
+      if (r.ok && r.txHash) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> <a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a>`
+        );
+      } else if (r.ok) {
+        lines.push(`• <code>${escape(r.address.slice(0, 10))}…</code> OK`);
+      } else {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape((r.error || "fail").slice(0, 80))}`
+        );
+      }
+    }
   }
 
   await ctx.reply(lines.join("\n"), {
