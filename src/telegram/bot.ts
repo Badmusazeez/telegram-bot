@@ -869,16 +869,23 @@ export function createTelegramBot(): Bot {
     if (!raw) {
       await ctx.reply(
         [
-          "Cadence snipe — 1 on-chain winner per interval, 1 NFT per wallet:",
+          "Cadence snipe — 1 on-chain winner per interval, mintFree():",
           "",
+          "<b>Not Bitcoin (free every 3s, max 3/wallet)</b>",
+          "/snipe nbtc",
+          "/snipe nbtc all",
+          "/snipe nbtc 0xYourMintWallet",
+          "",
+          "<b>Generic</b>",
           "/snipe https://opensea.io/collection/wrong-bird 10",
           "/snipe wrong-bird 10",
-          "/snipe 0xeb00d52ef95ea6aef1a7dfdc16337053eeedf5e6 10",
+          "/snipe 0xContract 10 1 all",
           "",
-          "Uses mintFree() · bursts all remaining wallets each window",
-          "until every funded wallet holds 1 (or rounds exhausted).",
+          "Args: [secs] [maxPerWallet] [all|0xwallet]",
+          "Bursts remaining wallets each window until caps filled.",
           "Respects /dryrun. Independent of /copy on|off.",
-        ].join("\n")
+        ].join("\n"),
+        { parse_mode: "HTML" }
       );
       return;
     }
@@ -886,19 +893,25 @@ export function createTelegramBot(): Bot {
     const parsed = parseSnipeCommandArgs(raw);
     if (!parsed) {
       await ctx.reply(
-        "Invalid target. Example:\n/snipe https://opensea.io/collection/wrong-bird 10"
+        "Invalid target. Examples:\n/snipe nbtc\n/snipe nbtc 0xYourWallet\n/snipe wrong-bird 10"
       );
       return;
     }
 
     await registerNotifyChat(chatId(ctx));
+    const who =
+      parsed.walletFilter === "all"
+        ? "all funded wallets"
+        : `only ${parsed.walletFilter.slice(0, 10)}…`;
     await ctx.reply(
-      `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · mintFree · all funded wallets…`
+      `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · max ${parsed.maxPerWallet}/wallet · mintFree · ${who}…`
     );
 
     try {
       const result = await runCadenceSnipe(parsed.target, {
         intervalSec: parsed.intervalSec,
+        maxPerWallet: parsed.maxPerWallet,
+        walletFilter: parsed.walletFilter,
         onProgress: async (line) => {
           await ctx.reply(line).catch(() => undefined);
         },

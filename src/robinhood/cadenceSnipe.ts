@@ -32,18 +32,47 @@ import {
   type MintWalletOutcome,
 } from "./mintResultReport";
 
-/** Wrong Bird / cadence free mints: mintFree() */
+/** Wrong Bird / NotBitcoin / cadence free mints: mintFree() */
 export const MINT_FREE_SELECTOR = id("mintFree()").slice(0, 10); // 0x8ab53447
+
+/** Not Bitcoin (nBTC Mining Rigs) — free lane every 3s, max 3/wallet. */
+export const NBTC_RIGS = {
+  aliases: [
+    "nbtc",
+    "notbitcoin",
+    "not-bitcoin",
+    "nbtc-mining-rigs",
+    "nbtc-mining-rigs-517198745",
+  ],
+  contract: "0x296ad7946b9cb1f92697a97f7e93b51bedc8235b",
+  slug: "nbtc-mining-rigs-517198745",
+  name: "nBTC Mining Rigs",
+  openSeaUrl:
+    "https://opensea.io/collection/nbtc-mining-rigs-517198745",
+  intervalSec: 3,
+  maxPerWallet: 3,
+} as const;
 
 const ERC721 = new Interface([
   "function balanceOf(address owner) view returns (uint256)",
   "function totalSupply() view returns (uint256)",
 ]);
 
+const FREE_MINT_IFACE = new Interface([
+  "function freeOf(address owner) view returns (uint256)",
+  "function freeCap() view returns (uint256)",
+  "function lastFreeAt() view returns (uint256)",
+  "function freeInterval() view returns (uint256)",
+]);
+
 export type CadenceSnipeOptions = {
-  /** Seconds between winner slots (Wrong Bird ≈ 10). */
+  /** Seconds between winner slots (Wrong Bird ≈ 10, nBTC = 3). */
   intervalSec?: number;
-  /** Max slot rounds to attempt (default: readyWallets * 3 + 5). */
+  /** Max free mints per wallet (Wrong Bird ≈ 1, nBTC = 3). */
+  maxPerWallet?: number;
+  /** `all` (default) or a specific mint-wallet address. */
+  walletFilter?: "all" | string;
+  /** Max slot rounds to attempt (default: remainingSlots * 3 + 5). */
   maxRounds?: number;
   onProgress?: (line: string) => void | Promise<void>;
 };
@@ -112,30 +141,183 @@ async function readBalance(
   }
 }
 
-/** Parse `/snipe <url|slug|0x> [intervalSec]`. */
-export function parseSnipeCommandArgs(raw: string): {
+/** nBTC Rigs: freeOf(address). Falls back to balanceOf when missing. */
+async function readFreeMinted(
+  provider: ReturnType<typeof getMintProvider>,
+  contract: string,
+  wallet: string
+): Promise<bigint> {
+  try {
+    const data = FREE_MINT_IFACE.encodeFunctionData("freeOf", [wallet]);
+    const ret = await provider.call({ to: contract, data });
+    if (!ret || ret === "0x") return await readBalance(provider, contract, wallet);
+    return FREE_MINT_IFACE.decodeFunctionResult("freeOf", ret)[0] as bigint;
+  } catch {
+    return readBalance(provider, contract, wallet);
+  }
+}
+
+async function readFreeCap(
+  provider: ReturnType<typeof getMintProvider>,
+  contract: string
+): Promise<bigint | null> {
+  try {
+    const data = FREE_MINT_IFACE.encodeFunctionData("freeCap", []);
+    const ret = await provider.call({ to: contract, data });
+    if (!ret || ret === "0x") return null;
+    return FREE_MINT_IFACE.decodeFunctionResult("freeCap", ret)[0] as bigint;
+  } catch {
+    return null;
+  }
+}
+
+async function readLastFreeAt(
+  provider: ReturnType<typeof getMintProvider>,
+  contract: string
+): Promise<number | null> {
+  try {
+    const data = FREE_MINT_IFACE.encodeFunctionData("lastFreeAt", []);
+    const ret = await provider.call({ to: contract, data });
+    if (!ret || ret === "0x") return null;
+    const v = FREE_MINT_IFACE.decodeFunctionResult("lastFreeAt", ret)[0] as bigint;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readFreeInterval(
+  provider: ReturnType<typeof getMintProvider>,
+  contract: string
+): Promise<number | null> {
+  try {
+    const data = FREE_MINT_IFACE.encodeFunctionData("freeInterval", []);
+    const ret = await provider.call({ to: contract, data });
+    if (!ret || ret === "0x") return null;
+    const v = FREE_MINT_IFACE.decodeFunctionResult(
+      "freeInterval",
+      ret
+    )[0] as bigint;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export type ParsedSnipeArgs = {
   target: string;
   intervalSec: number;
-} | null {
+  maxPerWallet: number;
+  walletFilter: "all" | string;
+};
+
+function isNbtcAlias(target: string): boolean {
+  const t = target.trim().toLowerCase();
+  if (NBTC_RIGS.aliases.includes(t as (typeof NBTC_RIGS.aliases)[number])) {
+    return true;
+  }
+  if (t.includes("nbtc-mining-rigs")) return true;
+  if (t.includes("notbitcoin.org")) return true;
+  if (t === NBTC_RIGS.contract.toLowerCase()) return true;
+  return false;
+}
+
+/**
+ * Parse `/snipe <url|slug|0x|nbtc> [secs] [maxN] [all|0xwallet]`.
+ *
+ * Examples:
+ *   /snipe nbtc
+ *   /snipe nbtc all
+ *   /snipe nbtc 0xYourWallet
+ *   /snipe nbtc-mining-rigs-517198745 3 3 all
+ *   /snipe wrong-bird 10
+ */
+export function parseSnipeCommandArgs(raw: string): ParsedSnipeArgs | null {
   const text = normalizeOpenSeaInput(raw.trim());
   if (!text) return null;
-  const withInterval = text.match(/^(.*?)\s+(\d+)\s*s?$/i);
-  let target = text;
-  let intervalSec = 10;
-  if (withInterval) {
-    target = withInterval[1].trim();
-    const n = Number(withInterval[2]);
-    if (!Number.isFinite(n) || n < 1 || n > 3_600) return null;
-    intervalSec = Math.floor(n);
+
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+
+  let target = tokens[0]!;
+  let intervalSec: number | undefined;
+  let maxPerWallet: number | undefined;
+  let walletFilter: "all" | string = "all";
+
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i]!;
+    const maxMatch = tok.match(/^max[=:]?(\d+)$/i);
+    if (maxMatch) {
+      const n = Number(maxMatch[1]);
+      if (!Number.isFinite(n) || n < 1 || n > 20) return null;
+      maxPerWallet = Math.floor(n);
+      continue;
+    }
+    if (/^\d+$/.test(tok)) {
+      const n = Number(tok);
+      if (!Number.isFinite(n) || n < 1 || n > 3_600) return null;
+      if (intervalSec == null) intervalSec = Math.floor(n);
+      else if (maxPerWallet == null) maxPerWallet = Math.floor(n);
+      else return null;
+      continue;
+    }
+    if (/^\d+s$/i.test(tok)) {
+      const n = Number(tok.slice(0, -1));
+      if (!Number.isFinite(n) || n < 1 || n > 3_600) return null;
+      intervalSec = Math.floor(n);
+      continue;
+    }
+    if (/^all$/i.test(tok)) {
+      walletFilter = "all";
+      continue;
+    }
+    if (/^0x[a-fA-F0-9]{40}$/.test(tok)) {
+      walletFilter = tok.toLowerCase();
+      continue;
+    }
+    // Allow multi-word OpenSea URLs already normalized into token[0] only.
+    return null;
   }
+
+  // Re-join if first token looked like URL with no spaces (already one token).
   const normalized = normalizeOpenSeaInput(target);
   if (!normalized) return null;
-  if (parseOpenSeaUrl(normalized)) return { target: normalized, intervalSec };
+
+  const nbtc = isNbtcAlias(normalized);
+  if (nbtc) {
+    target = NBTC_RIGS.contract;
+    intervalSec = intervalSec ?? NBTC_RIGS.intervalSec;
+    maxPerWallet = maxPerWallet ?? NBTC_RIGS.maxPerWallet;
+  } else {
+    intervalSec = intervalSec ?? 10;
+    maxPerWallet = maxPerWallet ?? 1;
+  }
+
+  if (parseOpenSeaUrl(normalized) || nbtc) {
+    return {
+      target: nbtc ? NBTC_RIGS.contract : normalized,
+      intervalSec,
+      maxPerWallet,
+      walletFilter,
+    };
+  }
   if (/^0x[a-fA-F0-9]{40}$/.test(normalized)) {
-    return { target: normalized.toLowerCase(), intervalSec };
+    return {
+      target: normalized.toLowerCase(),
+      intervalSec,
+      maxPerWallet,
+      walletFilter,
+    };
   }
   if (/^[a-z0-9][a-z0-9_-]{1,80}$/i.test(normalized)) {
-    return { target: normalized.toLowerCase(), intervalSec };
+    return {
+      target: normalized.toLowerCase(),
+      intervalSec,
+      maxPerWallet,
+      walletFilter,
+    };
   }
   return null;
 }
@@ -147,9 +329,25 @@ export async function resolveSnipeTarget(raw: string): Promise<{
   openSeaUrl: string;
 }> {
   const text = normalizeOpenSeaInput(raw);
+  if (isNbtcAlias(text) || text.toLowerCase() === NBTC_RIGS.contract) {
+    return {
+      slug: NBTC_RIGS.slug,
+      name: NBTC_RIGS.name,
+      contract: NBTC_RIGS.contract,
+      openSeaUrl: NBTC_RIGS.openSeaUrl,
+    };
+  }
   const link = parseOpenSeaUrl(text);
 
   if (link?.kind === "collection" && link.collectionSlug) {
+    if (isNbtcAlias(link.collectionSlug)) {
+      return {
+        slug: NBTC_RIGS.slug,
+        name: NBTC_RIGS.name,
+        contract: NBTC_RIGS.contract,
+        openSeaUrl: NBTC_RIGS.openSeaUrl,
+      };
+    }
     return resolveSlugToContract(link.collectionSlug);
   }
   if ((link?.kind === "contract" || link?.kind === "asset") && link.contract) {
@@ -244,7 +442,14 @@ async function fetchLastMintFreeSuccessSec(
     const url =
       `https://robinhoodchain.blockscout.com/api?module=account&action=txlist` +
       `&address=${contract}&sort=desc&page=1&offset=50`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(12_000),
+      headers: {
+        accept: "application/json",
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
     if (!res.ok) return null;
     const body = (await res.json()) as {
       result?: Array<{
@@ -302,15 +507,21 @@ async function waitForCadenceWindow(params: {
     return;
   }
 
-  const lastSec = await fetchLastMintFreeSuccessSec(contract);
+  // Prefer on-chain lastFreeAt (nBTC) over Blockscout tx scan.
+  let lastSec =
+    (await readLastFreeAt(provider, contract)) ??
+    (await fetchLastMintFreeSuccessSec(contract));
+  const chainIvl = await readFreeInterval(provider, contract);
+  const ivl = chainIvl ?? intervalSec;
+
   let targetMs: number;
   if (lastSec != null) {
-    targetMs = (lastSec + intervalSec) * 1000;
+    targetMs = (lastSec + ivl) * 1000;
     while (targetMs < Date.now() - 1_000) {
-      targetMs += intervalSec * 1000;
+      targetMs += ivl * 1000;
     }
   } else {
-    const step = intervalSec * 1000;
+    const step = ivl * 1000;
     targetMs = Math.ceil(Date.now() / step) * step;
   }
 
@@ -324,7 +535,7 @@ async function waitForCadenceWindow(params: {
   }
 
   // Fine-poll estimateGas until open (or interval+2s timeout).
-  const deadline = Date.now() + intervalSec * 1000 + 2_000;
+  const deadline = Date.now() + ivl * 1000 + 2_000;
   while (Date.now() < deadline) {
     if (params.signal?.aborted) throw new Error("aborted");
     if (await mintFreeReady(provider, contract, probeFrom)) return;
@@ -469,6 +680,8 @@ export async function runCadenceSnipe(
   options: CadenceSnipeOptions = {}
 ): Promise<CadenceSnipeResult> {
   const intervalSec = Math.max(1, Math.floor(options.intervalSec ?? 10));
+  let maxPerWallet = Math.max(1, Math.floor(options.maxPerWallet ?? 1));
+  const walletFilter = (options.walletFilter || "all").toLowerCase();
   const onProgress = options.onProgress;
   clearWalletReadinessCache();
 
@@ -477,8 +690,17 @@ export async function runCadenceSnipe(
   const provider = getMintProvider();
   const state = getState();
 
-  const all = getAllMintWallets();
-  const emptyResult = (reason: string, results: CadenceSnipeWalletResult[] = []): CadenceSnipeResult => ({
+  // Prefer on-chain freeCap when present (nBTC = 3).
+  const chainCap = await readFreeCap(provider, contract);
+  if (chainCap != null && chainCap > 0n) {
+    maxPerWallet = Math.min(maxPerWallet, Number(chainCap));
+  }
+
+  const allConfigured = getAllMintWallets();
+  const emptyResult = (
+    reason: string,
+    results: CadenceSnipeWalletResult[] = []
+  ): CadenceSnipeResult => ({
     dryRun: state.dryRun,
     success: false,
     slug: target.slug,
@@ -491,8 +713,25 @@ export async function runCadenceSnipe(
     results,
   });
 
-  if (all.length === 0) {
-    return emptyResult("No mint wallets configured. Use /addkey or PRIVATE_KEY(S).");
+  if (allConfigured.length === 0) {
+    return emptyResult(
+      "No mint wallets configured. Use /addkey or PRIVATE_KEY(S)."
+    );
+  }
+
+  let all = allConfigured;
+  if (walletFilter !== "all") {
+    if (!/^0x[a-f0-9]{40}$/.test(walletFilter)) {
+      return emptyResult(`Invalid wallet filter: ${walletFilter}`);
+    }
+    all = allConfigured.filter(
+      (w) => w.address.toLowerCase() === walletFilter
+    );
+    if (all.length === 0) {
+      return emptyResult(
+        `Wallet ${walletFilter} is not one of your mint keys. /listkeys`
+      );
+    }
   }
 
   const readiness = await checkMintWalletReadiness(all);
@@ -513,26 +752,39 @@ export async function runCadenceSnipe(
     };
   }
 
-  // Drop wallets that already hold this NFT.
+  // Track how many free mints each wallet still needs (cap = maxPerWallet).
+  const mintedSoFar = new Map<string, number>();
   const stillNeed: Wallet[] = [];
-  const already: CadenceSnipeWalletResult[] = [];
+  const alreadyFull: CadenceSnipeWalletResult[] = [];
   for (const w of funded) {
-    const bal = await readBalance(provider, contract, w.address);
-    if (bal > 0n) {
-      already.push({
-        address: w.address.toLowerCase(),
+    const addr = w.address.toLowerCase();
+    const have = Number(await readFreeMinted(provider, contract, addr));
+    mintedSoFar.set(addr, have);
+    if (have >= maxPerWallet) {
+      alreadyFull.push({
+        address: addr,
         ok: true,
-        error: "already holds NFT (skipped)",
+        error: `already at free cap ${have}/${maxPerWallet} (skipped)`,
       });
     } else {
       stillNeed.push(w);
     }
   }
 
+  const slotsLeft = stillNeed.reduce(
+    (n, w) =>
+      n + (maxPerWallet - (mintedSoFar.get(w.address.toLowerCase()) || 0)),
+    0
+  );
+
   if (onProgress) {
     await onProgress(
       `🎯 ${target.name} · mintFree() · 1 winner / ${intervalSec}s · ` +
-        `${stillNeed.length} wallets to fill (${already.length} already hold)`
+        `max ${maxPerWallet}/wallet · ${stillNeed.length} wallet(s) · ` +
+        `${slotsLeft} slot(s) left` +
+        (walletFilter !== "all"
+          ? ` · only ${walletFilter.slice(0, 10)}…`
+          : " · all keys")
     );
   }
 
@@ -546,8 +798,8 @@ export async function runCadenceSnipe(
       openSeaUrl: target.openSeaUrl,
       calldata: MINT_FREE_SELECTOR,
       intervalSec,
-      reason: `All ${funded.length} ready wallet(s) already hold this NFT.`,
-      results: already,
+      reason: `All ${funded.length} ready wallet(s) already at free cap (${maxPerWallet}/wallet).`,
+      results: alreadyFull,
     };
   }
 
@@ -573,8 +825,9 @@ export async function runCadenceSnipe(
       calldata: MINT_FREE_SELECTOR,
       intervalSec,
       reason:
-        `DRY RUN — would snipe mintFree() on ${stillNeed.length} wallet(s) ` +
-        `(1 winner / ${intervalSec}s, keep trying until each has 1). /dryrun off to go live.\n\n` +
+        `DRY RUN — would snipe mintFree() for ${slotsLeft} slot(s) across ` +
+        `${stillNeed.length} wallet(s) (1 winner / ${intervalSec}s, max ${maxPerWallet}/wallet). ` +
+        `/dryrun off to go live.\n\n` +
         formatMintResultStats(stats),
       results: stillNeed.map((w) => ({
         address: w.address.toLowerCase(),
@@ -584,26 +837,34 @@ export async function runCadenceSnipe(
     };
   }
 
-  const maxRounds = options.maxRounds ?? stillNeed.length * 3 + 5;
-  const won = new Map<string, CadenceSnipeWalletResult>();
-  for (const a of already) {
-    if (a.ok) won.set(a.address, { ...a, error: undefined });
+  const maxRounds = options.maxRounds ?? slotsLeft * 3 + 8;
+  const winsByWallet = new Map<string, CadenceSnipeWalletResult[]>();
+  for (const a of alreadyFull) {
+    winsByWallet.set(a.address, [a]);
   }
   let remaining = [...stillNeed];
   let round = 0;
+  let totalWins = 0;
 
   while (remaining.length > 0 && round < maxRounds) {
     round += 1;
     if (onProgress) {
+      const leftSlots = remaining.reduce(
+        (n, w) =>
+          n +
+          (maxPerWallet - (mintedSoFar.get(w.address.toLowerCase()) || 0)),
+        0
+      );
       await onProgress(
-        `⏳ Round ${round}/${maxRounds} · ${remaining.length} wallet(s) left · waiting for next ${intervalSec}s window…`
+        `⏳ Round ${round}/${maxRounds} · ${remaining.length} wallet(s) · ` +
+          `${leftSlots} slot(s) · waiting for next ${intervalSec}s window…`
       );
     }
 
     await waitForCadenceWindow({
       provider,
       contract,
-      probeFrom: remaining[0].address,
+      probeFrom: remaining[0]!.address,
       intervalSec,
     });
 
@@ -613,12 +874,13 @@ export async function runCadenceSnipe(
       );
     }
 
-    // Burst remaining wallets (staggered slightly to avoid identical nonces/RPC spikes).
     const roundResults = await mapPool(remaining, 8, async (wallet, index) => {
       if (index > 0) await sleep(Math.min(index * 12, 200));
       const address = wallet.address.toLowerCase();
+      const before = mintedSoFar.get(address) || 0;
       const sent = await sendMintFree(wallet, contract);
       if (sent.ok) {
+        mintedSoFar.set(address, before + 1);
         return {
           address,
           ok: true as const,
@@ -627,9 +889,9 @@ export async function runCadenceSnipe(
           gasLimit: sent.gasLimit,
         };
       }
-      // Re-check balance in case we raced and still won.
-      const bal = await readBalance(provider, contract, address);
-      if (bal > 0n) {
+      const have = Number(await readFreeMinted(provider, contract, address));
+      if (have > before) {
+        mintedSoFar.set(address, have);
         return { address, ok: true as const, round, txHash: undefined };
       }
       return {
@@ -641,15 +903,21 @@ export async function runCadenceSnipe(
     });
 
     const winners = roundResults.filter((r) => r.ok);
+    totalWins += winners.length;
     for (const w of winners) {
-      won.set(w.address, w);
+      const list = winsByWallet.get(w.address) || [];
+      list.push(w);
+      winsByWallet.set(w.address, list);
     }
 
     if (onProgress) {
       if (winners.length > 0) {
         await onProgress(
-          `✅ Round ${round}: ${winners.length} winner(s) — ${winners
-            .map((w) => w.address.slice(0, 8) + "…")
+          `✅ Round ${round}: ${winners.length} win(s) — ${winners
+            .map(
+              (w) =>
+                `${w.address.slice(0, 8)}… (${mintedSoFar.get(w.address)}/${maxPerWallet})`
+            )
             .join(", ")}`
         );
       } else {
@@ -659,22 +927,51 @@ export async function runCadenceSnipe(
       }
     }
 
-    remaining = remaining.filter((w) => !won.has(w.address.toLowerCase()));
+    remaining = remaining.filter((w) => {
+      const addr = w.address.toLowerCase();
+      return (mintedSoFar.get(addr) || 0) < maxPerWallet;
+    });
 
-    // Brief pause so next slot can open (avoid hammering mid-window).
     if (remaining.length > 0) {
       await sleep(Math.min(1_500, intervalSec * 200));
     }
   }
 
-  const results: CadenceSnipeWalletResult[] = [
-    ...won.values(),
-    ...remaining.map((w) => ({
-      address: w.address.toLowerCase(),
-      ok: false,
-      error: `no win after ${round} round(s)`,
-    })),
-  ];
+  const results: CadenceSnipeWalletResult[] = [];
+  for (const w of funded) {
+    const addr = w.address.toLowerCase();
+    const have = mintedSoFar.get(addr) || 0;
+    const wins = winsByWallet.get(addr) || [];
+    if (
+      have >= maxPerWallet ||
+      wins.some((x) => x.ok && !x.error?.includes("skipped"))
+    ) {
+      const lastWin =
+        [...wins].reverse().find((x) => x.ok && x.txHash) || wins[0];
+      results.push({
+        address: addr,
+        ok: have > 0 || Boolean(lastWin?.ok),
+        txHash: lastWin?.txHash,
+        round: lastWin?.round,
+        gasLimit:
+          wins.reduce((s, x) => s + (x.gasLimit ?? 0n), 0n) || undefined,
+        error:
+          have >= maxPerWallet ? undefined : `partial ${have}/${maxPerWallet}`,
+      });
+    } else if (have > 0) {
+      results.push({
+        address: addr,
+        ok: true,
+        error: `partial ${have}/${maxPerWallet}`,
+      });
+    } else {
+      results.push({
+        address: addr,
+        ok: false,
+        error: `no win after ${round} round(s) (0/${maxPerWallet})`,
+      });
+    }
+  }
 
   const outcomes: MintWalletOutcome[] = results.map((r) => ({
     address: r.address,
@@ -692,24 +989,23 @@ export async function runCadenceSnipe(
     outcomes,
   });
   const statsText = formatMintResultStats(stats);
-  const uniqueOk = new Set(
-    results.filter((r) => r.ok).map((r) => r.address)
-  ).size;
+  const walletsAtCap = [...mintedSoFar.values()].filter(
+    (n) => n >= maxPerWallet
+  ).length;
+  const totalHave = [...mintedSoFar.values()].reduce((a, b) => a + b, 0);
 
   void recordMintSession({
     dryRun: false,
-    success: uniqueOk > 0,
+    success: totalWins > 0 || totalHave > 0,
     attempted: true,
-    okWallets: uniqueOk,
-    failWallets: Math.max(0, funded.length - uniqueOk),
-    gasUsedEstimate: [...won.values()]
-      .filter((r) => r.ok)
-      .reduce((sum, r) => sum + (r.gasLimit ?? 0n), 0n),
+    okWallets: walletsAtCap,
+    failWallets: Math.max(0, funded.length - walletsAtCap),
+    gasUsedEstimate: results.reduce((sum, r) => sum + (r.gasLimit ?? 0n), 0n),
   });
 
   return {
     dryRun: false,
-    success: uniqueOk > 0,
+    success: totalHave > 0,
     slug: target.slug,
     name: target.name,
     contract,
@@ -717,9 +1013,10 @@ export async function runCadenceSnipe(
     calldata: MINT_FREE_SELECTOR,
     intervalSec,
     reason:
-      (uniqueOk > 0
-        ? `Snipe done: ${uniqueOk}/${funded.length} ready wallet(s) hold NFT after ${round} round(s) (${all.length} configured, mintFree, ${intervalSec}s cadence)`
-        : `Snipe failed: 0 winners after ${round} round(s)`) + `\n\n${statsText}`,
+      (totalHave > 0
+        ? `Snipe done: ${totalHave} free mint(s) across ${walletsAtCap}/${funded.length} wallet(s) at cap ${maxPerWallet} after ${round} round(s) (${intervalSec}s cadence)`
+        : `Snipe failed: 0 winners after ${round} round(s)`) +
+      `\n\n${statsText}`,
     results,
     statsText,
   };
