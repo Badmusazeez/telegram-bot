@@ -61,6 +61,11 @@ import {
   MenuBtn,
 } from "./menu";
 import {
+  formatNativeWithUsd,
+  fetchNativeUsdPrice,
+  formatUsd,
+} from "../robinhood/nativeUsd";
+import {
   getMonthlyStats,
   formatMonthlyStatsPlain,
   currentMonthKey,
@@ -105,15 +110,17 @@ async function replyStatus(ctx: Context): Promise<void> {
   const state = getState();
   const wallets = getAllMintWallets();
   const wallet = wallets[0] ?? getWallet();
+  const usdPrice = await fetchNativeUsdPrice();
   let balanceRobinhood: string | undefined;
   let walletAddress = wallet?.address;
   if (wallets.length > 1) {
-    walletAddress = `${wallets.length} wallets (see /listkeys)`;
+    walletAddress = `${wallets.length} wallets (see /listkeys · /balances)`;
     try {
       const bals = await Promise.all(
         wallets.map(async (w) => {
-          const bal = await getNativeBalance(w.address);
-          return `${shortAddress(w.address.toLowerCase())}:${Number(bal).toFixed(4)}`;
+          const bal = Number(await getNativeBalance(w.address));
+          const short = shortAddress(w.address.toLowerCase());
+          return `${short}:${formatNativeWithUsd(bal, usdPrice)}`;
         })
       );
       balanceRobinhood = bals.join(" ");
@@ -122,9 +129,8 @@ async function replyStatus(ctx: Context): Promise<void> {
     }
   } else if (wallet) {
     try {
-      balanceRobinhood = Number(
-        await getNativeBalance(wallet.address)
-      ).toFixed(4);
+      const bal = Number(await getNativeBalance(wallet.address));
+      balanceRobinhood = formatNativeWithUsd(bal, usdPrice);
     } catch {
       balanceRobinhood = "?";
     }
@@ -153,6 +159,7 @@ async function replyStatus(ctx: Context): Promise<void> {
       tipBlock,
       walletAddress,
       balanceRobinhood,
+      ethUsd: usdPrice,
       lastCopy: getLastCopySummary(),
       blockscout: getBlockscoutStatus(),
     }),
@@ -274,21 +281,37 @@ async function replyBalances(ctx: Context): Promise<void> {
     );
     return;
   }
+  const usdPrice = await fetchNativeUsdPrice();
   const lines: string[] = [];
+  let totalNative = 0;
+  let anyOk = false;
   for (let i = 0; i < wallets.length; i++) {
     const w = wallets[i]!;
-    let bal = "?";
     try {
-      bal = Number(await getNativeBalance(w.address)).toFixed(6);
+      const bal = Number(await getNativeBalance(w.address));
+      totalNative += bal;
+      anyOk = true;
+      lines.push(
+        `${i + 1}. <code>${w.address}</code>\n   <b>${escape(
+          formatNativeWithUsd(bal, usdPrice)
+        )}</b>`
+      );
     } catch {
-      bal = "error";
+      lines.push(
+        `${i + 1}. <code>${w.address}</code>\n   <b>error</b>`
+      );
     }
-    lines.push(
-      `${i + 1}. <code>${w.address}</code>\n   <b>${bal}</b> RH`
-    );
   }
+  const footer = [
+    anyOk
+      ? `\n<b>Total:</b> ${escape(formatNativeWithUsd(totalNative, usdPrice))}`
+      : "",
+    usdPrice != null
+      ? `\nETH/USD: <code>${escape(formatUsd(usdPrice))}</code>`
+      : "\n<i>USD price unavailable</i>",
+  ].join("");
   await ctx.reply(
-    `<b>💰 Mint wallet balances</b>\n\n${lines.join("\n\n")}`,
+    `<b>💰 Mint wallet balances</b>\n\n${lines.join("\n\n")}${footer}`,
     { parse_mode: "HTML" }
   );
 }

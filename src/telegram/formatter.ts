@@ -116,6 +116,8 @@ export function formatStatus(params: {
   tipBlock?: number;
   walletAddress?: string;
   balanceRobinhood?: string;
+  /** Live ETH/USD used for $ display (optional). */
+  ethUsd?: number | null;
   lastCopy?: {
     at: string;
     txHash: string;
@@ -135,6 +137,10 @@ export function formatStatus(params: {
   const lastCopyLine = params.lastCopy
     ? `Last copy: <b>${params.lastCopy.success ? "OK" : "FAIL"}</b> <code>${escHtml(params.lastCopy.at)}</code>\n<code>${escHtml(params.lastCopy.reason)}</code>`
     : `Last copy: <i>none yet</i>`;
+  const ethUsdLine =
+    params.ethUsd != null && Number.isFinite(params.ethUsd)
+      ? `ETH/USD: <b>$${params.ethUsd.toFixed(2)}</b>`
+      : "";
   return [
     `<b>robinhood-nft-copy-bot status</b>`,
     ``,
@@ -156,6 +162,7 @@ export function formatStatus(params: {
       ? `Blockscout: <b>${params.blockscout.lastOkAt ? "ok" : "—"}</b>${params.blockscout.lastOkAt ? ` <code>${escHtml(params.blockscout.lastOkAt)}</code>` : ""}${params.blockscout.lastHitTx ? `\nLast BS hit: <code>${escHtml(params.blockscout.lastHitTx.slice(0, 18))}…</code>` : ""}${params.blockscout.lastError ? `\nBS err: <code>${escHtml(params.blockscout.lastError.slice(0, 120))}</code>` : ""}`
       : "",
     lastCopyLine,
+    ethUsdLine,
     params.walletAddress
       ? `Bot wallet: <code>${escHtml(params.walletAddress)}</code> (balance ${escHtml(params.balanceRobinhood ?? "?")})`
       : `Bot wallet: <i>not configured</i>`,
@@ -180,7 +187,7 @@ export function helpText(): string {
     `/watchlist — tracked wallets + price watches`,
     `/nfts — watched NFT prices`,
     `/contracts — collection allowlist`,
-    `/balances — mint wallet RH balances`,
+    `/balances — mint wallet balances + $ USD`,
     `/keys · /listkeys — mint wallet addresses`,
     `/offers — price alert settings + watches`,
     `/scheduled · /schedules — scheduled mints`,
