@@ -79,6 +79,8 @@ export type CadenceSnipeOptions = {
   walletFilter?: "all" | string | string[];
   /** Max slot rounds to attempt (default: remainingSlots * 3 + 5). */
   maxRounds?: number;
+  /** Abort mid-snipe (e.g. /nbtc stop). */
+  signal?: AbortSignal;
   onProgress?: (line: string) => void | Promise<void>;
 };
 
@@ -405,6 +407,43 @@ function normalizeWalletFilter(
   }
   const one = filter.toLowerCase();
   return /^0x[a-f0-9]{40}$/.test(one) ? [one] : "all";
+}
+
+/** Active cadence snipe — /nbtc stop or /snipe stop aborts it. */
+let activeSnipeAbort: AbortController | null = null;
+
+export function isCadenceSnipeRunning(): boolean {
+  return activeSnipeAbort != null && !activeSnipeAbort.signal.aborted;
+}
+
+/** Start a new snipe controller (aborts any previous one). */
+export function beginCadenceSnipe(): AbortSignal {
+  if (activeSnipeAbort) {
+    try {
+      activeSnipeAbort.abort();
+    } catch {
+      // ignore
+    }
+  }
+  activeSnipeAbort = new AbortController();
+  return activeSnipeAbort.signal;
+}
+
+/** Stop the running snipe. Returns true if one was running. */
+export function stopCadenceSnipe(): boolean {
+  if (!activeSnipeAbort || activeSnipeAbort.signal.aborted) {
+    activeSnipeAbort = null;
+    return false;
+  }
+  activeSnipeAbort.abort();
+  activeSnipeAbort = null;
+  return true;
+}
+
+function clearActiveSnipeIfCurrent(signal: AbortSignal): void {
+  if (activeSnipeAbort && activeSnipeAbort.signal === signal) {
+    activeSnipeAbort = null;
+  }
 }
 
 export async function resolveSnipeTarget(raw: string): Promise<{
@@ -768,8 +807,10 @@ export async function runCadenceSnipe(
   let maxPerWallet = Math.max(1, Math.floor(options.maxPerWallet ?? 1));
   const walletFilter = normalizeWalletFilter(options.walletFilter);
   const onProgress = options.onProgress;
+  const signal = options.signal;
   clearWalletReadinessCache();
 
+  try {
   const target = await resolveSnipeTarget(raw);
   const contract = target.contract;
   const provider = getMintProvider();
@@ -932,8 +973,13 @@ export async function runCadenceSnipe(
   let remaining = [...stillNeed];
   let round = 0;
   let totalWins = 0;
+  let stopped = false;
 
   while (remaining.length > 0 && round < maxRounds) {
+    if (signal?.aborted) {
+      stopped = true;
+      break;
+    }
     round += 1;
     if (onProgress) {
       const leftSlots = remaining.reduce(
@@ -948,12 +994,26 @@ export async function runCadenceSnipe(
       );
     }
 
-    await waitForCadenceWindow({
-      provider,
-      contract,
-      probeFrom: remaining[0]!.address,
-      intervalSec,
-    });
+    try {
+      await waitForCadenceWindow({
+        provider,
+        contract,
+        probeFrom: remaining[0]!.address,
+        intervalSec,
+        signal,
+      });
+    } catch (err) {
+      if (signal?.aborted || (err instanceof Error && /aborted/i.test(err.message))) {
+        stopped = true;
+        break;
+      }
+      throw err;
+    }
+
+    if (signal?.aborted) {
+      stopped = true;
+      break;
+    }
 
     if (onProgress) {
       await onProgress(
@@ -962,7 +1022,15 @@ export async function runCadenceSnipe(
     }
 
     const roundResults = await mapPool(remaining, 8, async (wallet, index) => {
-      if (index > 0) await sleep(Math.min(index * 12, 200));
+      if (signal?.aborted) {
+        return {
+          address: wallet.address.toLowerCase(),
+          ok: false as const,
+          round,
+          error: "stopped",
+        };
+      }
+      if (index > 0) await sleep(Math.min(index * 12, 200), signal);
       const address = wallet.address.toLowerCase();
       const before = mintedSoFar.get(address) || 0;
       const sent = await sendMintFree(wallet, contract);
@@ -1020,8 +1088,17 @@ export async function runCadenceSnipe(
     });
 
     if (remaining.length > 0) {
-      await sleep(Math.min(1_500, intervalSec * 200));
+      try {
+        await sleep(Math.min(1_500, intervalSec * 200), signal);
+      } catch {
+        stopped = true;
+        break;
+      }
     }
+  }
+
+  if (stopped && onProgress) {
+    await onProgress("⏹ Snipe stopped.");
   }
 
   const results: CadenceSnipeWalletResult[] = [];
@@ -1100,11 +1177,16 @@ export async function runCadenceSnipe(
     calldata: MINT_FREE_SELECTOR,
     intervalSec,
     reason:
-      (totalHave > 0
-        ? `Snipe done: ${totalHave} free mint(s) across ${walletsAtCap}/${funded.length} wallet(s) at cap ${maxPerWallet} after ${round} round(s) (${intervalSec}s cadence)`
-        : `Snipe failed: 0 winners after ${round} round(s)`) +
+      (stopped
+        ? `Snipe stopped: ${totalHave} free mint(s) so far across ${walletsAtCap}/${funded.length} wallet(s) (cap ${maxPerWallet}) after ${round} round(s)`
+        : totalHave > 0
+          ? `Snipe done: ${totalHave} free mint(s) across ${walletsAtCap}/${funded.length} wallet(s) at cap ${maxPerWallet} after ${round} round(s) (${intervalSec}s cadence)`
+          : `Snipe failed: 0 winners after ${round} round(s)`) +
       `\n\n${statsText}`,
     results,
     statsText,
   };
+  } finally {
+    if (signal) clearActiveSnipeIfCurrent(signal);
+  }
 }

@@ -206,6 +206,7 @@ export function helpText(): string {
     `/nbtc — Not Bitcoin free snipe (all keys)`,
     `/nbtc 1 2 — by /listkeys numbers`,
     `/nbtc 0xA 0xB — by mint addresses`,
+    `/nbtc stop — stop a running snipe`,
     `/snipe nbtc — same as /nbtc`,
     `/snipe &lt;collection|0x|url&gt; [secs] [maxN] [all|0x…] — cadence mintFree snipe`,
     `/schedulemintfromtx &lt;txHash&gt; &lt;when&gt; — copy whale mint calldata`,

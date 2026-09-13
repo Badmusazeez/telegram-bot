@@ -16,6 +16,9 @@ import {
   parseSnipeCommandArgs,
   parseNbtcWalletArgs,
   runCadenceSnipe,
+  beginCadenceSnipe,
+  stopCadenceSnipe,
+  isCadenceSnipeRunning,
   NBTC_RIGS,
   type CadenceSnipeResult,
 } from "../robinhood/cadenceSnipe";
@@ -869,6 +872,18 @@ export function createTelegramBot(): Bot {
 
   bot.command("nbtc", async (ctx) => {
     const raw = (ctx.match || "").trim();
+    const rawLower = raw.toLowerCase();
+
+    if (rawLower === "stop" || rawLower === "cancel") {
+      const was = stopCadenceSnipe();
+      await ctx.reply(
+        was
+          ? "⏹ Stopped the running nBTC/snipe."
+          : "No snipe is running right now."
+      );
+      return;
+    }
+
     const mintAddrs = listMintWalletPublic().map((w) => w.address);
     const parsed = parseNbtcWalletArgs(raw, mintAddrs);
 
@@ -891,6 +906,7 @@ export function createTelegramBot(): Bot {
             "/nbtc 1 2 3 — several keys by number",
             "/nbtc 0xWallet — one address",
             "/nbtc 0xA 0xB — several addresses",
+            "/nbtc stop — stop a running snipe",
             "",
             "<b>Your keys</b>",
             ...keyLines,
@@ -905,6 +921,13 @@ export function createTelegramBot(): Bot {
       return;
     }
 
+    if (isCadenceSnipeRunning()) {
+      await ctx.reply(
+        "A snipe is already running. Send /nbtc stop first, then start again."
+      );
+      return;
+    }
+
     await registerNotifyChat(chatId(ctx));
     const who =
       parsed.filter === "all"
@@ -913,23 +936,28 @@ export function createTelegramBot(): Bot {
             .map((a) => a.slice(0, 8) + "…")
             .join(", ")}`;
     await ctx.reply(
-      `🎯 /nbtc free snipe · ${NBTC_RIGS.intervalSec}s · max ${NBTC_RIGS.maxPerWallet}/wallet · ${who}…`
+      `🎯 /nbtc free snipe · ${NBTC_RIGS.intervalSec}s · max ${NBTC_RIGS.maxPerWallet}/wallet · ${who}…\nSend /nbtc stop to cancel.`
     );
 
     try {
+      const signal = beginCadenceSnipe();
       const result = await runCadenceSnipe(NBTC_RIGS.contract, {
         intervalSec: NBTC_RIGS.intervalSec,
         maxPerWallet: NBTC_RIGS.maxPerWallet,
         walletFilter: parsed.filter,
+        signal,
         onProgress: async (line) => {
           await ctx.reply(line).catch(() => undefined);
         },
       });
       await replyCadenceSnipeResult(ctx, result);
     } catch (err) {
-      await ctx.reply(
-        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/aborted/i.test(msg)) {
+        await ctx.reply("⏹ Snipe stopped.");
+        return;
+      }
+      await ctx.reply(`❌ ${msg.slice(0, 500)}`);
     }
   });
 
@@ -974,24 +1002,35 @@ export function createTelegramBot(): Bot {
         : `${parsed.walletFilter.length} key(s): ${parsed.walletFilter
             .map((a) => a.slice(0, 8) + "…")
             .join(", ")}`;
+    if (isCadenceSnipeRunning()) {
+      await ctx.reply(
+        "A snipe is already running. Send /nbtc stop first, then start again."
+      );
+      return;
+    }
     await ctx.reply(
-      `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · max ${parsed.maxPerWallet}/wallet · mintFree · ${who}…`
+      `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · max ${parsed.maxPerWallet}/wallet · mintFree · ${who}…\nSend /nbtc stop to cancel.`
     );
 
     try {
+      const signal = beginCadenceSnipe();
       const result = await runCadenceSnipe(parsed.target, {
         intervalSec: parsed.intervalSec,
         maxPerWallet: parsed.maxPerWallet,
         walletFilter: parsed.walletFilter,
+        signal,
         onProgress: async (line) => {
           await ctx.reply(line).catch(() => undefined);
         },
       });
       await replyCadenceSnipeResult(ctx, result);
     } catch (err) {
-      await ctx.reply(
-        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/aborted/i.test(msg)) {
+        await ctx.reply("⏹ Snipe stopped.");
+        return;
+      }
+      await ctx.reply(`❌ ${msg.slice(0, 500)}`);
     }
   });
 
