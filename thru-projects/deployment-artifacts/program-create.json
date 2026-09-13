@@ -1,0 +1,11 @@
+{
+  "program_create": {
+    "status": "success",
+    "ephemeral": false,
+    "meta_account": "taDbp7zAbRINImo3fb8yYVW8BU5fjXmZLapfdxTQjQHfaN",
+    "program_account": "taVXvUEl2V15QhclrFtrCMdVo9PwPmTCdnGV1ei3pnjbRG",
+    "seed": "my-first-thru-program-50383",
+    "temp_seed": "9d142f62e364d6def2562e9c3e9d0762",
+    "program_size": 138
+  }
+}

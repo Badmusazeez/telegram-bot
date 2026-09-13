@@ -1,0 +1,12 @@
+{
+  "token_initialize_account": {
+    "status": "success",
+    "token_account": "takh3bWdbKhrIh8lupnjpx0k5HN8201n1IFBvZ8YfD1VdE",
+    "mint": "tawoRb4-Q2nisrnOyaDtRGUKWEK1Yp9PIg-6dKMFkEUCn3",
+    "owner": "tavA0jId5JGEmRH7WF7yBumlpmuSkJn8GpGMSYXFAtD-yS",
+    "seed": "4efc4d95767603857b7f19becaecdac2b626ff57a2de3978b80ceddbf4442f4f",
+    "signature": "ts0t0Cgjg7WlT8UxwLKShKEfHl8ID3A0LuytlMm95Xi6TsniZvcSpv4PFsgxULjz-d6Lwe7n0JLTBIdj1i5PQsBB5A",
+    "slot": 3499511,
+    "compute_units_consumed": 50016
+  }
+}

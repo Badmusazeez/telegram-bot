@@ -1,0 +1,20 @@
+{
+  "nameservice_resolve": {
+    "account": "ta3MkcNXqt7fqHFXMEe4j_kX-wX1fDDjnuhaMKPjFV2QFX",
+    "type": "domain",
+    "domain_name": "alice",
+    "parent": "taYB-gjnnFWCAKgj2L-5WtnbRpddQAa6CUbQ2pQQu0x-9v",
+    "owner": "tavA0jId5JGEmRH7WF7yBumlpmuSkJn8GpGMSYXFAtD-yS",
+    "registration_time": 1784850489366028878,
+    "records": [
+      {
+        "key": "url",
+        "value": "https://thru.org"
+      },
+      {
+        "key": "thru.pubkey",
+        "value": "tavA0jId5JGEmRH7WF7yBumlpmuSkJn8GpGMSYXFAtD-yS"
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+# Secrets / local Thru CLI state (never commit private keys)
+.thru/
+**/.thru/
+*.pem
+*.key
+
+# Local deploy scratch that may contain secrets
+.thru-deploy/local/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~

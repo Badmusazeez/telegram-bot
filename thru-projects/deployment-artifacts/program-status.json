@@ -1,0 +1,52 @@
+{
+  "program_status": {
+    "seed": "my-first-thru-program-50383",
+    "ephemeral": false,
+    "manager_program": "taAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQE",
+    "uploader_program": "taAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIC",
+    "summary": {
+      "status": "deployed",
+      "program_deployed": true,
+      "corrupted_accounts": {
+        "any": false,
+        "program_meta": false,
+        "program_account": false,
+        "uploader_meta": false,
+        "uploader_buffer": false
+      }
+    },
+    "program": {
+      "meta_account": {
+        "address": "taDbp7zAbRINImo3fb8yYVW8BU5fjXmZLapfdxTQjQHfaN",
+        "exists": true,
+        "is_program": false,
+        "data_size": 73,
+        "owner": "taAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQE"
+      },
+      "program_account": {
+        "address": "taVXvUEl2V15QhclrFtrCMdVo9PwPmTCdnGV1ei3pnjbRG",
+        "exists": true,
+        "is_program": true,
+        "data_size": 138,
+        "owner": "taAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQE"
+      }
+    },
+    "uploader": {
+      "temp_seed": "9d142f62e364d6def2562e9c3e9d0762",
+      "meta_account": {
+        "address": "ta-0q37h-_DjfP9T3EuYAqrW0LEhUsqNuYnkIPI00eYMFm",
+        "exists": false,
+        "is_program": false,
+        "data_size": 0,
+        "owner": null
+      },
+      "buffer_account": {
+        "address": "ta0g4JETLUiprMlWrcnw_NFIpFuuHWoUF52LaGzx-9o1Cn",
+        "exists": false,
+        "is_program": false,
+        "data_size": 0,
+        "owner": null
+      }
+    }
+  }
+}
