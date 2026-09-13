@@ -3,19 +3,10 @@ import { config } from "../config";
 import { getState } from "../store/state";
 import {
   getAllMintWallets,
-  getMintBackupProvider,
   getMintProvider,
 } from "./provider";
 import { checkMintWalletReadiness, clearWalletReadinessCache } from "./walletReady";
-import { mintSelectorLabel, resolveMintGasLimit } from "./mintGas";
-import { withWalletNonce, invalidateWalletNonce } from "./nonceManager";
-import {
-  getMintRpcGate,
-  isMissingRevertData,
-  isRpcRateLimitError,
-  mapPool,
-  parseTryAgainMs,
-} from "./rpcGate";
+import { withWalletNonce, invalidateWalletNonce, warmWalletNonce } from "./nonceManager";
 import { classifyRpcError } from "./rpcHealth";
 import { reportMintRpcIssue } from "./mintRpcAlerts";
 import { parseOpenSeaUrl, normalizeOpenSeaInput } from "./openseaUrl";
@@ -597,6 +588,26 @@ async function fetchLastMintFreeSuccessSec(
   return null;
 }
 
+async function getChainTimeMs(
+  provider: ReturnType<typeof getMintProvider>
+): Promise<{ chainNowMs: number; skewMs: number }> {
+  try {
+    const block = await provider.getBlock("latest");
+    if (block?.timestamp) {
+      const chainNowMs = Number(block.timestamp) * 1000;
+      const skewMs = chainNowMs - Date.now();
+      return { chainNowMs, skewMs };
+    }
+  } catch {
+    // fall through
+  }
+  return { chainNowMs: Date.now(), skewMs: 0 };
+}
+
+function localMsFromChain(chainMs: number, skewMs: number): number {
+  return chainMs - skewMs;
+}
+
 async function mintFreeReady(
   provider: ReturnType<typeof getMintProvider>,
   contract: string,
@@ -615,9 +626,19 @@ async function mintFreeReady(
   }
 }
 
+type ArmedMint = {
+  wallet: Wallet;
+  gasLimit: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+  gasPrice?: bigint;
+};
+
 /**
- * Wait until mintFree() estimateGas succeeds (slot open), or until
- * predicted cadence time, then fine-poll.
+ * Wait until mintFree is open. Uses on-chain lastFreeAt + freeInterval synced
+ * to block time, then tight-polls estimateGas in the last ~250ms.
+ * `onArm` runs ~400ms before predicted open (or immediately if already open)
+ * so gas/nonce warm-up does not eat the slot.
  */
 async function waitForCadenceWindow(params: {
   provider: ReturnType<typeof getMintProvider>;
@@ -625,174 +646,176 @@ async function waitForCadenceWindow(params: {
   probeFrom: string;
   intervalSec: number;
   signal?: AbortSignal;
+  onTick?: (line: string) => void | Promise<void>;
+  onArm?: () => void | Promise<void>;
 }): Promise<void> {
   const { provider, contract, probeFrom, intervalSec } = params;
   if (await mintFreeReady(provider, contract, probeFrom)) {
+    if (params.onArm) {
+      try {
+        await params.onArm();
+      } catch {
+        // round loop checks armed.length
+      }
+    }
     return;
   }
 
-  // Prefer on-chain lastFreeAt (nBTC) over Blockscout tx scan.
+  const { skewMs } = await getChainTimeMs(provider);
   let lastSec =
     (await readLastFreeAt(provider, contract)) ??
     (await fetchLastMintFreeSuccessSec(contract));
   const chainIvl = await readFreeInterval(provider, contract);
   const ivl = chainIvl ?? intervalSec;
 
-  let targetMs: number;
+  let openChainMs: number;
   if (lastSec != null) {
-    targetMs = (lastSec + ivl) * 1000;
-    while (targetMs < Date.now() - 1_000) {
-      targetMs += ivl * 1000;
+    openChainMs = (lastSec + ivl) * 1000;
+    const nowChain = Date.now() + skewMs;
+    while (openChainMs < nowChain - 500) {
+      openChainMs += ivl * 1000;
     }
   } else {
     const step = ivl * 1000;
-    targetMs = Math.ceil(Date.now() / step) * step;
+    const nowChain = Date.now() + skewMs;
+    openChainMs = Math.ceil(nowChain / step) * step;
   }
 
-  // Coarse wait until ~400ms before predicted open.
+  if (params.onTick) {
+    const openLocalMs = localMsFromChain(openChainMs, skewMs);
+    const inMs = Math.max(0, openLocalMs - Date.now());
+    await params.onTick(
+      `⏱ Next slot in ~${(inMs / 1000).toFixed(2)}s (ivl=${ivl}s, skew ${skewMs}ms)`
+    );
+  }
+
+  // Coarse wait until ~400ms before predicted open (room to arm).
   for (;;) {
     if (params.signal?.aborted) throw new Error("aborted");
-    const left = targetMs - Date.now();
+    const openLocalMs = localMsFromChain(openChainMs, skewMs);
+    const left = openLocalMs - Date.now();
     if (left <= 400) break;
-    await sleep(Math.min(left - 350, 2_000), params.signal);
-    if (await mintFreeReady(provider, contract, probeFrom)) return;
+    if (left > 1_200) {
+      const fresh = await readLastFreeAt(provider, contract);
+      if (fresh != null && fresh !== lastSec) {
+        lastSec = fresh;
+        openChainMs = (fresh + ivl) * 1000;
+        const nowChain = Date.now() + skewMs;
+        while (openChainMs < nowChain - 500) openChainMs += ivl * 1000;
+      }
+      if (await mintFreeReady(provider, contract, probeFrom)) {
+        if (params.onArm) {
+          try {
+            await params.onArm();
+          } catch {
+            // round loop checks armed.length
+          }
+        }
+        return;
+      }
+    }
+    const refreshedOpenLocal = localMsFromChain(openChainMs, skewMs);
+    const wait = Math.min(
+      Math.max(20, refreshedOpenLocal - Date.now() - 350),
+      400
+    );
+    await sleep(wait, params.signal);
   }
 
-  // Fine-poll estimateGas until open (or interval+2s timeout).
-  const deadline = Date.now() + ivl * 1000 + 2_000;
+  if (params.onArm) {
+    try {
+      await params.onArm();
+    } catch {
+      // round loop checks armed.length
+    }
+  }
+
+  // Tight poll — return the moment the slot opens.
+  const deadline = Date.now() + ivl * 1000 + 2_500;
   while (Date.now() < deadline) {
     if (params.signal?.aborted) throw new Error("aborted");
     if (await mintFreeReady(provider, contract, probeFrom)) return;
-    await sleep(40, params.signal);
+    await sleep(8, params.signal);
   }
 }
 
-async function sendMintFree(
-  wallet: Wallet,
+/** Pre-arm gas + fees + nonces so the open-shot skips estimateGas. */
+async function armMintFreeBurst(
+  wallets: Wallet[],
+  provider: ReturnType<typeof getMintProvider>
+): Promise<ArmedMint[]> {
+  const fee = await provider.getFeeData().catch(() => null);
+  const gasLimit = 220_000n;
+  const armed: ArmedMint[] = [];
+  await Promise.all(
+    wallets.map(async (wallet) => {
+      try {
+        await warmWalletNonce(wallet.address, provider);
+      } catch {
+        // still try
+      }
+      const row: ArmedMint = { wallet, gasLimit };
+      if (fee?.maxFeePerGas != null && fee.maxPriorityFeePerGas != null) {
+        row.maxFeePerGas = (fee.maxFeePerGas * 130n) / 100n;
+        row.maxPriorityFeePerGas = (fee.maxPriorityFeePerGas * 130n) / 100n;
+      } else if (fee?.gasPrice != null) {
+        row.gasPrice = (fee.gasPrice * 130n) / 100n;
+      }
+      armed.push(row);
+    })
+  );
+  return armed;
+}
+
+async function fireArmedMintFree(
+  arm: ArmedMint,
   contract: string
 ): Promise<
   | { ok: true; txHash: string; gasLimit: bigint }
   | { ok: false; error: string }
 > {
-  const gate = getMintRpcGate();
-  const data = MINT_FREE_SELECTOR;
-  const tryProvider = async (
-    provider: ReturnType<typeof getMintProvider>,
-    label: string
-  ) => {
-    const connected = wallet.connect(provider);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        let estimated: bigint;
-        try {
-          estimated = await gate.run(() =>
-            provider.estimateGas({
-              from: wallet.address,
-              to: contract,
-              data,
-              value: 0n,
-            })
-          );
-        } catch (err) {
-          // Pre-window / lost race — still try with safe gas so we don't miss the slot.
-          const msg = err instanceof Error ? err.message : String(err);
-          if (/revert|execution|too early|not open|cooldown/i.test(msg)) {
-            estimated = 150_000n;
-          } else {
-            throw err;
-          }
-        }
-        const resolved = resolveMintGasLimit({
-          estimated,
-          ceiling: config.maxMintGasLimit,
-          marginPct: 25,
-        });
-        console.log(
-          `[snipe:gas] mintFree via=${label} fn=${mintSelectorLabel(data)} ` +
-            `estimate=${estimated} gasLimit=${resolved.ok ? resolved.gasLimit : 0}`
-        );
-        if (!resolved.ok) {
-          return { ok: false as const, error: resolved.reason };
-        }
-        const sent = await gate.run(() =>
-          withWalletNonce({
-            address: wallet.address,
-            provider,
-            fn: async (nonce) =>
-              connected.sendTransaction({
-                to: contract,
-                data,
-                value: 0n,
-                gasLimit: resolved.gasLimit,
-                nonce,
-                chainId: Number(config.chain.chainId),
-              }),
-          })
-        );
-        // Wait briefly for inclusion — only one winner per slot.
-        try {
-          const receipt = await Promise.race([
-            sent.wait(),
-            sleep(8_000).then(() => null),
-          ]);
-          if (receipt && receipt.status === 0) {
-            return { ok: false as const, error: "tx reverted on-chain" };
-          }
-          if (receipt && receipt.status === 1) {
-            return {
-              ok: true as const,
-              txHash: sent.hash,
-              gasLimit: resolved.gasLimit,
-            };
-          }
-        } catch {
-          // pending — check balance below
-        }
-        const bal = await readBalance(provider, contract, wallet.address);
-        if (bal > 0n) {
-          return {
-            ok: true as const,
-            txHash: sent.hash,
-            gasLimit: resolved.gasLimit,
-          };
-        }
-        // Submitted but not winner / not confirmed yet.
-        return {
-          ok: false as const,
-          error: `submitted ${sent.hash.slice(0, 12)}… (not confirmed winner)`,
+  const provider = getMintProvider();
+  const connected = arm.wallet.connect(provider);
+  try {
+    const sent = await withWalletNonce({
+      address: arm.wallet.address,
+      provider,
+      fn: async (nonce) => {
+        const tx: {
+          to: string;
+          data: string;
+          value: bigint;
+          gasLimit: bigint;
+          nonce: number;
+          chainId: number;
+          maxFeePerGas?: bigint;
+          maxPriorityFeePerGas?: bigint;
+          gasPrice?: bigint;
+        } = {
+          to: contract,
+          data: MINT_FREE_SELECTOR,
+          value: 0n,
+          gasLimit: arm.gasLimit,
+          nonce,
+          chainId: Number(config.chain.chainId),
         };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/nonce/i.test(msg)) invalidateWalletNonce(wallet.address);
-        const waitMs = parseTryAgainMs(err);
-        if (waitMs != null && attempt < 2) {
-          await sleep(waitMs);
-          continue;
+        if (arm.maxFeePerGas != null && arm.maxPriorityFeePerGas != null) {
+          tx.maxFeePerGas = arm.maxFeePerGas;
+          tx.maxPriorityFeePerGas = arm.maxPriorityFeePerGas;
+        } else if (arm.gasPrice != null) {
+          tx.gasPrice = arm.gasPrice;
         }
-        if (isMissingRevertData(err) && attempt < 2) {
-          await sleep(120);
-          continue;
-        }
-        if (classifyRpcError(err)) void reportMintRpcIssue(err);
-        return { ok: false as const, error: shortErr(err) };
-      }
-    }
-    return { ok: false as const, error: "send failed" };
-  };
-
-  const primary = await tryProvider(getMintProvider(), "mint-primary");
-  if (primary.ok) return primary;
-  const backup = getMintBackupProvider();
-  const err = primary.error || "";
-  if (
-    backup &&
-    (isRpcRateLimitError(err) ||
-      isMissingRevertData(err) ||
-      /timeout|econn|502|503|504|unavailable|not confirmed/i.test(err))
-  ) {
-    return tryProvider(backup, "mint-backup");
+        return connected.sendTransaction(tx);
+      },
+    });
+    // Broadcast only — do not await inclusion (slot races are speed games).
+    return { ok: true, txHash: sent.hash, gasLimit: arm.gasLimit };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/nonce/i.test(msg)) invalidateWalletNonce(arm.wallet.address);
+    if (classifyRpcError(err)) void reportMintRpcIssue(err);
+    return { ok: false, error: shortErr(err) };
   }
-  return primary;
 }
 
 /**
@@ -990,9 +1013,19 @@ export async function runCadenceSnipe(
       );
       await onProgress(
         `⏳ Round ${round}/${maxRounds} · ${remaining.length} wallet(s) · ` +
-          `${leftSlots} slot(s) · waiting for next ${intervalSec}s window…`
+          `${leftSlots} slot(s) · syncing to next ${intervalSec}s window…`
       );
     }
+
+    // Snapshot freeOf before the window; arm in the last ~400ms of the wait.
+    const beforeCounts = new Map<string, number>();
+    for (const w of remaining) {
+      beforeCounts.set(
+        w.address.toLowerCase(),
+        mintedSoFar.get(w.address.toLowerCase()) || 0
+      );
+    }
+    let armed: ArmedMint[] = [];
 
     try {
       await waitForCadenceWindow({
@@ -1001,9 +1034,21 @@ export async function runCadenceSnipe(
         probeFrom: remaining[0]!.address,
         intervalSec,
         signal,
+        onTick: onProgress,
+        onArm: async () => {
+          if (onProgress) {
+            await onProgress(
+              `🔧 Arming ${remaining.length} wallet(s) (gas/nonce)…`
+            );
+          }
+          armed = await armMintFreeBurst(remaining, provider);
+        },
       });
     } catch (err) {
-      if (signal?.aborted || (err instanceof Error && /aborted/i.test(err.message))) {
+      if (
+        signal?.aborted ||
+        (err instanceof Error && /aborted/i.test(err.message))
+      ) {
         stopped = true;
         break;
       }
@@ -1015,47 +1060,74 @@ export async function runCadenceSnipe(
       break;
     }
 
+    if (armed.length === 0) {
+      if (onProgress) {
+        await onProgress(`⚠️ No wallets armed — retrying next window`);
+      }
+      continue;
+    }
+
     if (onProgress) {
       await onProgress(
-        `🚀 WINDOW OPEN — bursting ${remaining.length} wallet(s) with mintFree()`
+        `🚀 SLOT OPEN — firing ${armed.length} wallet(s) in parallel (no stagger)`
       );
     }
 
-    const roundResults = await mapPool(remaining, 8, async (wallet, index) => {
-      if (signal?.aborted) {
-        return {
-          address: wallet.address.toLowerCase(),
-          ok: false as const,
-          round,
-          error: "stopped",
-        };
+    // Parallel fire — first broadcast wins the race; no per-wallet delay.
+    const fireResults = await Promise.all(
+      armed.map(async (arm) => {
+        if (signal?.aborted) {
+          return {
+            address: arm.wallet.address.toLowerCase(),
+            sent: {
+              ok: false as const,
+              error: "stopped",
+            },
+          };
+        }
+        const sent = await fireArmedMintFree(arm, contract);
+        return { address: arm.wallet.address.toLowerCase(), sent };
+      })
+    );
+
+    // Confirm on-chain freeOf — broadcast ≠ win (only 1 slot / interval).
+    try {
+      await sleep(Math.min(1_400, Math.max(600, intervalSec * 350)), signal);
+    } catch {
+      stopped = true;
+      break;
+    }
+
+    const roundResults: CadenceSnipeWalletResult[] = [];
+    for (const fr of fireResults) {
+      const address = fr.address;
+      const before = beforeCounts.get(address) || 0;
+      let have = before;
+      try {
+        have = Number(await readFreeMinted(provider, contract, address));
+      } catch {
+        // keep before
       }
-      if (index > 0) await sleep(Math.min(index * 12, 200), signal);
-      const address = wallet.address.toLowerCase();
-      const before = mintedSoFar.get(address) || 0;
-      const sent = await sendMintFree(wallet, contract);
-      if (sent.ok) {
-        mintedSoFar.set(address, before + 1);
-        return {
-          address,
-          ok: true as const,
-          txHash: sent.txHash,
-          round,
-          gasLimit: sent.gasLimit,
-        };
-      }
-      const have = Number(await readFreeMinted(provider, contract, address));
       if (have > before) {
         mintedSoFar.set(address, have);
-        return { address, ok: true as const, round, txHash: undefined };
+        roundResults.push({
+          address,
+          ok: true,
+          txHash: fr.sent.ok ? fr.sent.txHash : undefined,
+          round,
+          gasLimit: fr.sent.ok ? fr.sent.gasLimit : undefined,
+        });
+      } else {
+        roundResults.push({
+          address,
+          ok: false,
+          round,
+          error: fr.sent.ok
+            ? "broadcast ok but freeOf unchanged (lost race / reverted)"
+            : fr.sent.error,
+        });
       }
-      return {
-        address,
-        ok: false as const,
-        round,
-        error: sent.error,
-      };
-    });
+    }
 
     const winners = roundResults.filter((r) => r.ok);
     totalWins += winners.length;
@@ -1076,8 +1148,12 @@ export async function runCadenceSnipe(
             .join(", ")}`
         );
       } else {
+        const sample = roundResults
+          .slice(0, 2)
+          .map((r) => r.error || "?")
+          .join("; ");
         await onProgress(
-          `❌ Round ${round}: no winner this slot (lost race / reverted) — retrying next window`
+          `❌ Round ${round}: no freeOf bump (lost race) — ${sample} — next window`
         );
       }
     }
@@ -1086,15 +1162,7 @@ export async function runCadenceSnipe(
       const addr = w.address.toLowerCase();
       return (mintedSoFar.get(addr) || 0) < maxPerWallet;
     });
-
-    if (remaining.length > 0) {
-      try {
-        await sleep(Math.min(1_500, intervalSec * 200), signal);
-      } catch {
-        stopped = true;
-        break;
-      }
-    }
+    // No extra post-round sleep — waitForCadenceWindow syncs to next lastFreeAt.
   }
 
   if (stopped && onProgress) {
