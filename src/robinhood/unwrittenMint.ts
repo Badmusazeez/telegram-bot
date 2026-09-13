@@ -13,8 +13,9 @@ import {
   formatMintResultStats,
   type MintWalletOutcome,
 } from "./mintResultReport";
+import { mineUnwrittenNonce } from "./unwrittenPow";
 
-/** The Unwritten — paid acquire lane (fast). Decipher/PoW is browser-only. */
+/** The Unwritten — paid acquire (fast) or free decipher (CPU PoW). */
 export const UNWRITTEN = {
   contract: "0xcc840af97a2b4ba57410ebc48f2c736f8dacef82",
   name: "The Unwritten",
@@ -27,12 +28,16 @@ export const UNWRITTEN = {
 const IFACE = new Interface([
   "function totalMinted() view returns (uint256)",
   "function nextOpenBlock() view returns (uint256)",
+  "function seed() view returns (bytes32)",
   "function priceOf(uint256 depth) view returns (uint256)",
   "function expectedHashes(uint256 depth) view returns (uint256)",
+  "function targetOf(uint256 depth, uint256) view returns (uint256)",
   "function acquire(uint256 maxPrice) payable returns (uint256)",
+  "function decipher(uint256 nonce) payable returns (uint256)",
 ]);
 
 export const ACQUIRE_SELECTOR = id("acquire(uint256)").slice(0, 10);
+export const DECIPHER_SELECTOR = id("decipher(uint256)").slice(0, 10);
 
 /** Site uses +2% headroom so a small price bump doesn't revert. */
 export const ACQUIRE_SLIPPAGE_BPS = 10200n; // 102%
@@ -42,16 +47,6 @@ export type UnwrittenAcquireOptions = {
   /** Extra slippage bps over on-chain price (default 200 = +2%). */
   slippageBps?: number;
   onProgress?: (line: string) => void | Promise<void>;
-};
-
-export type UnwrittenWalletResult = {
-  address: string;
-  ok: boolean;
-  txHash?: string;
-  tokenId?: number;
-  gasLimit?: bigint;
-  valueWei?: bigint;
-  error?: string;
 };
 
 export type UnwrittenAcquireResult = {
@@ -67,6 +62,19 @@ export type UnwrittenAcquireResult = {
   reason: string;
   results: UnwrittenWalletResult[];
   statsText?: string;
+  /** acquire = paid parallel; decipher = free PoW sequential */
+  mode?: "acquire" | "decipher";
+};
+
+export type UnwrittenWalletResult = {
+  address: string;
+  ok: boolean;
+  txHash?: string;
+  tokenId?: number;
+  gasLimit?: bigint;
+  valueWei?: bigint;
+  nonce?: string;
+  error?: string;
 };
 
 function shortErr(err: unknown): string {
@@ -108,13 +116,15 @@ export async function readUnwrittenMintState(provider = getMintProvider()): Prom
   depth: number;
   priceWei: bigint;
   expectedHashes: bigint;
+  seed: string;
+  target: bigint;
   nextOpenBlock: number;
   tip: number;
   open: boolean;
   soldOut: boolean;
 }> {
   const to = UNWRITTEN.contract;
-  const [mintedRet, openRet, tip] = await Promise.all([
+  const [mintedRet, openRet, seedRet, tip] = await Promise.all([
     provider.call({
       to,
       data: IFACE.encodeFunctionData("totalMinted", []),
@@ -123,16 +133,22 @@ export async function readUnwrittenMintState(provider = getMintProvider()): Prom
       to,
       data: IFACE.encodeFunctionData("nextOpenBlock", []),
     }),
+    provider.call({
+      to,
+      data: IFACE.encodeFunctionData("seed", []),
+    }),
     provider.getBlockNumber(),
   ]);
   const depth = Number(IFACE.decodeFunctionResult("totalMinted", mintedRet)[0]);
   const nextOpenBlock = Number(
     IFACE.decodeFunctionResult("nextOpenBlock", openRet)[0]
   );
+  const seed = IFACE.decodeFunctionResult("seed", seedRet)[0] as string;
   let priceWei = 0n;
   let expectedHashes = 0n;
+  let target = 0n;
   if (depth < UNWRITTEN.maxSupply) {
-    const [priceRet, workRet] = await Promise.all([
+    const [priceRet, workRet, targetRet] = await Promise.all([
       provider.call({
         to,
         data: IFACE.encodeFunctionData("priceOf", [BigInt(depth)]),
@@ -141,17 +157,24 @@ export async function readUnwrittenMintState(provider = getMintProvider()): Prom
         to,
         data: IFACE.encodeFunctionData("expectedHashes", [BigInt(depth)]),
       }),
+      provider.call({
+        to,
+        data: IFACE.encodeFunctionData("targetOf", [BigInt(depth), 0n]),
+      }),
     ]);
     priceWei = IFACE.decodeFunctionResult("priceOf", priceRet)[0] as bigint;
     expectedHashes = IFACE.decodeFunctionResult(
       "expectedHashes",
       workRet
     )[0] as bigint;
+    target = IFACE.decodeFunctionResult("targetOf", targetRet)[0] as bigint;
   }
   return {
     depth,
     priceWei,
     expectedHashes,
+    seed,
+    target,
     nextOpenBlock,
     tip: Number(tip),
     open: Number(tip) >= nextOpenBlock,
@@ -434,6 +457,331 @@ export async function runUnwrittenAcquire(
       (wins.length > 0
         ? `Acquire broadcast: ${wins.length}/${funded.length} wallet(s) submitted @ ${formatEther(valueWei)} ETH (from depth ${mintState.depth})`
         : `Acquire failed: 0/${funded.length} broadcasts`) +
+      `\n\n${statsText}`,
+    results,
+    statsText,
+    mode: "acquire",
+  };
+}
+
+async function fireDecipher(params: {
+  wallet: Wallet;
+  nonce: bigint;
+}): Promise<UnwrittenWalletResult> {
+  const provider = getMintProvider();
+  const connected = params.wallet.connect(provider);
+  const address = params.wallet.address.toLowerCase();
+  const data = IFACE.encodeFunctionData("decipher", [params.nonce]);
+  const gasLimit = 400_000n;
+
+  try {
+    await warmWalletNonce(address, provider);
+    const fee = await provider.getFeeData().catch(() => null);
+    const sent = await withWalletNonce({
+      address,
+      provider,
+      fn: async (txNonce) => {
+        const tx: {
+          to: string;
+          data: string;
+          value: bigint;
+          gasLimit: bigint;
+          nonce: number;
+          chainId: number;
+          maxFeePerGas?: bigint;
+          maxPriorityFeePerGas?: bigint;
+          gasPrice?: bigint;
+        } = {
+          to: UNWRITTEN.contract,
+          data,
+          value: 0n,
+          gasLimit,
+          nonce: txNonce,
+          chainId: Number(config.chain.chainId),
+        };
+        if (fee?.maxFeePerGas != null && fee.maxPriorityFeePerGas != null) {
+          tx.maxFeePerGas = (fee.maxFeePerGas * 130n) / 100n;
+          tx.maxPriorityFeePerGas = (fee.maxPriorityFeePerGas * 130n) / 100n;
+        } else if (fee?.gasPrice != null) {
+          tx.gasPrice = (fee.gasPrice * 130n) / 100n;
+        }
+        return connected.sendTransaction(tx);
+      },
+    });
+    return {
+      address,
+      ok: true,
+      txHash: sent.hash,
+      gasLimit,
+      valueWei: 0n,
+      nonce: params.nonce.toString(),
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/nonce/i.test(msg)) invalidateWalletNonce(address);
+    if (classifyRpcError(err)) void reportMintRpcIssue(err);
+    return {
+      address,
+      ok: false,
+      error: shortErr(err),
+      valueWei: 0n,
+      nonce: params.nonce.toString(),
+    };
+  }
+}
+
+export type UnwrittenDecipherOptions = {
+  walletFilter?: "all" | string | string[];
+  onProgress?: (line: string) => void | Promise<void>;
+};
+
+/**
+ * Free DECIPHER lane: mine PoW per wallet, then decipher(nonce) with 0 ETH.
+ * Sequential — each success advances depth and invalidates other proofs.
+ * Still needs a little ETH for gas only.
+ */
+export async function runUnwrittenDecipher(
+  options: UnwrittenDecipherOptions = {}
+): Promise<UnwrittenAcquireResult> {
+  clearWalletReadinessCache();
+  const walletFilter = normalizeWalletFilter(options.walletFilter);
+  const onProgress = options.onProgress;
+  const state = getState();
+  const provider = getMintProvider();
+
+  const empty = (
+    reason: string,
+    extra?: Partial<UnwrittenAcquireResult>
+  ): UnwrittenAcquireResult => ({
+    dryRun: state.dryRun,
+    success: false,
+    contract: UNWRITTEN.contract,
+    name: UNWRITTEN.name,
+    openSeaUrl: UNWRITTEN.openSeaUrl,
+    siteUrl: UNWRITTEN.siteUrl,
+    depth: 0,
+    priceWei: 0n,
+    valueWei: 0n,
+    reason,
+    results: [],
+    mode: "decipher",
+    ...extra,
+  });
+
+  let mintState;
+  try {
+    mintState = await readUnwrittenMintState(provider);
+  } catch (err) {
+    return empty(`Failed to read mint state: ${shortErr(err)}`);
+  }
+
+  if (mintState.soldOut) {
+    return empty("Sold out (8888/8888).", { depth: mintState.depth });
+  }
+  if (!mintState.open) {
+    return empty(
+      `Public mint not open yet (nextOpenBlock ${mintState.nextOpenBlock}, tip ${mintState.tip}).`,
+      { depth: mintState.depth }
+    );
+  }
+
+  const allConfigured = getAllMintWallets();
+  if (allConfigured.length === 0) {
+    return empty("No mint wallets. /addkey or PRIVATE_KEYS.", {
+      depth: mintState.depth,
+    });
+  }
+
+  let picked = allConfigured;
+  if (walletFilter !== "all") {
+    const want = new Set(walletFilter);
+    picked = allConfigured.filter((w) => want.has(w.address.toLowerCase()));
+    if (picked.length === 0) {
+      return empty("No matching mint keys.", { depth: mintState.depth });
+    }
+  }
+
+  // Gas only — free NFT price is 0
+  const readiness = await checkMintWalletReadiness(picked, { force: true });
+  const funded = readiness.ready;
+  if (funded.length === 0) {
+    return empty(
+      `No wallet has gas. Need a little ETH for gas (NFT is free).`,
+      { depth: mintState.depth }
+    );
+  }
+
+  if (onProgress) {
+    await onProgress(
+      `✴ DECIPHER (free PoW) · depth ${mintState.depth}/8888 · ` +
+        `~${mintState.expectedHashes.toString()} hashes/wallet · ` +
+        `${funded.length} wallet(s) · sequential (proof is per-wallet)`
+    );
+  }
+
+  if (state.dryRun) {
+    const stats = buildMintResultStats({
+      configured: picked.length,
+      fundedReady: funded.length,
+      empty: readiness.empty.length,
+      lowGas: readiness.lowGas.length,
+      outcomes: funded.map((w) => ({
+        address: w.address.toLowerCase(),
+        ok: true,
+        bucket: "success" as const,
+      })),
+    });
+    return {
+      dryRun: true,
+      success: true,
+      contract: UNWRITTEN.contract,
+      name: UNWRITTEN.name,
+      openSeaUrl: UNWRITTEN.openSeaUrl,
+      siteUrl: UNWRITTEN.siteUrl,
+      depth: mintState.depth,
+      priceWei: 0n,
+      valueWei: 0n,
+      mode: "decipher",
+      reason:
+        `DRY RUN — would mine PoW + decipher() for ${funded.length} wallet(s) ` +
+        `(~${mintState.expectedHashes} hashes each, 0 ETH mint). /dryrun off to go live.\n\n` +
+        formatMintResultStats(stats),
+      results: funded.map((w) => ({
+        address: w.address.toLowerCase(),
+        ok: true,
+        valueWei: 0n,
+      })),
+      statsText: formatMintResultStats(stats),
+    };
+  }
+
+  const results: UnwrittenWalletResult[] = [];
+  let startDepth = mintState.depth;
+
+  for (let i = 0; i < funded.length; i++) {
+    const wallet = funded[i]!;
+    const address = wallet.address.toLowerCase();
+
+    // Refresh depth/seed/target every round (someone else may have minted)
+    let st;
+    try {
+      st = await readUnwrittenMintState(provider);
+    } catch (err) {
+      results.push({
+        address,
+        ok: false,
+        error: `state read failed: ${shortErr(err)}`,
+      });
+      continue;
+    }
+    if (st.soldOut || !st.open) {
+      results.push({
+        address,
+        ok: false,
+        error: st.soldOut ? "sold out" : "mint closed",
+      });
+      break;
+    }
+
+    if (onProgress) {
+      await onProgress(
+        `⛏ [${i + 1}/${funded.length}] mining PoW for ${address.slice(0, 10)}… ` +
+          `(depth ${st.depth}, ~${st.expectedHashes} hashes)`
+      );
+    }
+
+    let found;
+    try {
+      found = await mineUnwrittenNonce({
+        seed: st.seed,
+        sender: wallet.address,
+        target: st.target,
+        onProgress: undefined,
+      });
+    } catch (err) {
+      results.push({
+        address,
+        ok: false,
+        error: `mine failed: ${shortErr(err)}`,
+      });
+      continue;
+    }
+
+    // Re-check depth didn't move during mine
+    const st2 = await readUnwrittenMintState(provider).catch(() => null);
+    if (!st2 || st2.depth !== st.depth || st2.seed !== st.seed) {
+      results.push({
+        address,
+        ok: false,
+        error: "depth/seed changed while mining — re-run /unwritten free",
+        nonce: found.nonce,
+      });
+      continue;
+    }
+
+    if (onProgress) {
+      await onProgress(
+        `✅ proof nonce=${found.nonce} · claiming decipher() (0 ETH)…`
+      );
+    }
+
+    const sent = await fireDecipher({
+      wallet,
+      nonce: BigInt(found.nonce),
+    });
+    results.push(sent);
+
+    if (sent.ok && onProgress) {
+      await onProgress(
+        `🚀 claimed · ${address.slice(0, 10)}… tx ${sent.txHash?.slice(0, 12)}…`
+      );
+    }
+
+    // Small pause so chain tip / totalMinted can move before next mine
+    await new Promise((r) => setTimeout(r, 1_200));
+  }
+
+  const wins = results.filter((r) => r.ok);
+  const outcomes: MintWalletOutcome[] = results.map((r) => ({
+    address: r.address,
+    ok: r.ok,
+    txHash: r.ok ? r.txHash : undefined,
+    error: r.ok ? undefined : r.error,
+    bucket: r.ok ? "success" : classifyMintError(r.error),
+  }));
+  const stats = buildMintResultStats({
+    configured: picked.length,
+    fundedReady: funded.length,
+    empty: readiness.empty.length,
+    lowGas: readiness.lowGas.length,
+    outcomes,
+  });
+  const statsText = formatMintResultStats(stats);
+
+  void recordMintSession({
+    dryRun: false,
+    success: wins.length > 0,
+    attempted: true,
+    okWallets: wins.length,
+    failWallets: Math.max(0, funded.length - wins.length),
+    gasUsedEstimate: results.reduce((s, r) => s + (r.gasLimit ?? 0n), 0n),
+  });
+
+  return {
+    dryRun: false,
+    success: wins.length > 0,
+    contract: UNWRITTEN.contract,
+    name: UNWRITTEN.name,
+    openSeaUrl: UNWRITTEN.openSeaUrl,
+    siteUrl: UNWRITTEN.siteUrl,
+    depth: startDepth,
+    priceWei: 0n,
+    valueWei: 0n,
+    mode: "decipher",
+    reason:
+      (wins.length > 0
+        ? `Decipher (free PoW): ${wins.length}/${funded.length} wallet(s) claimed from depth ${startDepth}`
+        : `Decipher failed: 0/${funded.length} wallets`) +
       `\n\n${statsText}`,
     results,
     statsText,

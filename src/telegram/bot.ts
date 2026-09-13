@@ -24,6 +24,7 @@ import {
 } from "../robinhood/cadenceSnipe";
 import {
   runUnwrittenAcquire,
+  runUnwrittenDecipher,
   readUnwrittenMintState,
   UNWRITTEN,
   type UnwrittenAcquireResult,
@@ -1166,27 +1167,35 @@ export function createTelegramBot(): Bot {
     const rawLower = raw.toLowerCase();
     const mintAddrs = listMintWalletPublic().map((w) => w.address);
 
-    if (rawLower === "help" || rawLower === "status") {
+    if (
+      rawLower === "help" ||
+      rawLower === "status" ||
+      rawLower.startsWith("status ")
+    ) {
       try {
         const st = await readUnwrittenMintState();
         await ctx.reply(
           [
-            `<b>The Unwritten — ACQUIRE (fast paid)</b>`,
+            `<b>The Unwritten</b>`,
             `Site: <a href="${UNWRITTEN.siteUrl}">theunwritten.xyz</a>`,
             `OpenSea: <a href="${UNWRITTEN.openSeaUrl}">collection</a>`,
             `Contract: <code>${UNWRITTEN.contract}</code>`,
             ``,
             `Minted: <b>${st.depth}</b> / ${UNWRITTEN.maxSupply}`,
-            `Open: <b>${st.open ? "yes" : "no"}</b> (tip ${st.tip} · openBlock ${st.nextOpenBlock})`,
-            `Price: <b>${formatEther(st.priceWei)}</b> ETH`,
-            `PoW hashes (decipher lane): ${st.expectedHashes.toString()}`,
+            `Open: <b>${st.open ? "yes" : "no"}</b>`,
+            `Acquire price: <b>${formatEther(st.priceWei)}</b> ETH`,
+            `Decipher work: ~<b>${st.expectedHashes.toString()}</b> hashes (FREE NFT, gas only)`,
             ``,
-            `/unwritten — acquire on all funded keys`,
-            `/unwritten 1 2 — by /listkeys numbers`,
-            `/unwritten 0xA 0xB — by addresses`,
+            `<b>FREE (proof / PoW)</b>`,
+            `/unwritten free — all keys · mine + decipher(0 ETH)`,
+            `/unwritten free 1 2 — specific keys`,
             ``,
-            `Paid mint · needs /dryrun off · ~0.002+ ETH/wallet.`,
-            `Decipher/PoW is browser-only — this command uses ACQUIRE.`,
+            `<b>PAID (fast)</b>`,
+            `/unwritten — acquire all keys`,
+            `/unwritten 1 2 — acquire specific keys`,
+            ``,
+            `Free lane is sequential (each mint changes the next proof).`,
+            `Needs /dryrun off · gas ETH on each key.`,
           ].join("\n"),
           {
             parse_mode: "HTML",
@@ -1201,11 +1210,16 @@ export function createTelegramBot(): Bot {
       return;
     }
 
-    const parsed = parseNbtcWalletArgs(raw, mintAddrs);
+    // /unwritten free [wallets…]  OR  /unwritten decipher [wallets…]
+    const freeMatch = rawLower.match(/^(free|decipher|pow|proof)(?:\s+(.*))?$/);
+    const isFree = Boolean(freeMatch);
+    const walletRaw = isFree ? (freeMatch?.[2] || "").trim() : raw;
+
+    const parsed = parseNbtcWalletArgs(walletRaw, mintAddrs);
     if (!parsed.ok) {
       if (parsed.error === "help") {
         await ctx.reply(
-          "Usage:\n/unwritten\n/unwritten all\n/unwritten 1 2\n/unwritten 0xA\n/unwritten status"
+          "Usage:\n/unwritten free\n/unwritten free 1 2\n/unwritten\n/unwritten status"
         );
         return;
       }
@@ -1218,8 +1232,29 @@ export function createTelegramBot(): Bot {
       parsed.filter === "all"
         ? "all funded wallets"
         : `${parsed.filter.length} key(s)`;
+
+    if (isFree) {
+      await ctx.reply(
+        `✴ /unwritten FREE decipher · PoW · ${who}…\n(0 ETH mint · gas only · /dryrun off)\nThis can take a few minutes per wallet.`
+      );
+      try {
+        const result = await runUnwrittenDecipher({
+          walletFilter: parsed.filter,
+          onProgress: async (line) => {
+            await ctx.reply(line).catch(() => undefined);
+          },
+        });
+        await replyUnwrittenResult(ctx, result);
+      } catch (err) {
+        await ctx.reply(
+          `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+        );
+      }
+      return;
+    }
+
     await ctx.reply(
-      `📜 /unwritten ACQUIRE · ${who}…\n(paid · /dryrun off required)`
+      `📜 /unwritten ACQUIRE (paid) · ${who}…\n(/dryrun off · ~0.002+ ETH/wallet)`
     );
 
     try {
@@ -1419,18 +1454,27 @@ async function replyUnwrittenResult(
     result.success
       ? result.dryRun
         ? `<b>🧪 Unwritten DRY RUN</b>`
-        : `<b>✅ Unwritten ACQUIRE sent</b>`
-      : `<b>❌ Unwritten ACQUIRE failed</b>`,
+        : result.mode === "decipher"
+          ? `<b>✅ Unwritten FREE decipher sent</b>`
+          : `<b>✅ Unwritten ACQUIRE sent</b>`
+      : result.mode === "decipher"
+        ? `<b>❌ Unwritten FREE decipher failed</b>`
+        : `<b>❌ Unwritten ACQUIRE failed</b>`,
     ``,
     `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
     `<b>Site:</b> <a href="${escape(result.siteUrl)}">theunwritten.xyz</a>`,
     `<b>Contract:</b> <code>${escape(result.contract)}</code>`,
-    `<b>Depth at fire:</b> ${result.depth} → next Nº ${result.depth + 1}`,
-    `<b>Price:</b> ${escape(formatEther(result.priceWei))} ETH`,
-    `<b>Send:</b> ${escape(formatEther(result.valueWei))} ETH (+slip)`,
+    `<b>Mode:</b> ${result.mode === "decipher" ? "FREE decipher (PoW)" : "PAID acquire"}`,
+    `<b>Depth at start:</b> ${result.depth}`,
+    result.mode === "decipher"
+      ? `<b>Mint price:</b> 0 ETH (gas only)`
+      : `<b>Price:</b> ${escape(formatEther(result.priceWei))} ETH`,
+    result.mode === "decipher"
+      ? null
+      : `<b>Send:</b> ${escape(formatEther(result.valueWei))} ETH (+slip)`,
     ``,
     `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
-  ];
+  ].filter((l): l is string => l != null && l !== "");
 
   if (result.results.length > 0 && result.results.length <= 25) {
     lines.push(``);
