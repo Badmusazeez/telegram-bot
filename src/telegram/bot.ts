@@ -14,9 +14,15 @@ import { parseOpenSeaUrl } from "../robinhood/openseaUrl";
 import { mintOpenSeaSlugNow, parseSlugMintCommandArgs, type SlugMintResult } from "../robinhood/slugMint";
 import {
   parseSnipeCommandArgs,
+  parseNbtcWalletArgs,
   runCadenceSnipe,
+  beginCadenceSnipe,
+  stopCadenceSnipe,
+  isCadenceSnipeRunning,
+  NBTC_RIGS,
   type CadenceSnipeResult,
 } from "../robinhood/cadenceSnipe";
+
 import {
   getAllMintWallets,
   getNativeBalance,
@@ -864,21 +870,119 @@ export function createTelegramBot(): Bot {
     }
   });
 
+  bot.command("nbtc", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    const rawLower = raw.toLowerCase();
+
+    if (rawLower === "stop" || rawLower === "cancel") {
+      const was = stopCadenceSnipe();
+      await ctx.reply(
+        was
+          ? "⏹ Stopped the running nBTC/snipe."
+          : "No snipe is running right now."
+      );
+      return;
+    }
+
+    const mintAddrs = listMintWalletPublic().map((w) => w.address);
+    const parsed = parseNbtcWalletArgs(raw, mintAddrs);
+
+    if (!parsed.ok) {
+      if (parsed.error === "help") {
+        const keyLines =
+          mintAddrs.length === 0
+            ? ["(no mint keys — /addkey first)"]
+            : mintAddrs.map(
+                (a, i) => `${i + 1}. <code>${a}</code>`
+              );
+        await ctx.reply(
+          [
+            "<b>Not Bitcoin free snipe</b>",
+            `1 mint every <b>${NBTC_RIGS.intervalSec}s</b> · max <b>${NBTC_RIGS.maxPerWallet}</b>/wallet`,
+            "",
+            "/nbtc — all funded mint keys",
+            "/nbtc all — same",
+            "/nbtc 1 — key #1 from /listkeys",
+            "/nbtc 1 2 3 — several keys by number",
+            "/nbtc 0xWallet — one address",
+            "/nbtc 0xA 0xB — several addresses",
+            "/nbtc stop — stop a running snipe",
+            "",
+            "<b>Your keys</b>",
+            ...keyLines,
+            "",
+            "Requires /dryrun off + RH gas on each key.",
+          ].join("\n"),
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+      await ctx.reply(parsed.error);
+      return;
+    }
+
+    if (isCadenceSnipeRunning()) {
+      await ctx.reply(
+        "A snipe is already running. Send /nbtc stop first, then start again."
+      );
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    const who =
+      parsed.filter === "all"
+        ? "all funded wallets"
+        : `${parsed.filter.length} key(s): ${parsed.filter
+            .map((a) => a.slice(0, 8) + "…")
+            .join(", ")}`;
+    await ctx.reply(
+      `🎯 /nbtc free snipe · ${NBTC_RIGS.intervalSec}s · max ${NBTC_RIGS.maxPerWallet}/wallet · ${who}…\nSend /nbtc stop to cancel.`
+    );
+
+    try {
+      const signal = beginCadenceSnipe();
+      const result = await runCadenceSnipe(NBTC_RIGS.contract, {
+        intervalSec: NBTC_RIGS.intervalSec,
+        maxPerWallet: NBTC_RIGS.maxPerWallet,
+        walletFilter: parsed.filter,
+        signal,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyCadenceSnipeResult(ctx, result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/aborted/i.test(msg)) {
+        await ctx.reply("⏹ Snipe stopped.");
+        return;
+      }
+      await ctx.reply(`❌ ${msg.slice(0, 500)}`);
+    }
+  });
+
   bot.command("snipe", async (ctx) => {
     const raw = (ctx.match || "").trim();
     if (!raw) {
       await ctx.reply(
         [
-          "Cadence snipe — 1 on-chain winner per interval, 1 NFT per wallet:",
+          "Cadence snipe — 1 on-chain winner per interval, mintFree():",
           "",
+          "<b>Not Bitcoin (free every 3s, max 3/wallet)</b>",
+          "/snipe nbtc",
+          "/snipe nbtc all",
+          "/snipe nbtc 0xYourMintWallet",
+          "",
+          "<b>Generic</b>",
           "/snipe https://opensea.io/collection/wrong-bird 10",
           "/snipe wrong-bird 10",
-          "/snipe 0xeb00d52ef95ea6aef1a7dfdc16337053eeedf5e6 10",
+          "/snipe 0xContract 10 1 all",
           "",
-          "Uses mintFree() · bursts all remaining wallets each window",
-          "until every funded wallet holds 1 (or rounds exhausted).",
+          "Args: [secs] [maxPerWallet] [all|0xwallet]",
+          "Bursts remaining wallets each window until caps filled.",
           "Respects /dryrun. Independent of /copy on|off.",
-        ].join("\n")
+        ].join("\n"),
+        { parse_mode: "HTML" }
       );
       return;
     }
@@ -886,28 +990,47 @@ export function createTelegramBot(): Bot {
     const parsed = parseSnipeCommandArgs(raw);
     if (!parsed) {
       await ctx.reply(
-        "Invalid target. Example:\n/snipe https://opensea.io/collection/wrong-bird 10"
+        "Invalid target. Examples:\n/snipe nbtc\n/snipe nbtc 0xYourWallet\n/snipe wrong-bird 10"
       );
       return;
     }
 
     await registerNotifyChat(chatId(ctx));
+    const who =
+      parsed.walletFilter === "all"
+        ? "all funded wallets"
+        : `${parsed.walletFilter.length} key(s): ${parsed.walletFilter
+            .map((a) => a.slice(0, 8) + "…")
+            .join(", ")}`;
+    if (isCadenceSnipeRunning()) {
+      await ctx.reply(
+        "A snipe is already running. Send /nbtc stop first, then start again."
+      );
+      return;
+    }
     await ctx.reply(
-      `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · mintFree · all funded wallets…`
+      `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · max ${parsed.maxPerWallet}/wallet · mintFree · ${who}…\nSend /nbtc stop to cancel.`
     );
 
     try {
+      const signal = beginCadenceSnipe();
       const result = await runCadenceSnipe(parsed.target, {
         intervalSec: parsed.intervalSec,
+        maxPerWallet: parsed.maxPerWallet,
+        walletFilter: parsed.walletFilter,
+        signal,
         onProgress: async (line) => {
           await ctx.reply(line).catch(() => undefined);
         },
       });
       await replyCadenceSnipeResult(ctx, result);
     } catch (err) {
-      await ctx.reply(
-        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/aborted/i.test(msg)) {
+        await ctx.reply("⏹ Snipe stopped.");
+        return;
+      }
+      await ctx.reply(`❌ ${msg.slice(0, 500)}`);
     }
   });
 
