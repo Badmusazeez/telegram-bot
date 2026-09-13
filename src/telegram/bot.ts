@@ -15,8 +15,10 @@ import { mintOpenSeaSlugNow, parseSlugMintCommandArgs, type SlugMintResult } fro
 import {
   parseSnipeCommandArgs,
   runCadenceSnipe,
+  NBTC_RIGS,
   type CadenceSnipeResult,
 } from "../robinhood/cadenceSnipe";
+
 import {
   getAllMintWallets,
   getNativeBalance,
@@ -857,6 +859,64 @@ export function createTelegramBot(): Bot {
         },
       });
       await replySlugMintResult(ctx, result, "Claim");
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("nbtc", async (ctx) => {
+    const raw = (ctx.match || "").trim().toLowerCase();
+    // /nbtc | /nbtc all | /nbtc 0xWallet
+    let walletFilter: "all" | string = "all";
+    if (!raw || raw === "all" || raw === "help") {
+      if (raw === "help") {
+        await ctx.reply(
+          [
+            "<b>Not Bitcoin free snipe</b>",
+            `1 mint every <b>${NBTC_RIGS.intervalSec}s</b> · max <b>${NBTC_RIGS.maxPerWallet}</b>/wallet`,
+            "",
+            "/nbtc — all funded mint keys",
+            "/nbtc all — same",
+            "/nbtc 0xYourWallet — one key only",
+            "",
+            "Requires /dryrun off + RH gas on each key.",
+            `OpenSea: ${NBTC_RIGS.openSeaUrl}`,
+          ].join("\n"),
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+      walletFilter = "all";
+    } else if (/^0x[a-f0-9]{40}$/.test(raw)) {
+      walletFilter = raw;
+    } else {
+      await ctx.reply(
+        "Usage:\n/nbtc\n/nbtc all\n/nbtc 0xYourMintWallet\n/nbtc help"
+      );
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    const who =
+      walletFilter === "all"
+        ? "all funded wallets"
+        : `only ${walletFilter.slice(0, 10)}…`;
+    await ctx.reply(
+      `🎯 /nbtc free snipe · ${NBTC_RIGS.intervalSec}s · max ${NBTC_RIGS.maxPerWallet}/wallet · ${who}…`
+    );
+
+    try {
+      const result = await runCadenceSnipe(NBTC_RIGS.contract, {
+        intervalSec: NBTC_RIGS.intervalSec,
+        maxPerWallet: NBTC_RIGS.maxPerWallet,
+        walletFilter,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyCadenceSnipeResult(ctx, result);
     } catch (err) {
       await ctx.reply(
         `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
