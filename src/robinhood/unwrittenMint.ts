@@ -13,7 +13,7 @@ import {
   formatMintResultStats,
   type MintWalletOutcome,
 } from "./mintResultReport";
-import { mineUnwrittenNonce } from "./unwrittenPow";
+import { mineUnwrittenNonce, PowAbortedError } from "./unwrittenPow";
 
 /** The Unwritten — paid acquire (fast) or free decipher (CPU PoW). */
 export const UNWRITTEN = {
@@ -532,12 +532,15 @@ async function fireDecipher(params: {
 
 export type UnwrittenDecipherOptions = {
   walletFilter?: "all" | string | string[];
+  /** Max remine attempts per wallet when depth moves (default 30). */
+  maxAttemptsPerWallet?: number;
   onProgress?: (line: string) => void | Promise<void>;
 };
 
 /**
  * Free DECIPHER lane: mine PoW per wallet, then decipher(nonce) with 0 ETH.
  * Sequential — each success advances depth and invalidates other proofs.
+ * Auto-remimes when depth/seed changes mid-mine (busy mints).
  * Still needs a little ETH for gas only.
  */
 export async function runUnwrittenDecipher(
@@ -546,6 +549,7 @@ export async function runUnwrittenDecipher(
   clearWalletReadinessCache();
   const walletFilter = normalizeWalletFilter(options.walletFilter);
   const onProgress = options.onProgress;
+  const maxAttempts = Math.max(1, options.maxAttemptsPerWallet ?? 30);
   const state = getState();
   const provider = getMintProvider();
 
@@ -615,7 +619,7 @@ export async function runUnwrittenDecipher(
     await onProgress(
       `✴ DECIPHER (free PoW) · depth ${mintState.depth}/8888 · ` +
         `~${mintState.expectedHashes.toString()} hashes/wallet · ` +
-        `${funded.length} wallet(s) · sequential (proof is per-wallet)`
+        `${funded.length} wallet(s) · auto-retry x${maxAttempts} if depth moves`
     );
   }
 
@@ -656,89 +660,121 @@ export async function runUnwrittenDecipher(
   }
 
   const results: UnwrittenWalletResult[] = [];
-  let startDepth = mintState.depth;
+  const startDepth = mintState.depth;
 
   for (let i = 0; i < funded.length; i++) {
     const wallet = funded[i]!;
     const address = wallet.address.toLowerCase();
+    let lastError = "unknown";
+    let claimed = false;
 
-    // Refresh depth/seed/target every round (someone else may have minted)
-    let st;
-    try {
-      st = await readUnwrittenMintState(provider);
-    } catch (err) {
+    // Pre-warm nonce so claim broadcast is instant after proof.
+    void warmWalletNonce(address, provider).catch(() => undefined);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let st;
+      try {
+        st = await readUnwrittenMintState(provider);
+      } catch (err) {
+        lastError = `state read failed: ${shortErr(err)}`;
+        await sleepMs(800);
+        continue;
+      }
+      if (st.soldOut || !st.open) {
+        lastError = st.soldOut ? "sold out" : "mint closed";
+        break;
+      }
+
+      if (onProgress) {
+        await onProgress(
+          `⛏ [${i + 1}/${funded.length}] attempt ${attempt}/${maxAttempts} · ` +
+            `${address.slice(0, 10)}… · depth ${st.depth} · ~${st.expectedHashes} hashes`
+        );
+      }
+
+      const depthAtStart = st.depth;
+      const seedAtStart = st.seed;
+
+      let found;
+      try {
+        found = await mineUnwrittenNonce({
+          seed: st.seed,
+          sender: wallet.address,
+          target: st.target,
+          stopPollMs: 1_200,
+          shouldStop: async () => {
+            const live = await readUnwrittenMintState(provider).catch(
+              () => null
+            );
+            if (!live) return false;
+            return live.depth !== depthAtStart || live.seed !== seedAtStart;
+          },
+        });
+      } catch (err) {
+        if (err instanceof PowAbortedError) {
+          lastError = "depth moved mid-mine — remine";
+          if (onProgress && attempt < maxAttempts) {
+            await onProgress(
+              `↻ depth moved while mining — remine (${attempt}/${maxAttempts})…`
+            );
+          }
+          continue;
+        }
+        lastError = `mine failed: ${shortErr(err)}`;
+        continue;
+      }
+
+      // Final freshness check right before broadcast
+      const st2 = await readUnwrittenMintState(provider).catch(() => null);
+      if (!st2 || st2.depth !== depthAtStart || st2.seed !== seedAtStart) {
+        lastError = "depth moved after proof — remine";
+        if (onProgress && attempt < maxAttempts) {
+          await onProgress(`↻ proof stale — remine (${attempt}/${maxAttempts})…`);
+        }
+        continue;
+      }
+
+      if (onProgress) {
+        await onProgress(
+          `✅ proof nonce=${found.nonce} · claiming decipher() now…`
+        );
+      }
+
+      const sent = await fireDecipher({
+        wallet,
+        nonce: BigInt(found.nonce),
+      });
+
+      if (sent.ok) {
+        results.push(sent);
+        claimed = true;
+        if (onProgress) {
+          await onProgress(
+            `🚀 claimed · ${address.slice(0, 10)}… tx ${sent.txHash?.slice(0, 12)}…`
+          );
+        }
+        break;
+      }
+
+      // Revert often means someone else took this depth — remine
+      lastError = sent.error || "claim failed";
+      if (onProgress && attempt < maxAttempts) {
+        await onProgress(
+          `⚠️ claim failed (${lastError.slice(0, 60)}) — remine…`
+        );
+      }
+    }
+
+    if (!claimed) {
       results.push({
         address,
         ok: false,
-        error: `state read failed: ${shortErr(err)}`,
+        error: lastError,
       });
-      continue;
-    }
-    if (st.soldOut || !st.open) {
-      results.push({
-        address,
-        ok: false,
-        error: st.soldOut ? "sold out" : "mint closed",
-      });
-      break;
     }
 
-    if (onProgress) {
-      await onProgress(
-        `⛏ [${i + 1}/${funded.length}] mining PoW for ${address.slice(0, 10)}… ` +
-          `(depth ${st.depth}, ~${st.expectedHashes} hashes)`
-      );
-    }
-
-    let found;
-    try {
-      found = await mineUnwrittenNonce({
-        seed: st.seed,
-        sender: wallet.address,
-        target: st.target,
-        onProgress: undefined,
-      });
-    } catch (err) {
-      results.push({
-        address,
-        ok: false,
-        error: `mine failed: ${shortErr(err)}`,
-      });
-      continue;
-    }
-
-    // Re-check depth didn't move during mine
-    const st2 = await readUnwrittenMintState(provider).catch(() => null);
-    if (!st2 || st2.depth !== st.depth || st2.seed !== st.seed) {
-      results.push({
-        address,
-        ok: false,
-        error: "depth/seed changed while mining — re-run /unwritten free",
-        nonce: found.nonce,
-      });
-      continue;
-    }
-
-    if (onProgress) {
-      await onProgress(
-        `✅ proof nonce=${found.nonce} · claiming decipher() (0 ETH)…`
-      );
-    }
-
-    const sent = await fireDecipher({
-      wallet,
-      nonce: BigInt(found.nonce),
-    });
-    results.push(sent);
-
-    if (sent.ok && onProgress) {
-      await onProgress(
-        `🚀 claimed · ${address.slice(0, 10)}… tx ${sent.txHash?.slice(0, 12)}…`
-      );
-    }
-
-    // Small pause so chain tip / totalMinted can move before next mine
-    await new Promise((r) => setTimeout(r, 1_200));
+    // Brief pause before next wallet so tip can update
+    await sleepMs(600);
   }
 
   const wins = results.filter((r) => r.ok);
@@ -786,4 +822,8 @@ export async function runUnwrittenDecipher(
     results,
     statsText,
   };
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

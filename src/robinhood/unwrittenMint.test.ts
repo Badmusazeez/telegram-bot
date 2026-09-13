@@ -47,4 +47,24 @@ describe("unwrittenPow", () => {
     assert.ok(found);
     assert.ok(BigInt(found!.hash) < target);
   });
+
+  it("sync mine respects shouldStop", () => {
+    const seed =
+      "0x107270bf7525d4674c39b58b6aca76fdbed4350783cb6e1515ff9a3f38f37033";
+    const sender = "0x1111111111111111111111111111111111111111";
+    const target = 1n << 200n;
+    let calls = 0;
+    const found = mineUnwrittenNonceSync({
+      seed,
+      sender,
+      target,
+      maxTries: 10_000,
+      shouldStop: () => {
+        calls++;
+        return calls > 3;
+      },
+    });
+    assert.equal(found, null);
+    assert.ok(calls > 3);
+  });
 });
