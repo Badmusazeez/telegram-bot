@@ -60,3 +60,15 @@ Full details: [`thru-projects/deployment-results.md`](thru-projects/deployment-r
 - Docs: https://docs.thru.org
 - Explorer: https://scan.thru.org
 - RPC: https://rpc.alphanet.thru.org
+
+
+## 30-account batch (guide tasks)
+
+Completed the full getting-started guide for `acct01`–`acct30` (30/30 success):
+
+- Faucet fund each account from the **network faucet only** (no transfers between accounts)
+- Deploy C program
+- Mint fungible token + token account + mint 1000 supply
+- Register nameservice root, `alice` subdomain, and records
+
+Results: [`thru-projects/30-accounts-guide-results.md`](thru-projects/30-accounts-guide-results.md)
