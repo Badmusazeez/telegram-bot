@@ -70,8 +70,13 @@ export type CadenceSnipeOptions = {
   intervalSec?: number;
   /** Max free mints per wallet (Wrong Bird ≈ 1, nBTC = 3). */
   maxPerWallet?: number;
-  /** `all` (default) or a specific mint-wallet address. */
-  walletFilter?: "all" | string;
+  /**
+   * Which mint keys to use:
+   * - `all` (default)
+   * - one `0x…` address
+   * - several `0x…` addresses
+   */
+  walletFilter?: "all" | string | string[];
   /** Max slot rounds to attempt (default: remainingSlots * 3 + 5). */
   maxRounds?: number;
   onProgress?: (line: string) => void | Promise<void>;
@@ -210,7 +215,8 @@ export type ParsedSnipeArgs = {
   target: string;
   intervalSec: number;
   maxPerWallet: number;
-  walletFilter: "all" | string;
+  /** `all` or one/more mint-wallet addresses. */
+  walletFilter: "all" | string[];
 };
 
 function isNbtcAlias(target: string): boolean {
@@ -225,12 +231,12 @@ function isNbtcAlias(target: string): boolean {
 }
 
 /**
- * Parse `/snipe <url|slug|0x|nbtc> [secs] [maxN] [all|0xwallet]`.
+ * Parse `/snipe <url|slug|0x|nbtc> [secs] [maxN] [all|0x… 0x…]`.
  *
  * Examples:
  *   /snipe nbtc
  *   /snipe nbtc all
- *   /snipe nbtc 0xYourWallet
+ *   /snipe nbtc 0xWalletA 0xWalletB
  *   /snipe nbtc-mining-rigs-517198745 3 3 all
  *   /snipe wrong-bird 10
  */
@@ -244,7 +250,8 @@ export function parseSnipeCommandArgs(raw: string): ParsedSnipeArgs | null {
   let target = tokens[0]!;
   let intervalSec: number | undefined;
   let maxPerWallet: number | undefined;
-  let walletFilter: "all" | string = "all";
+  let walletFilter: "all" | string[] = "all";
+  const wallets: string[] = [];
 
   for (let i = 1; i < tokens.length; i++) {
     const tok = tokens[i]!;
@@ -271,17 +278,20 @@ export function parseSnipeCommandArgs(raw: string): ParsedSnipeArgs | null {
     }
     if (/^all$/i.test(tok)) {
       walletFilter = "all";
+      wallets.length = 0;
       continue;
     }
     if (/^0x[a-fA-F0-9]{40}$/.test(tok)) {
-      walletFilter = tok.toLowerCase();
+      wallets.push(tok.toLowerCase());
       continue;
     }
-    // Allow multi-word OpenSea URLs already normalized into token[0] only.
     return null;
   }
 
-  // Re-join if first token looked like URL with no spaces (already one token).
+  if (wallets.length > 0) {
+    walletFilter = [...new Set(wallets)];
+  }
+
   const normalized = normalizeOpenSeaInput(target);
   if (!normalized) return null;
 
@@ -320,6 +330,81 @@ export function parseSnipeCommandArgs(raw: string): ParsedSnipeArgs | null {
     };
   }
   return null;
+}
+
+/**
+ * Parse `/nbtc` wallet args: all | 0x… | 1-based /listkeys indices.
+ * Examples: `` | `all` | `0xA 0xB` | `1 3` | `1 0xB`
+ */
+export function parseNbtcWalletArgs(
+  raw: string,
+  mintAddresses: string[]
+): { ok: true; filter: "all" | string[] } | { ok: false; error: string } {
+  const text = raw.trim().toLowerCase();
+  if (!text || text === "all") {
+    return { ok: true, filter: "all" };
+  }
+  if (text === "help") {
+    return { ok: false, error: "help" };
+  }
+
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const picked: string[] = [];
+  const ordered = mintAddresses.map((a) => a.toLowerCase());
+
+  for (const tok of tokens) {
+    if (tok === "all") {
+      return { ok: true, filter: "all" };
+    }
+    if (/^0x[a-f0-9]{40}$/.test(tok)) {
+      if (!ordered.includes(tok)) {
+        return {
+          ok: false,
+          error: `${tok} is not one of your mint keys. /listkeys`,
+        };
+      }
+      picked.push(tok);
+      continue;
+    }
+    if (/^\d+$/.test(tok)) {
+      const idx = Number(tok);
+      if (!Number.isFinite(idx) || idx < 1 || idx > ordered.length) {
+        return {
+          ok: false,
+          error: `Key #${tok} out of range (1–${ordered.length}). /listkeys`,
+        };
+      }
+      picked.push(ordered[idx - 1]!);
+      continue;
+    }
+    return {
+      ok: false,
+      error: "Usage:\n/nbtc\n/nbtc all\n/nbtc 1\n/nbtc 1 2 3\n/nbtc 0xA 0xB\n/nbtc help",
+    };
+  }
+
+  if (picked.length === 0) {
+    return { ok: true, filter: "all" };
+  }
+  return { ok: true, filter: [...new Set(picked)] };
+}
+
+function normalizeWalletFilter(
+  filter: CadenceSnipeOptions["walletFilter"]
+): "all" | string[] {
+  if (!filter || filter === "all") return "all";
+  if (Array.isArray(filter)) {
+    const addrs = [
+      ...new Set(
+        filter
+          .map((a) => a.toLowerCase())
+          .filter((a) => /^0x[a-f0-9]{40}$/.test(a))
+      ),
+    ];
+    return addrs.length ? addrs : "all";
+  }
+  const one = filter.toLowerCase();
+  return /^0x[a-f0-9]{40}$/.test(one) ? [one] : "all";
 }
 
 export async function resolveSnipeTarget(raw: string): Promise<{
@@ -681,7 +766,7 @@ export async function runCadenceSnipe(
 ): Promise<CadenceSnipeResult> {
   const intervalSec = Math.max(1, Math.floor(options.intervalSec ?? 10));
   let maxPerWallet = Math.max(1, Math.floor(options.maxPerWallet ?? 1));
-  const walletFilter = (options.walletFilter || "all").toLowerCase();
+  const walletFilter = normalizeWalletFilter(options.walletFilter);
   const onProgress = options.onProgress;
   clearWalletReadinessCache();
 
@@ -721,16 +806,18 @@ export async function runCadenceSnipe(
 
   let all = allConfigured;
   if (walletFilter !== "all") {
-    if (!/^0x[a-f0-9]{40}$/.test(walletFilter)) {
-      return emptyResult(`Invalid wallet filter: ${walletFilter}`);
-    }
-    all = allConfigured.filter(
-      (w) => w.address.toLowerCase() === walletFilter
+    const want = new Set(walletFilter);
+    all = allConfigured.filter((w) => want.has(w.address.toLowerCase()));
+    const missing = walletFilter.filter(
+      (a) => !allConfigured.some((w) => w.address.toLowerCase() === a)
     );
-    if (all.length === 0) {
+    if (missing.length > 0) {
       return emptyResult(
-        `Wallet ${walletFilter} is not one of your mint keys. /listkeys`
+        `Not your mint key(s): ${missing.map((a) => a.slice(0, 10) + "…").join(", ")}. /listkeys`
       );
+    }
+    if (all.length === 0) {
+      return emptyResult("No matching mint keys. /listkeys");
     }
   }
 
@@ -783,7 +870,7 @@ export async function runCadenceSnipe(
         `max ${maxPerWallet}/wallet · ${stillNeed.length} wallet(s) · ` +
         `${slotsLeft} slot(s) left` +
         (walletFilter !== "all"
-          ? ` · only ${walletFilter.slice(0, 10)}…`
+          ? ` · keys ${walletFilter.map((a) => a.slice(0, 8) + "…").join(",")}`
           : " · all keys")
     );
   }

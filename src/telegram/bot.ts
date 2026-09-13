@@ -14,6 +14,7 @@ import { parseOpenSeaUrl } from "../robinhood/openseaUrl";
 import { mintOpenSeaSlugNow, parseSlugMintCommandArgs, type SlugMintResult } from "../robinhood/slugMint";
 import {
   parseSnipeCommandArgs,
+  parseNbtcWalletArgs,
   runCadenceSnipe,
   NBTC_RIGS,
   type CadenceSnipeResult,
@@ -867,11 +868,18 @@ export function createTelegramBot(): Bot {
   });
 
   bot.command("nbtc", async (ctx) => {
-    const raw = (ctx.match || "").trim().toLowerCase();
-    // /nbtc | /nbtc all | /nbtc 0xWallet
-    let walletFilter: "all" | string = "all";
-    if (!raw || raw === "all" || raw === "help") {
-      if (raw === "help") {
+    const raw = (ctx.match || "").trim();
+    const mintAddrs = listMintWalletPublic().map((w) => w.address);
+    const parsed = parseNbtcWalletArgs(raw, mintAddrs);
+
+    if (!parsed.ok) {
+      if (parsed.error === "help") {
+        const keyLines =
+          mintAddrs.length === 0
+            ? ["(no mint keys — /addkey first)"]
+            : mintAddrs.map(
+                (a, i) => `${i + 1}. <code>${a}</code>`
+              );
         await ctx.reply(
           [
             "<b>Not Bitcoin free snipe</b>",
@@ -879,30 +887,31 @@ export function createTelegramBot(): Bot {
             "",
             "/nbtc — all funded mint keys",
             "/nbtc all — same",
-            "/nbtc 0xYourWallet — one key only",
+            "/nbtc 1 — key #1 from /listkeys",
+            "/nbtc 1 2 3 — several keys by number",
+            "/nbtc 0xWallet — one address",
+            "/nbtc 0xA 0xB — several addresses",
+            "",
+            "<b>Your keys</b>",
+            ...keyLines,
             "",
             "Requires /dryrun off + RH gas on each key.",
-            `OpenSea: ${NBTC_RIGS.openSeaUrl}`,
           ].join("\n"),
           { parse_mode: "HTML" }
         );
         return;
       }
-      walletFilter = "all";
-    } else if (/^0x[a-f0-9]{40}$/.test(raw)) {
-      walletFilter = raw;
-    } else {
-      await ctx.reply(
-        "Usage:\n/nbtc\n/nbtc all\n/nbtc 0xYourMintWallet\n/nbtc help"
-      );
+      await ctx.reply(parsed.error);
       return;
     }
 
     await registerNotifyChat(chatId(ctx));
     const who =
-      walletFilter === "all"
+      parsed.filter === "all"
         ? "all funded wallets"
-        : `only ${walletFilter.slice(0, 10)}…`;
+        : `${parsed.filter.length} key(s): ${parsed.filter
+            .map((a) => a.slice(0, 8) + "…")
+            .join(", ")}`;
     await ctx.reply(
       `🎯 /nbtc free snipe · ${NBTC_RIGS.intervalSec}s · max ${NBTC_RIGS.maxPerWallet}/wallet · ${who}…`
     );
@@ -911,7 +920,7 @@ export function createTelegramBot(): Bot {
       const result = await runCadenceSnipe(NBTC_RIGS.contract, {
         intervalSec: NBTC_RIGS.intervalSec,
         maxPerWallet: NBTC_RIGS.maxPerWallet,
-        walletFilter,
+        walletFilter: parsed.filter,
         onProgress: async (line) => {
           await ctx.reply(line).catch(() => undefined);
         },
@@ -962,7 +971,9 @@ export function createTelegramBot(): Bot {
     const who =
       parsed.walletFilter === "all"
         ? "all funded wallets"
-        : `only ${parsed.walletFilter.slice(0, 10)}…`;
+        : `${parsed.walletFilter.length} key(s): ${parsed.walletFilter
+            .map((a) => a.slice(0, 8) + "…")
+            .join(", ")}`;
     await ctx.reply(
       `🎯 Starting cadence snipe · ${parsed.intervalSec}s slots · max ${parsed.maxPerWallet}/wallet · mintFree · ${who}…`
     );
