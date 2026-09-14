@@ -29,6 +29,14 @@ import {
   UNWRITTEN,
   type UnwrittenAcquireResult,
 } from "../robinhood/unwrittenMint";
+import {
+  runConsolidate,
+  runDisburse,
+  parseDisburseArgs,
+  parseEthAmount,
+  getFundingWallet,
+  type EthMoveResult,
+} from "../robinhood/ethTreasury";
 
 import {
   getAllMintWallets,
@@ -1357,6 +1365,142 @@ export function createTelegramBot(): Bot {
     await ctx.reply(ok ? `Cancelled ${id}` : "Not found or not pending.");
   });
 
+  bot.command("consolidate", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (raw.toLowerCase() === "help") {
+      const fund = getFundingWallet();
+      await ctx.reply(
+        [
+          "<b>Consolidate ETH</b>",
+          "Sweep mint-wallet ETH → one address (leaves gas dust).",
+          "",
+          "/consolidate — to funding wallet / key #1",
+          "/consolidate 0xAddress — to a specific address",
+          "",
+          fund
+            ? `Default to: <code>${fund.address}</code>`
+            : "No funding wallet yet.",
+          "Requires /dryrun off.",
+        ].join("\n"),
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    const to =
+      raw && isAddress(raw) ? raw.toLowerCase() : raw ? null : undefined;
+    if (raw && !to) {
+      await ctx.reply("Usage: /consolidate [0xAddress] | /consolidate help");
+      return;
+    }
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply("🧹 Consolidating ETH…");
+    try {
+      const result = await runConsolidate({
+        toAddress: to || undefined,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyEthMoveResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("disburse", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    const mintAddrs = listMintWalletPublic().map((w) => w.address);
+
+    if (!raw || raw.toLowerCase() === "help") {
+      const fund = getFundingWallet();
+      await ctx.reply(
+        [
+          "<b>Disburse ETH</b>",
+          "Send ETH from funding wallet → mint keys.",
+          "",
+          "/disburse 0.001 all — every mint key (except funding)",
+          "/disburse 0.001 1 2 — by /listkeys numbers",
+          "/disburse 0.001 0xA 0xB — by addresses",
+          "/disburseall 0.001 — same as /disburse 0.001 all",
+          "",
+          fund
+            ? `Funding: <code>${fund.address}</code>`
+            : "Set FUNDING_PRIVATE_KEY or mint key #1.",
+          "Requires /dryrun off.",
+        ].join("\n"),
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    const parsedAmt = parseDisburseArgs(raw);
+    if (!parsedAmt) {
+      await ctx.reply("Usage: /disburse &lt;amountEth&gt; [all|1 2|0x…]\nExample: /disburse 0.001 all", {
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    const walletParsed = parseNbtcWalletArgs(parsedAmt.walletRaw, mintAddrs);
+    if (!walletParsed.ok) {
+      await ctx.reply(walletParsed.error);
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(
+      `💸 Disbursing ${formatEther(parsedAmt.amountWei)} ETH…`
+    );
+    try {
+      const result = await runDisburse({
+        amountEachWei: parsedAmt.amountWei,
+        targets:
+          walletParsed.filter === "all" ? undefined : walletParsed.filter,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyEthMoveResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("disburseall", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (!raw || raw.toLowerCase() === "help") {
+      await ctx.reply(
+        "Usage: /disburseall &lt;amountEth&gt;\nExample: /disburseall 0.001\n(same as /disburse 0.001 all)",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    const amt = parseEthAmount(raw.split(/\s+/)[0] || "");
+    if (amt == null) {
+      await ctx.reply("Usage: /disburseall 0.001");
+      return;
+    }
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(`💸 DisburseAll ${formatEther(amt)} ETH → all mint keys…`);
+    try {
+      const result = await runDisburse({
+        amountEachWei: amt,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyEthMoveResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
   // Reply-keyboard buttons (same handlers as slash aliases).
   bot.hears(MenuBtn.Status, replyStatus);
   bot.hears(MenuBtn.Watchlist, replyWatchlist);
@@ -1438,6 +1582,60 @@ async function replySlugMintResult(
       ``,
       `<i>${result.results.length} wallet results (see mint result summary)</i>`
     );
+  }
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
+}
+
+async function replyEthMoveResult(
+  ctx: Context,
+  result: EthMoveResult
+): Promise<void> {
+  const title =
+    result.action === "consolidate" ? "Consolidate" : "Disburse";
+  const lines = [
+    result.success
+      ? result.dryRun
+        ? `<b>🧪 ${title} DRY RUN</b>`
+        : `<b>✅ ${title} sent</b>`
+      : `<b>❌ ${title} failed</b>`,
+    ``,
+    result.from ? `<b>From:</b> <code>${escape(result.from)}</code>` : "",
+    result.to ? `<b>To:</b> <code>${escape(result.to)}</code>` : "",
+    result.amountEachWei != null
+      ? `<b>Each:</b> ${escape(formatEther(result.amountEachWei))} ETH`
+      : "",
+    ``,
+    `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
+  ].filter(Boolean);
+
+  if (result.results.length > 0 && result.results.length <= 25) {
+    lines.push(``);
+    for (const r of result.results) {
+      if (r.ok && r.txHash) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ` +
+            `${r.valueWei != null ? escape(formatEther(r.valueWei)) + " ETH · " : ""}` +
+            `<a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a>`
+        );
+      } else if (r.ok) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> OK` +
+            (r.valueWei != null
+              ? ` ${escape(formatEther(r.valueWei))} ETH`
+              : "")
+        );
+      } else {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape(
+            (r.error || "fail").slice(0, 80)
+          )}`
+        );
+      }
+    }
   }
 
   await ctx.reply(lines.join("\n"), {
