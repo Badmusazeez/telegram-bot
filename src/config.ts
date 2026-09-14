@@ -63,6 +63,8 @@ const schema = z.object({
   PRIVATE_KEY: z.string().optional().default(""),
   /** Comma-separated extra mint wallet private keys */
   PRIVATE_KEYS: z.string().optional().default(""),
+  /** Optional funding/treasury key for /disburse (falls back to first mint wallet). */
+  FUNDING_PRIVATE_KEY: z.string().optional().default(""),
   MAX_BUY_ROBINHOOD: z
     .string()
     .optional()
@@ -266,6 +268,7 @@ export const config = {
   freeMintsOnly: env.FREE_MINTS_ONLY,
   privateKey: env.PRIVATE_KEY,
   privateKeys: splitCsv(env.PRIVATE_KEYS),
+  fundingPrivateKey: env.FUNDING_PRIVATE_KEY.trim(),
   maxBuyRobinhood,
   maxGasGwei: env.MAX_GAS_GWEI,
   maxMintGasLimit: env.MAX_MINT_GAS_LIMIT,

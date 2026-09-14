@@ -1,5 +1,5 @@
 import { Bot, Context } from "grammy";
-import { isAddress } from "ethers";
+import { isAddress, formatEther } from "ethers";
 import { config } from "../config";
 import {
   parseScheduleTime,
@@ -22,6 +22,21 @@ import {
   NBTC_RIGS,
   type CadenceSnipeResult,
 } from "../robinhood/cadenceSnipe";
+import {
+  runUnwrittenAcquire,
+  runUnwrittenDecipher,
+  readUnwrittenMintState,
+  UNWRITTEN,
+  type UnwrittenAcquireResult,
+} from "../robinhood/unwrittenMint";
+import {
+  runConsolidate,
+  runDisburse,
+  parseDisburseArgs,
+  parseEthAmount,
+  getFundingWallet,
+  type EthMoveResult,
+} from "../robinhood/ethTreasury";
 
 import {
   getAllMintWallets,
@@ -55,6 +70,16 @@ import {
   formatStatus,
   helpText,
 } from "./formatter";
+import {
+  hideMenuKeyboard,
+  mainMenuKeyboard,
+  MenuBtn,
+} from "./menu";
+import {
+  formatNativeWithUsd,
+  fetchNativeUsdPrice,
+  formatUsd,
+} from "../robinhood/nativeUsd";
 import {
   getMonthlyStats,
   formatMonthlyStatsPlain,
@@ -92,6 +117,294 @@ async function deny(ctx: Context): Promise<void> {
   );
 }
 
+async function replyHelp(ctx: Context): Promise<void> {
+  await ctx.reply(helpText(), { parse_mode: "HTML" });
+}
+
+async function replyStatus(ctx: Context): Promise<void> {
+  const state = getState();
+  const wallets = getAllMintWallets();
+  const wallet = wallets[0] ?? getWallet();
+  const usdPrice = await fetchNativeUsdPrice();
+  let balanceRobinhood: string | undefined;
+  let walletAddress = wallet?.address;
+  if (wallets.length > 1) {
+    walletAddress = `${wallets.length} wallets (see /listkeys · /balances)`;
+    try {
+      const bals = await Promise.all(
+        wallets.map(async (w) => {
+          const bal = Number(await getNativeBalance(w.address));
+          const short = shortAddress(w.address.toLowerCase());
+          return `${short}:${formatNativeWithUsd(bal, usdPrice)}`;
+        })
+      );
+      balanceRobinhood = bals.join(" ");
+    } catch {
+      balanceRobinhood = "?";
+    }
+  } else if (wallet) {
+    try {
+      const bal = Number(await getNativeBalance(wallet.address));
+      balanceRobinhood = formatNativeWithUsd(bal, usdPrice);
+    } catch {
+      balanceRobinhood = "?";
+    }
+  }
+  const pendingSchedules = state.scheduledMints.filter(
+    (j) => j.status === "pending"
+  ).length;
+  let tipBlock: number | undefined;
+  try {
+    tipBlock = Number(await getProvider().getBlockNumber());
+  } catch {
+    tipBlock = undefined;
+  }
+  await ctx.reply(
+    formatStatus({
+      trackedCount: state.trackedWallets.length,
+      watchedPrices: state.watchedPrices.length,
+      pendingSchedules,
+      copyEnabled: state.copyEnabled,
+      dryRun: state.dryRun,
+      freeMintsOnly: state.freeMintsOnly,
+      priceAlertsEnabled: state.priceAlertsEnabled,
+      priceAlertPct: state.priceAlertPct,
+      maxBuyRobinhood: state.maxBuyRobinhood,
+      lastBlock: state.lastProcessedBlock,
+      tipBlock,
+      walletAddress,
+      balanceRobinhood,
+      ethUsd: usdPrice,
+      lastCopy: getLastCopySummary(),
+      blockscout: getBlockscoutStatus(),
+    }),
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyTrackedWallets(ctx: Context): Promise<void> {
+  const { trackedWallets } = getState();
+  if (trackedWallets.length === 0) {
+    await ctx.reply("No wallets tracked yet. Use /track <address> [label]");
+    return;
+  }
+  const lines = trackedWallets.map(
+    (w, i) =>
+      `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
+  );
+  await ctx.reply(`<b>Tracked wallets</b>\n\n${lines.join("\n\n")}`, {
+    parse_mode: "HTML",
+  });
+}
+
+async function replyWatchlist(ctx: Context): Promise<void> {
+  const { trackedWallets, watchedPrices } = getState();
+  if (trackedWallets.length === 0 && watchedPrices.length === 0) {
+    await ctx.reply(
+      "Watchlist empty.\n• Track whales: /track 0xAddress [label]\n• Watch prices: /watchprice 0xContract [tokenId]"
+    );
+    return;
+  }
+  const whaleLines =
+    trackedWallets.length === 0
+      ? ["<i>No tracked wallets</i>"]
+      : trackedWallets.map(
+          (w, i) =>
+            `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
+        );
+  const priceLines =
+    watchedPrices.length === 0
+      ? ["<i>No price watches</i>"]
+      : watchedPrices.slice(0, 15).map((w, i) => {
+          const price = w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+          const token = w.tokenId ? `#${w.tokenId}` : "floor";
+          return `${i + 1}. <b>${escape(w.label)}</b> (${token}) · last ${price}`;
+        });
+  await ctx.reply(
+    [
+      `<b>👁️ Watchlist</b>`,
+      ``,
+      `<b>Tracked wallets</b> (/wallets · /track)`,
+      ...whaleLines,
+      ``,
+      `<b>Price watches</b> (/prices · /watchprice)`,
+      ...priceLines,
+      watchedPrices.length > 15
+        ? `\n…+${watchedPrices.length - 15} more — /prices`
+        : "",
+    ]
+      .filter((l) => l !== "")
+      .join("\n"),
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyNfts(ctx: Context): Promise<void> {
+  const list = getState().watchedPrices;
+  if (list.length === 0) {
+    await ctx.reply(
+      "No NFT price watches yet.\nSuccessful free mints are auto-watched.\nOr use /watchprice 0xContract [tokenId]"
+    );
+    return;
+  }
+  const lines = list.map((w, i) => {
+    const price = w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+    const token = w.tokenId ? `#${w.tokenId}` : "floor";
+    return `${i + 1}. <b>${escape(w.label)}</b> (${token})\n   <code>${w.contract}</code>\n   last: ${price}`;
+  });
+  await ctx.reply(`<b>🖼️ NFTs · watched prices</b>\n\n${lines.join("\n\n")}`, {
+    parse_mode: "HTML",
+  });
+}
+
+async function replyPrices(ctx: Context): Promise<void> {
+  const list = getState().watchedPrices;
+  if (list.length === 0) {
+    await ctx.reply(
+      "No price watches yet.\nSuccessful free mints are auto-watched.\nOr use /watchprice 0xContract [tokenId]"
+    );
+    return;
+  }
+  const lines = list.map((w, i) => {
+    const price = w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+    const token = w.tokenId ? `#${w.tokenId}` : "floor";
+    return `${i + 1}. <b>${escape(w.label)}</b> (${token})\n   <code>${w.contract}</code>\n   last: ${price}`;
+  });
+  await ctx.reply(`<b>Watched prices</b>\n\n${lines.join("\n\n")}`, {
+    parse_mode: "HTML",
+  });
+}
+
+async function replyContracts(ctx: Context): Promise<void> {
+  const list = getState().allowedCollections;
+  await ctx.reply(
+    list.length
+      ? `<b>📜 Contracts allowlist</b>\n${list
+          .map((c) => `<code>${c}</code>`)
+          .join("\n")}\n\nAdd: /allow 0xContract\nClear: /allow clear`
+      : "📜 Allowlist empty (all collections allowed).\nUsage: /allow 0xContract | /allow clear",
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyBalances(ctx: Context): Promise<void> {
+  const wallets = getAllMintWallets();
+  if (wallets.length === 0) {
+    await ctx.reply(
+      "No mint wallets.\n/addkey &lt;private_key&gt; or set PRIVATE_KEYS in .env",
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+  const usdPrice = await fetchNativeUsdPrice();
+  const lines: string[] = [];
+  let totalNative = 0;
+  let anyOk = false;
+  for (let i = 0; i < wallets.length; i++) {
+    const w = wallets[i]!;
+    try {
+      const bal = Number(await getNativeBalance(w.address));
+      totalNative += bal;
+      anyOk = true;
+      lines.push(
+        `${i + 1}. <code>${w.address}</code>\n   <b>${escape(
+          formatNativeWithUsd(bal, usdPrice)
+        )}</b>`
+      );
+    } catch {
+      lines.push(
+        `${i + 1}. <code>${w.address}</code>\n   <b>error</b>`
+      );
+    }
+  }
+  const footer = [
+    anyOk
+      ? `\n<b>Total:</b> ${escape(formatNativeWithUsd(totalNative, usdPrice))}`
+      : "",
+    usdPrice != null
+      ? `\nETH/USD: <code>${escape(formatUsd(usdPrice))}</code>`
+      : "\n<i>USD price unavailable</i>",
+  ].join("");
+  await ctx.reply(
+    `<b>💰 Mint wallet balances</b>\n\n${lines.join("\n\n")}${footer}`,
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyKeys(ctx: Context): Promise<void> {
+  const wallets = listMintWalletPublic();
+  if (wallets.length === 0) {
+    await ctx.reply(
+      "No mint wallets yet.\nUse /addkey &lt;private_key&gt; or set PRIVATE_KEY / PRIVATE_KEYS in .env",
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+  const lines = wallets.map(
+    (w, i) =>
+      `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
+  );
+  await ctx.reply(
+    `<b>🔑 Mint wallets</b> (addresses only — keys never shown)\n\n${lines.join("\n\n")}\n\n/addkey · /removekey · /nbtc 1 2`,
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyOffers(ctx: Context): Promise<void> {
+  const state = getState();
+  const list = state.watchedPrices;
+  const lines =
+    list.length === 0
+      ? ["<i>No watched items yet</i>"]
+      : list.slice(0, 12).map((w, i) => {
+          const price = w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
+          const token = w.tokenId ? `#${w.tokenId}` : "floor";
+          return `${i + 1}. <b>${escape(w.label)}</b> (${token}) · ${price}`;
+        });
+  await ctx.reply(
+    [
+      `<b>💰 Offers / price alerts</b>`,
+      `Alerts: <b>${state.priceAlertsEnabled ? "ON" : "OFF"}</b> (≥${state.priceAlertPct}%)`,
+      ``,
+      ...lines,
+      ``,
+      `/pricealerts on|off · /pricepct N · /watchprice 0x…`,
+    ].join("\n"),
+    { parse_mode: "HTML" }
+  );
+}
+
+async function replyScheduled(ctx: Context): Promise<void> {
+  const list = getState().scheduledMints.slice(-20).reverse();
+  if (list.length === 0) {
+    await ctx.reply(
+      "No scheduled mints.\nUse /schedulemint &lt;opensea-url&gt; or /nbtc for cadence snipes.",
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+  const lines = list.map((j) => {
+    return `• <code>${j.id}</code> [${j.status}]\n  ${escape(j.label)}\n  when: <code>${j.executeAt}</code>\n  to: <code>${j.to}</code>`;
+  });
+  await ctx.reply(`<b>🗓️ Scheduled mints</b>\n\n${lines.join("\n\n")}`, {
+    parse_mode: "HTML",
+  });
+}
+
+async function replyShowMenu(ctx: Context): Promise<void> {
+  await registerNotifyChat(chatId(ctx));
+  await ctx.reply(
+    "Menu ready — tap a button (slash commands still work).",
+    { reply_markup: mainMenuKeyboard() }
+  );
+}
+
+async function replyHideMenu(ctx: Context): Promise<void> {
+  await ctx.reply("Keyboard hidden. /menu to show again.", {
+    reply_markup: hideMenuKeyboard(),
+  });
+}
+
 export function createTelegramBot(): Bot {
   const bot = new Bot(config.telegramToken);
 
@@ -108,13 +421,21 @@ export function createTelegramBot(): Bot {
   bot.command("start", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      "robinhood-nft-copy-bot connected.\n\nTip: /track 0xWallet Label\n/help for all commands."
+      "robinhood-nft-copy-bot connected.\n\nTip: /track 0xWallet Label\n/menu for buttons · /help for all commands.",
+      { reply_markup: mainMenuKeyboard() }
     );
   });
 
-  bot.command("help", async (ctx) => {
-    await ctx.reply(helpText(), { parse_mode: "HTML" });
-  });
+  bot.command("menu", replyShowMenu);
+  bot.command("help", replyHelp);
+  bot.command("status", replyStatus);
+  bot.command("watchlist", replyWatchlist);
+  bot.command("nfts", replyNfts);
+  bot.command("contracts", replyContracts);
+  bot.command("balances", replyBalances);
+  bot.command("keys", replyKeys);
+  bot.command("offers", replyOffers);
+  bot.command("scheduled", replyScheduled);
 
   bot.command("stats", async (ctx) => {
     await registerNotifyChat(chatId(ctx));
@@ -143,65 +464,6 @@ export function createTelegramBot(): Bot {
         `Quota check failed: ${err instanceof Error ? err.message : err}`
       );
     }
-  });
-
-  bot.command("status", async (ctx) => {
-    const state = getState();
-    const wallets = getAllMintWallets();
-    const wallet = wallets[0] ?? getWallet();
-    let balanceRobinhood: string | undefined;
-    let walletAddress = wallet?.address;
-    if (wallets.length > 1) {
-      walletAddress = `${wallets.length} wallets (see /listkeys)`;
-      try {
-        const bals = await Promise.all(
-          wallets.map(async (w) => {
-            const bal = await getNativeBalance(w.address);
-            return `${shortAddress(w.address.toLowerCase())}:${Number(bal).toFixed(4)}`;
-          })
-        );
-        balanceRobinhood = bals.join(" ");
-      } catch {
-        balanceRobinhood = "?";
-      }
-    } else if (wallet) {
-      try {
-        balanceRobinhood = Number(
-          await getNativeBalance(wallet.address)
-        ).toFixed(4);
-      } catch {
-        balanceRobinhood = "?";
-      }
-    }
-    const pendingSchedules = state.scheduledMints.filter(
-      (j) => j.status === "pending"
-    ).length;
-    let tipBlock: number | undefined;
-    try {
-      tipBlock = Number(await getProvider().getBlockNumber());
-    } catch {
-      tipBlock = undefined;
-    }
-    await ctx.reply(
-      formatStatus({
-        trackedCount: state.trackedWallets.length,
-        watchedPrices: state.watchedPrices.length,
-        pendingSchedules,
-        copyEnabled: state.copyEnabled,
-        dryRun: state.dryRun,
-        freeMintsOnly: state.freeMintsOnly,
-        priceAlertsEnabled: state.priceAlertsEnabled,
-        priceAlertPct: state.priceAlertPct,
-        maxBuyRobinhood: state.maxBuyRobinhood,
-        lastBlock: state.lastProcessedBlock,
-        tipBlock,
-        walletAddress,
-        balanceRobinhood,
-        lastCopy: getLastCopySummary(),
-        blockscout: getBlockscoutStatus(),
-      }),
-      { parse_mode: "HTML" }
-    );
   });
 
   bot.command("openseakey", async (ctx) => {
@@ -270,24 +532,7 @@ export function createTelegramBot(): Bot {
     }
   });
 
-  bot.command("listkeys", async (ctx) => {
-    const wallets = listMintWalletPublic();
-    if (wallets.length === 0) {
-      await ctx.reply(
-        "No mint wallets yet.\nUse /addkey &lt;private_key&gt; or set PRIVATE_KEY / PRIVATE_KEYS in .env",
-        { parse_mode: "HTML" }
-      );
-      return;
-    }
-    const lines = wallets.map(
-      (w, i) =>
-        `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
-    );
-    await ctx.reply(
-      `<b>Mint wallets</b> (addresses only — keys never shown)\n\n${lines.join("\n\n")}`,
-      { parse_mode: "HTML" }
-    );
-  });
+  bot.command("listkeys", replyKeys);
 
   bot.command("removekey", async (ctx) => {
     const address = (ctx.match || "").trim();
@@ -304,20 +549,7 @@ export function createTelegramBot(): Bot {
     );
   });
 
-  bot.command("wallets", async (ctx) => {
-    const { trackedWallets } = getState();
-    if (trackedWallets.length === 0) {
-      await ctx.reply("No wallets tracked yet. Use /track <address> [label]");
-      return;
-    }
-    const lines = trackedWallets.map(
-      (w, i) =>
-        `${i + 1}. <b>${escape(w.label)}</b>\n   <code>${w.address}</code>`
-    );
-    await ctx.reply(`<b>Tracked wallets</b>\n\n${lines.join("\n\n")}`, {
-      parse_mode: "HTML",
-    });
-  });
+  bot.command("wallets", replyTrackedWallets);
 
   bot.command("track", async (ctx) => {
     const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
@@ -438,13 +670,7 @@ export function createTelegramBot(): Bot {
   bot.command("allow", async (ctx) => {
     const arg = (ctx.match || "").trim().toLowerCase();
     if (!arg) {
-      const list = getState().allowedCollections;
-      await ctx.reply(
-        list.length
-          ? `Allowlist:\n${list.map((c) => `<code>${c}</code>`).join("\n")}`
-          : "Allowlist empty (all collections allowed).\nUsage: /allow 0xContract | /allow clear",
-        { parse_mode: "HTML" }
-      );
+      await replyContracts(ctx);
       return;
     }
     if (arg === "clear") {
@@ -468,24 +694,7 @@ export function createTelegramBot(): Bot {
     });
   });
 
-  bot.command("prices", async (ctx) => {
-    const list = getState().watchedPrices;
-    if (list.length === 0) {
-      await ctx.reply(
-        "No price watches yet.\nSuccessful free mints are auto-watched.\nOr use /watchprice 0xContract [tokenId]"
-      );
-      return;
-    }
-    const lines = list.map((w, i) => {
-      const price =
-        w.lastPrice === null ? "—" : w.lastPrice.toFixed(6);
-      const token = w.tokenId ? `#${w.tokenId}` : "floor";
-      return `${i + 1}. <b>${escape(w.label)}</b> (${token})\n   <code>${w.contract}</code>\n   last: ${price}`;
-    });
-    await ctx.reply(`<b>Watched prices</b>\n\n${lines.join("\n\n")}`, {
-      parse_mode: "HTML",
-    });
-  });
+  bot.command("prices", replyPrices);
 
   bot.command("watchprice", async (ctx) => {
     const parts = (ctx.match || "").trim().split(/\s+/).filter(Boolean);
@@ -961,6 +1170,116 @@ export function createTelegramBot(): Bot {
     }
   });
 
+  bot.command("unwritten", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    const rawLower = raw.toLowerCase();
+    const mintAddrs = listMintWalletPublic().map((w) => w.address);
+
+    if (
+      rawLower === "help" ||
+      rawLower === "status" ||
+      rawLower.startsWith("status ")
+    ) {
+      try {
+        const st = await readUnwrittenMintState();
+        await ctx.reply(
+          [
+            `<b>The Unwritten</b>`,
+            `Site: <a href="${UNWRITTEN.siteUrl}">theunwritten.xyz</a>`,
+            `OpenSea: <a href="${UNWRITTEN.openSeaUrl}">collection</a>`,
+            `Contract: <code>${UNWRITTEN.contract}</code>`,
+            ``,
+            `Minted: <b>${st.depth}</b> / ${UNWRITTEN.maxSupply}`,
+            `Open: <b>${st.open ? "yes" : "no"}</b>`,
+            `Acquire price: <b>${formatEther(st.priceWei)}</b> ETH`,
+            `Decipher work: ~<b>${st.expectedHashes.toString()}</b> hashes (FREE NFT, gas only)`,
+            ``,
+            `<b>FREE (proof / PoW)</b>`,
+            `/unwritten free — all keys · mine + decipher(0 ETH)`,
+            `/unwritten free 1 2 — specific keys`,
+            ``,
+            `<b>PAID (fast)</b>`,
+            `/unwritten — acquire all keys`,
+            `/unwritten 1 2 — acquire specific keys`,
+            ``,
+            `Free lane is sequential (each mint changes the next proof).`,
+            `Needs /dryrun off · gas ETH on each key.`,
+          ].join("\n"),
+          {
+            parse_mode: "HTML",
+            link_preview_options: { is_disabled: true },
+          }
+        );
+      } catch (err) {
+        await ctx.reply(
+          `Status failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      return;
+    }
+
+    // /unwritten free [wallets…]  OR  /unwritten decipher [wallets…]
+    const freeMatch = rawLower.match(/^(free|decipher|pow|proof)(?:\s+(.*))?$/);
+    const isFree = Boolean(freeMatch);
+    const walletRaw = isFree ? (freeMatch?.[2] || "").trim() : raw;
+
+    const parsed = parseNbtcWalletArgs(walletRaw, mintAddrs);
+    if (!parsed.ok) {
+      if (parsed.error === "help") {
+        await ctx.reply(
+          "Usage:\n/unwritten free\n/unwritten free 1 2\n/unwritten\n/unwritten status"
+        );
+        return;
+      }
+      await ctx.reply(parsed.error);
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    const who =
+      parsed.filter === "all"
+        ? "all funded wallets"
+        : `${parsed.filter.length} key(s)`;
+
+    if (isFree) {
+      await ctx.reply(
+        `✴ /unwritten FREE decipher · PoW · ${who}…\n(0 ETH mint · gas only · /dryrun off)\nThis can take a few minutes per wallet.`
+      );
+      try {
+        const result = await runUnwrittenDecipher({
+          walletFilter: parsed.filter,
+          onProgress: async (line) => {
+            await ctx.reply(line).catch(() => undefined);
+          },
+        });
+        await replyUnwrittenResult(ctx, result);
+      } catch (err) {
+        await ctx.reply(
+          `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+        );
+      }
+      return;
+    }
+
+    await ctx.reply(
+      `📜 /unwritten ACQUIRE (paid) · ${who}…\n(/dryrun off · ~0.002+ ETH/wallet)`
+    );
+
+    try {
+      const result = await runUnwrittenAcquire({
+        walletFilter: parsed.filter,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyUnwrittenResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
   bot.command("snipe", async (ctx) => {
     const raw = (ctx.match || "").trim();
     if (!raw) {
@@ -1034,19 +1353,7 @@ export function createTelegramBot(): Bot {
     }
   });
 
-  bot.command("schedules", async (ctx) => {
-    const list = getState().scheduledMints.slice(-20).reverse();
-    if (list.length === 0) {
-      await ctx.reply("No scheduled mints.");
-      return;
-    }
-    const lines = list.map((j) => {
-      return `• <code>${j.id}</code> [${j.status}]\n  ${escape(j.label)}\n  when: <code>${j.executeAt}</code>\n  to: <code>${j.to}</code>`;
-    });
-    await ctx.reply(`<b>Scheduled mints</b>\n\n${lines.join("\n\n")}`, {
-      parse_mode: "HTML",
-    });
-  });
+  bot.command("schedules", replyScheduled);
 
   bot.command("cancelschedule", async (ctx) => {
     const id = (ctx.match || "").trim();
@@ -1057,6 +1364,154 @@ export function createTelegramBot(): Bot {
     const ok = await cancelScheduledMint(id);
     await ctx.reply(ok ? `Cancelled ${id}` : "Not found or not pending.");
   });
+
+  bot.command("consolidate", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (raw.toLowerCase() === "help") {
+      const fund = getFundingWallet();
+      await ctx.reply(
+        [
+          "<b>Consolidate ETH</b>",
+          "Sweep mint-wallet ETH → one address (leaves gas dust).",
+          "",
+          "/consolidate — to funding wallet / key #1",
+          "/consolidate 0xAddress — to a specific address",
+          "",
+          fund
+            ? `Default to: <code>${fund.address}</code>`
+            : "No funding wallet yet.",
+          "Requires /dryrun off.",
+        ].join("\n"),
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    const to =
+      raw && isAddress(raw) ? raw.toLowerCase() : raw ? null : undefined;
+    if (raw && !to) {
+      await ctx.reply("Usage: /consolidate [0xAddress] | /consolidate help");
+      return;
+    }
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply("🧹 Consolidating ETH…");
+    try {
+      const result = await runConsolidate({
+        toAddress: to || undefined,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyEthMoveResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("disburse", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    const mintAddrs = listMintWalletPublic().map((w) => w.address);
+
+    if (!raw || raw.toLowerCase() === "help") {
+      const fund = getFundingWallet();
+      await ctx.reply(
+        [
+          "<b>Disburse ETH</b>",
+          "Send ETH from funding wallet → mint keys.",
+          "",
+          "/disburse 0.001 all — every mint key (except funding)",
+          "/disburse 0.001 1 2 — by /listkeys numbers",
+          "/disburse 0.001 0xA 0xB — by addresses",
+          "/disburseall 0.001 — same as /disburse 0.001 all",
+          "",
+          fund
+            ? `Funding: <code>${fund.address}</code>`
+            : "Set FUNDING_PRIVATE_KEY or mint key #1.",
+          "Requires /dryrun off.",
+        ].join("\n"),
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    const parsedAmt = parseDisburseArgs(raw);
+    if (!parsedAmt) {
+      await ctx.reply("Usage: /disburse &lt;amountEth&gt; [all|1 2|0x…]\nExample: /disburse 0.001 all", {
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    const walletParsed = parseNbtcWalletArgs(parsedAmt.walletRaw, mintAddrs);
+    if (!walletParsed.ok) {
+      await ctx.reply(walletParsed.error);
+      return;
+    }
+
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(
+      `💸 Disbursing ${formatEther(parsedAmt.amountWei)} ETH…`
+    );
+    try {
+      const result = await runDisburse({
+        amountEachWei: parsedAmt.amountWei,
+        targets:
+          walletParsed.filter === "all" ? undefined : walletParsed.filter,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyEthMoveResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  bot.command("disburseall", async (ctx) => {
+    const raw = (ctx.match || "").trim();
+    if (!raw || raw.toLowerCase() === "help") {
+      await ctx.reply(
+        "Usage: /disburseall &lt;amountEth&gt;\nExample: /disburseall 0.001\n(same as /disburse 0.001 all)",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    const amt = parseEthAmount(raw.split(/\s+/)[0] || "");
+    if (amt == null) {
+      await ctx.reply("Usage: /disburseall 0.001");
+      return;
+    }
+    await registerNotifyChat(chatId(ctx));
+    await ctx.reply(`💸 DisburseAll ${formatEther(amt)} ETH → all mint keys…`);
+    try {
+      const result = await runDisburse({
+        amountEachWei: amt,
+        onProgress: async (line) => {
+          await ctx.reply(line).catch(() => undefined);
+        },
+      });
+      await replyEthMoveResult(ctx, result);
+    } catch (err) {
+      await ctx.reply(
+        `❌ ${err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)}`
+      );
+    }
+  });
+
+  // Reply-keyboard buttons (same handlers as slash aliases).
+  bot.hears(MenuBtn.Status, replyStatus);
+  bot.hears(MenuBtn.Watchlist, replyWatchlist);
+  bot.hears(MenuBtn.Nfts, replyNfts);
+  bot.hears(MenuBtn.Contracts, replyContracts);
+  bot.hears(MenuBtn.Balances, replyBalances);
+  bot.hears(MenuBtn.Keys, replyKeys);
+  bot.hears(MenuBtn.Offers, replyOffers);
+  bot.hears(MenuBtn.Scheduled, replyScheduled);
+  bot.hears(MenuBtn.Help, replyHelp);
+  bot.hears(MenuBtn.Hide, replyHideMenu);
 
   bot.catch((err) => {
     console.error("[telegram] bot error:", err);
@@ -1127,6 +1582,113 @@ async function replySlugMintResult(
       ``,
       `<i>${result.results.length} wallet results (see mint result summary)</i>`
     );
+  }
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
+}
+
+async function replyEthMoveResult(
+  ctx: Context,
+  result: EthMoveResult
+): Promise<void> {
+  const title =
+    result.action === "consolidate" ? "Consolidate" : "Disburse";
+  const lines = [
+    result.success
+      ? result.dryRun
+        ? `<b>🧪 ${title} DRY RUN</b>`
+        : `<b>✅ ${title} sent</b>`
+      : `<b>❌ ${title} failed</b>`,
+    ``,
+    result.from ? `<b>From:</b> <code>${escape(result.from)}</code>` : "",
+    result.to ? `<b>To:</b> <code>${escape(result.to)}</code>` : "",
+    result.amountEachWei != null
+      ? `<b>Each:</b> ${escape(formatEther(result.amountEachWei))} ETH`
+      : "",
+    ``,
+    `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
+  ].filter(Boolean);
+
+  if (result.results.length > 0 && result.results.length <= 25) {
+    lines.push(``);
+    for (const r of result.results) {
+      if (r.ok && r.txHash) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ` +
+            `${r.valueWei != null ? escape(formatEther(r.valueWei)) + " ETH · " : ""}` +
+            `<a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a>`
+        );
+      } else if (r.ok) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> OK` +
+            (r.valueWei != null
+              ? ` ${escape(formatEther(r.valueWei))} ETH`
+              : "")
+        );
+      } else {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape(
+            (r.error || "fail").slice(0, 80)
+          )}`
+        );
+      }
+    }
+  }
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
+}
+
+async function replyUnwrittenResult(
+  ctx: Context,
+  result: UnwrittenAcquireResult
+): Promise<void> {
+  const lines = [
+    result.success
+      ? result.dryRun
+        ? `<b>🧪 Unwritten DRY RUN</b>`
+        : result.mode === "decipher"
+          ? `<b>✅ Unwritten FREE decipher sent</b>`
+          : `<b>✅ Unwritten ACQUIRE sent</b>`
+      : result.mode === "decipher"
+        ? `<b>❌ Unwritten FREE decipher failed</b>`
+        : `<b>❌ Unwritten ACQUIRE failed</b>`,
+    ``,
+    `<b>Collection:</b> <a href="${escape(result.openSeaUrl)}">${escape(result.name)}</a>`,
+    `<b>Site:</b> <a href="${escape(result.siteUrl)}">theunwritten.xyz</a>`,
+    `<b>Contract:</b> <code>${escape(result.contract)}</code>`,
+    `<b>Mode:</b> ${result.mode === "decipher" ? "FREE decipher (PoW)" : "PAID acquire"}`,
+    `<b>Depth at start:</b> ${result.depth}`,
+    result.mode === "decipher"
+      ? `<b>Mint price:</b> 0 ETH (gas only)`
+      : `<b>Price:</b> ${escape(formatEther(result.priceWei))} ETH`,
+    result.mode === "decipher"
+      ? null
+      : `<b>Send:</b> ${escape(formatEther(result.valueWei))} ETH (+slip)`,
+    ``,
+    `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
+  ].filter((l): l is string => l != null && l !== "");
+
+  if (result.results.length > 0 && result.results.length <= 25) {
+    lines.push(``);
+    for (const r of result.results) {
+      if (r.ok && r.txHash) {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> <a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a>`
+        );
+      } else if (r.ok) {
+        lines.push(`• <code>${escape(r.address.slice(0, 10))}…</code> OK`);
+      } else {
+        lines.push(
+          `• <code>${escape(r.address.slice(0, 10))}…</code> ❌ ${escape((r.error || "fail").slice(0, 80))}`
+        );
+      }
+    }
   }
 
   await ctx.reply(lines.join("\n"), {

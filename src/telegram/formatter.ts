@@ -116,6 +116,8 @@ export function formatStatus(params: {
   tipBlock?: number;
   walletAddress?: string;
   balanceRobinhood?: string;
+  /** Live ETH/USD used for $ display (optional). */
+  ethUsd?: number | null;
   lastCopy?: {
     at: string;
     txHash: string;
@@ -135,6 +137,10 @@ export function formatStatus(params: {
   const lastCopyLine = params.lastCopy
     ? `Last copy: <b>${params.lastCopy.success ? "OK" : "FAIL"}</b> <code>${escHtml(params.lastCopy.at)}</code>\n<code>${escHtml(params.lastCopy.reason)}</code>`
     : `Last copy: <i>none yet</i>`;
+  const ethUsdLine =
+    params.ethUsd != null && Number.isFinite(params.ethUsd)
+      ? `ETH/USD: <b>$${params.ethUsd.toFixed(2)}</b>`
+      : "";
   return [
     `<b>robinhood-nft-copy-bot status</b>`,
     ``,
@@ -156,6 +162,7 @@ export function formatStatus(params: {
       ? `Blockscout: <b>${params.blockscout.lastOkAt ? "ok" : "—"}</b>${params.blockscout.lastOkAt ? ` <code>${escHtml(params.blockscout.lastOkAt)}</code>` : ""}${params.blockscout.lastHitTx ? `\nLast BS hit: <code>${escHtml(params.blockscout.lastHitTx.slice(0, 18))}…</code>` : ""}${params.blockscout.lastError ? `\nBS err: <code>${escHtml(params.blockscout.lastError.slice(0, 120))}</code>` : ""}`
       : "",
     lastCopyLine,
+    ethUsdLine,
     params.walletAddress
       ? `Bot wallet: <code>${escHtml(params.walletAddress)}</code> (balance ${escHtml(params.balanceRobinhood ?? "?")})`
       : `Bot wallet: <i>not configured</i>`,
@@ -173,9 +180,20 @@ export function helpText(): string {
     `Also watches minted NFT / collection prices and alerts on Telegram.`,
     ``,
     `<b>Commands</b>`,
-    `/start — register this chat for alerts`,
+    `/start — register + show button menu`,
+    `/menu — show the reply keyboard`,
     `/help — show this help`,
     `/status — bot + wallet status`,
+    `/watchlist — tracked wallets + price watches`,
+    `/nfts — watched NFT prices`,
+    `/contracts — collection allowlist`,
+    `/balances — mint wallet balances + $ USD`,
+    `/consolidate [0x?] — sweep ETH from mint keys → funding/to address`,
+    `/disburse &lt;amount&gt; [all|1 2|0x…] — fund mint keys from funding wallet`,
+    `/disburseall &lt;amount&gt; — fund every mint key with amount each`,
+    `/keys · /listkeys — mint wallet addresses`,
+    `/offers — price alert settings + watches`,
+    `/scheduled · /schedules — scheduled mints`,
     `/stats — monthly stats (Mints OK / failed / Disbursements / Sweeps / Tracks)`,
     `/stats 2026-08 — stats for a specific month`,
     `/rpcquota — Alchemy + Chainstack RPC limit % (also auto every 6h)`,
@@ -209,10 +227,16 @@ export function helpText(): string {
     `/nbtc stop — stop a running snipe`,
     `/snipe nbtc — same as /nbtc`,
     `/snipe &lt;collection|0x|url&gt; [secs] [maxN] [all|0x…] — cadence mintFree snipe`,
+    `/unwritten free — The Unwritten FREE PoW decipher (all keys)`,
+    `/unwritten free 1 2 — free decipher specific keys`,
+    `/unwritten — The Unwritten paid ACQUIRE (fast · all keys)`,
+    `/unwritten 1 2 — paid acquire by /listkeys numbers`,
+    `/unwritten status — live price / depth / open`,
     `/schedulemintfromtx &lt;txHash&gt; &lt;when&gt; — copy whale mint calldata`,
     `/schedules — list scheduled mints`,
     `/cancelschedule &lt;id&gt; — cancel a pending schedule`,
     ``,
+    `<i>Menu:</i> /start or /menu shows buttons. ✖️ Hide removes them.`,
     `<i>Sharp mode:</i> T-30s REAL pre-arm (OpenSea+gas) → exact timer → SEND-ONLY burst. Keep the bot running.`,
     `<i>Slot race:</i> when a contract exposes nextFreeAt/startTime/etc., the bot arms wallets and bursts at window open.`,
   ].join("\n");
