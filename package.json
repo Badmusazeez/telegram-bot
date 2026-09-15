@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
     "import-keys": "tsx scripts/import-keys.ts",
+    "import-tracks": "tsx scripts/import-tracks.ts",
     "opensea-key": "tsx scripts/fetch-opensea-key.ts"
   },
   "engines": {

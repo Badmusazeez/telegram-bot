@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # Run as root on the VPS. Deploys Arc bot to /root/arc-telegram-bot and
-# imports all Robinhood mint keys from /root/telegram-bot/data/mint-wallets.json
+# imports RH mint keys + tracked (/track) wallets from the Robinhood bot.
 set -euo pipefail
 
 ARC_DIR="${ARC_DIR:-/root/arc-telegram-bot}"
 RH_DIR="${RH_DIR:-/root/telegram-bot}"
 RH_KEYS="${RH_DIR}/data/mint-wallets.json"
+RH_STATE="${RH_DIR}/data/state.json"
 BRANCH="${ARC_BRANCH:-cursor/arc-telegram-bot-ad16}"
 
 if [[ ! -f "$RH_KEYS" ]]; then
   echo "ERROR: RH keys not found at $RH_KEYS"
+  exit 1
+fi
+
+if [[ ! -f "$RH_STATE" ]]; then
+  echo "ERROR: RH state not found at $RH_STATE (needed for tracked wallets)"
   exit 1
 fi
 
@@ -76,6 +82,9 @@ echo "==> Import RH mint wallets (replace)"
 npm run import-keys -- "$RH_KEYS" --replace
 chmod 600 data/mint-wallets.json
 
+echo "==> Import RH tracked wallets (replace)"
+npm run import-tracks -- "$RH_STATE" --replace
+
 echo "==> Start pm2 arc-nft-bot (does not touch RH)"
 pm2 delete arc-nft-bot 2>/dev/null || true
 pm2 start ecosystem.config.cjs
@@ -83,9 +92,9 @@ pm2 save
 
 echo
 echo "DONE. Arc bot at $ARC_DIR"
-node -e "const d=require('./data/mint-wallets.json'); console.log('Arc wallets:', d.length); d.forEach((w,i)=>console.log(i+1, w.address))"
+node -e "const d=require('./data/mint-wallets.json'); console.log('Arc mint keys:', d.length); d.forEach((w,i)=>console.log(i+1, w.address))"
+node -e "const s=require('./data/state.json'); console.log('Arc tracked:', (s.trackedWallets||[]).length); (s.trackedWallets||[]).forEach((w,i)=>console.log(i+1, w.address, w.label||''))"
 echo
-echo "pm2 list | grep -E 'arc|robinhood|telegram'"
 pm2 list | grep -E 'arc|robinhood|name' || pm2 list
 echo
-echo "In Telegram @arcybot_bot: /start then /listkeys"
+echo "In Telegram @arcybot_bot: /start · /listkeys · /wallets"
