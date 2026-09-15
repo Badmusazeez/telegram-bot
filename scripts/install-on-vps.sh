@@ -22,15 +22,13 @@ if [[ ! -d "$RH_DIR/.git" ]]; then
   exit 1
 fi
 
+# Default = @porshmints_bot (override with INK_TELEGRAM_BOT_TOKEN or /root/ink-bot-token.txt)
 TOKEN="${INK_TELEGRAM_BOT_TOKEN:-}"
 if [[ -z "$TOKEN" && -f /root/ink-bot-token.txt ]]; then
   TOKEN="$(tr -d '[:space:]' </root/ink-bot-token.txt)"
 fi
-if [[ -z "$TOKEN" || "$TOKEN" == PASTE_BOTFATHER_TOKEN_HERE ]]; then
-  echo "ERROR: set INK_TELEGRAM_BOT_TOKEN to the BotFather token for @porshmints_bot"
-  echo "  export INK_TELEGRAM_BOT_TOKEN='123456:ABC...'"
-  echo "  # or: echo '123456:ABC...' > /root/ink-bot-token.txt && chmod 600 /root/ink-bot-token.txt"
-  exit 1
+if [[ -z "$TOKEN" ]]; then
+  TOKEN="8765326696:AAE5L-II3KSEMYuXxSBm3yTSIhkgfYSn7Vg"
 fi
 
 REMOTE="$(git -C "$RH_DIR" remote get-url origin)"

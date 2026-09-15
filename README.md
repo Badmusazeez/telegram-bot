@@ -12,11 +12,9 @@ Ink Chain NFT copy / snipe Telegram bot — **separate** from Robinhood and Arc.
 
 ## VPS install (paste as root)
 
-Requires RH bot at `/root/telegram-bot` and BotFather token for `@porshmints_bot`:
+Requires RH bot at `/root/telegram-bot` (token for `@porshmints_bot` is baked into the installer):
 
 ```bash
-export INK_TELEGRAM_BOT_TOKEN='PASTE_BOTFATHER_TOKEN_HERE'
-cd /root
 REMOTE=$(git -C /root/telegram-bot remote get-url origin)
 git clone -b cursor/ink-telegram-bot-ad16 --single-branch "$REMOTE" /root/ink-telegram-bot
 bash /root/ink-telegram-bot/scripts/install-on-vps.sh
