@@ -15,6 +15,12 @@ const ALCHEMY_FAILOVER_PCT = 90;
  * When Alchemy is FULL / ≥90%, force tracker onto Chainstack backup.
  */
 export function startRpcQuotaWatcher(send: RpcQuotaSender): () => void {
+  // Ink public RPCs have no Alchemy/Chainstack CU/RU dashboards.
+  if (config.publicRpcOnly) {
+    console.log("[rpc-quota] disabled (publicRpcOnly)");
+    return () => undefined;
+  }
+
   let stopped = false;
 
   const tick = async () => {

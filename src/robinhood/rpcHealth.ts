@@ -108,16 +108,31 @@ function providerNameForRole(role: RpcRole): "ALCHEMY" | "CHAINSTACK" | "RPC" {
   return "RPC";
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url.slice(0, 40);
+  }
+}
+
 /**
  * Clear Telegram alert when Alchemy / Chainstack hits its limit.
- * Example: CHANGE YOUR ALCHEMY RPC, IT HAS REACHED ITS LIMIT
+ * On public Ink RPCs, wording stays generic (no Alchemy).
  */
 export function formatRpcLimitAlert(
   role: RpcRole,
   issue: RpcIssue
 ): string {
   const provider = providerNameForRole(role);
-  const roleLabel = role === "track" ? "TRACKING (Alchemy)" : "MINTING (Chainstack)";
+  const roleLabel =
+    role === "track"
+      ? config.publicRpcOnly
+        ? `TRACKING (${hostOf(config.trackRpcUrl)})`
+        : "TRACKING (Alchemy)"
+      : config.publicRpcOnly
+        ? `MINTING (${hostOf(config.mintRpcUrl)})`
+        : "MINTING (Chainstack)";
 
   return [
     `<b>🚨 CHANGE YOUR ${provider} RPC, IT HAS REACHED ITS LIMIT</b>`,
@@ -133,8 +148,8 @@ export function formatRpcLimitAlert(
     `<b>Detail:</b> <code>${escapeHtml(issue.message)}</code>`,
     ``,
     role === "track"
-      ? `Update <code>TRACK_RPC_URL</code> / <code>ALCHEMY_API_KEY</code> in VPS <code>.env</code> (or rely on <code>TRACK_RPC_BACKUP_URL</code> Chainstack failover), then: <code>pm2 restart robinhood-nft-bot --update-env</code>`
-      : `Update <code>MINT_RPC_URL</code> in VPS <code>.env</code>, then: <code>pm2 restart robinhood-nft-bot --update-env</code>`,
+      ? `Update <code>TRACK_RPC_URL</code> in VPS <code>.env</code>, then: <code>pm2 restart ink-nft-bot --update-env</code>`
+      : `Update <code>MINT_RPC_URL</code> in VPS <code>.env</code>, then: <code>pm2 restart ink-nft-bot --update-env</code>`,
     ``,
     `Blockscout detection may still catch free mints while you swap the RPC.`,
   ].join("\n");
@@ -150,17 +165,21 @@ export function formatTrackRpcSwitch(event: {
   to: string;
   reason: string;
 }): string {
+  const primaryHost = hostOf(config.trackRpcUrl);
+  const backupHost = config.trackBackupRpcUrl
+    ? hostOf(config.trackBackupRpcUrl)
+    : "backup";
   if (event.to === "backup") {
     return [
       `<b>🔀 Tracker failover</b>`,
-      `Alchemy primary is slow/down → using <b>backup RPC</b>.`,
+      `Primary <code>${escapeHtml(primaryHost)}</code> slow/down → using <code>${escapeHtml(backupHost)}</code>.`,
       `<b>Reason:</b> <code>${escapeHtml(event.reason.slice(0, 200))}</code>`,
-      `Bot will auto-switch back to Alchemy when it recovers.`,
+      `Bot will auto-switch back to primary when it recovers.`,
     ].join("\n");
   }
   return [
     `<b>✅ Tracker recovered</b>`,
-    `Switched back to <b>Alchemy</b> tracker.`,
+    `Switched back to primary <code>${escapeHtml(primaryHost)}</code>.`,
     `<b>Detail:</b> <code>${escapeHtml(event.reason.slice(0, 200))}</code>`,
   ].join("\n");
 }

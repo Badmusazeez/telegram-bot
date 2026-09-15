@@ -49,6 +49,16 @@ fi
 
 cd "$INK_DIR"
 
+# Always force public Ink RPCs (strip any Alchemy/Chainstack leftovers).
+upsert_env() {
+  local key="$1" val="$2"
+  if grep -q "^${key}=" .env 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=${val}|" .env
+  else
+    echo "${key}=${val}" >> .env
+  fi
+}
+
 if [[ ! -f .env ]]; then
   echo "==> Writing Ink .env"
   cat > .env <<EOF
@@ -62,6 +72,9 @@ MINT_RPC_URL=https://rpc-gel.inkonchain.com
 TRACK_RPC_BACKUP_URL=https://rpc-qnd.inkonchain.com
 MINT_RPC_BACKUP_URL=https://rpc-qnd.inkonchain.com
 ROBINHOOD_RPC_URL=
+ALCHEMY_API_KEY=
+ALCHEMY_ADMIN_KEY=
+CHAINSTACK_API_KEY=
 
 COPY_ENABLED=false
 DRY_RUN=true
@@ -80,10 +93,21 @@ PRICE_ALERT_PCT=10
 EOF
   chmod 600 .env
 else
-  # Keep existing .env but refresh token if installer was given a new one
-  if grep -q '^TELEGRAM_BOT_TOKEN=$' .env || grep -q 'PASTE_BOTFATHER' .env; then
-    sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TOKEN}|" .env
+  echo "==> Refreshing Ink .env (token + public RPCs)"
+  if grep -q '^TELEGRAM_BOT_TOKEN=$' .env || grep -q 'PASTE_BOTFATHER' .env || ! grep -q '^TELEGRAM_BOT_TOKEN=.' .env; then
+    upsert_env TELEGRAM_BOT_TOKEN "${TOKEN}"
   fi
+  # Always re-assert public Ink RPCs and clear Alchemy/Chainstack.
+  upsert_env CHAIN ink
+  upsert_env TRACK_RPC_URL "https://rpc-gel.inkonchain.com"
+  upsert_env MINT_RPC_URL "https://rpc-gel.inkonchain.com"
+  upsert_env TRACK_RPC_BACKUP_URL "https://rpc-qnd.inkonchain.com"
+  upsert_env MINT_RPC_BACKUP_URL "https://rpc-qnd.inkonchain.com"
+  upsert_env ROBINHOOD_RPC_URL ""
+  upsert_env ALCHEMY_API_KEY ""
+  upsert_env ALCHEMY_ADMIN_KEY ""
+  upsert_env CHAINSTACK_API_KEY ""
+  upsert_env TELEGRAM_ALLOWED_CHAT_IDS "543570208"
 fi
 
 echo "==> npm install + build"

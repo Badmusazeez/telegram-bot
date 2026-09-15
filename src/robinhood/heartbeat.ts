@@ -71,7 +71,7 @@ export function startHeartbeat(send: HeartbeatSender): () => void {
           : `<b>Last copy:</b> none yet`,
         lowGasNote,
         ``,
-        `<i>Paths: pending WSS → Blockscout → tip-scan → Alchemy logs</i>`,
+        `<i>Paths: pending WSS → Blockscout → tip-scan → public getLogs</i>`,
       ]
         .filter((l) => l !== undefined)
         .join("\n");

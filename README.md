@@ -34,7 +34,9 @@ Telegram `@porshmints_bot`: `/start` → `/listkeys` → `/wallets`.
 
 ## Network
 
-- Mainnet: `CHAIN=ink` · `https://rpc-gel.inkonchain.com` · chainId `57073`
-- Testnet: `CHAIN=ink-sepolia` · `https://rpc-gel-sepolia.inkonchain.com` · chainId `763373`
+- Mainnet: `CHAIN=ink` · public `https://rpc-gel.inkonchain.com` · backup `https://rpc-qnd.inkonchain.com` · chainId `57073`
+- Testnet: `CHAIN=ink-sepolia` · public Sepolia gel/qnd · chainId `763373`
+
+Track **and** mint use public Ink RPCs only (Alchemy/Chainstack URLs are ignored). Failover between gel↔qnd is silent (no Telegram spam).
 
 Gas token is **ETH**.

@@ -160,7 +160,7 @@ async function main(): Promise<void> {
     } catch (err) {
       if (hasTrackBackup()) {
         console.warn(
-          `[boot] track primary failed — forcing Chainstack backup: ${
+          `[boot] track primary failed — forcing public backup: ${
             err instanceof Error ? err.message : String(err)
           }`
         );
@@ -202,8 +202,8 @@ async function main(): Promise<void> {
   console.log(
     `RPC ready (chain=${config.chain.key} chainId=${trackChainId ?? "?"})`
   );
-  console.log(`Track RPC (Alchemy): ${rpcLabels.track}`);
-  console.log(`Mint  RPC (Chainstack): ${rpcLabels.mint}`);
+  console.log(`Track RPC (public): ${rpcLabels.track}`);
+  console.log(`Mint  RPC (public): ${rpcLabels.mint}`);
   if (rpcLabels.trackBackup !== "(none)") {
     console.log(`Track RPC (backup): ${rpcLabels.trackBackup}`);
   }
@@ -211,7 +211,14 @@ async function main(): Promise<void> {
     console.log(`Mint  RPC (backup): ${rpcLabels.mintBackup}`);
   }
 
+  // Public Ink RPCs: failover silently (no Alchemy-style Telegram spam).
   setTrackRpcSwitchHandler(async (event) => {
+    console.warn(
+      `[track-rpc] ${event.from} → ${event.to}: ${event.reason.slice(0, 180)}`
+    );
+    if (config.publicRpcOnly) {
+      return;
+    }
     await broadcastRpcAlert(
       bot,
       formatTrackRpcSwitch(event),
@@ -220,7 +227,10 @@ async function main(): Promise<void> {
   });
 
   setMintRpcIssueHandler(async (issue) => {
-    console.warn(`[rpc] mint/Chainstack issue ${issue.kind}: ${issue.message}`);
+    console.warn(`[rpc] mint issue ${issue.kind}: ${issue.message}`);
+    if (config.publicRpcOnly) {
+      return;
+    }
     await broadcastRpcAlert(
       bot,
       formatRpcLimitAlert("mint", issue),
@@ -282,7 +292,10 @@ async function main(): Promise<void> {
   };
 
   const onTrackRpcIssue = async (issue: TrackRpcIssue) => {
-    console.warn(`[rpc] track/Alchemy issue ${issue.kind}: ${issue.message}`);
+    console.warn(`[rpc] track issue ${issue.kind}: ${issue.message}`);
+    if (config.publicRpcOnly) {
+      return;
+    }
     await broadcastRpcAlert(
       bot,
       formatRpcLimitAlert("track", issue),
@@ -335,9 +348,16 @@ async function main(): Promise<void> {
     await broadcastHtml(bot, html);
   });
 
-  const stopRpcQuota = startRpcQuotaWatcher(async (html) => {
-    await broadcastHtml(bot, html);
-  });
+  const stopRpcQuota = config.publicRpcOnly
+    ? (() => {
+        console.log(
+          "[rpc-quota] skipped — Ink uses public RPCs (no Alchemy/Chainstack quota)"
+        );
+        return () => undefined;
+      })()
+    : startRpcQuotaWatcher(async (html) => {
+        await broadcastHtml(bot, html);
+      });
 
   setSlotRaceHandler(async (event) => {
     // BURST is already collapsed to one SUBMITTED summary in slotRace.

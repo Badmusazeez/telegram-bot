@@ -120,16 +120,16 @@ if (!parsed.success) {
   throw new Error(`Invalid configuration:\n${details}`);
 }
 
-/** Strip any Robinhood RPC leftovers from parent shell env. */
+/** Strip RH / Arc / Alchemy / Chainstack leftovers — Ink uses public RPCs only. */
 function sanitizeRpc(url: string): string {
   const u = url.trim();
   if (!u) return "";
-  // Never inherit RH / Arc RPCs from a parent shell.
   if (
-    /robinhood|arc-scan|arc\.io|alchemy\.com\/v2\/test|chainstack\.com\/testmint/i.test(
-      u
-    )
+    /robinhood|arc-scan|arc\.io|alchemy\.com|chainstack\.com/i.test(u)
   ) {
+    console.warn(
+      `[config] ignoring non-public / foreign RPC (Ink public only): ${u.slice(0, 60)}…`
+    );
     return "";
   }
   return u;
@@ -146,16 +146,26 @@ const mintBackupCandidate = sanitizeRpc(env.MINT_RPC_BACKUP_URL);
 const mintBackupRpcUrl =
   mintBackupCandidate && mintBackupCandidate !== mintRpcUrl
     ? mintBackupCandidate
-    : "";
+    : chain.defaultBackupRpcUrl && chain.defaultBackupRpcUrl !== mintRpcUrl
+      ? chain.defaultBackupRpcUrl
+      : "";
 
-/** No Robinhood/Arc defaults on Ink — never cross-wire foreign RPCs. */
+/** Public Ink backup only — never RH Alchemy/Chainstack. */
 const trackBackupExplicit = sanitizeRpc(env.TRACK_RPC_BACKUP_URL);
 const trackBackupRpcUrl = (() => {
   if (trackBackupExplicit && trackBackupExplicit !== trackRpcUrl) {
     return trackBackupExplicit;
   }
+  if (chain.defaultBackupRpcUrl && chain.defaultBackupRpcUrl !== trackRpcUrl) {
+    return chain.defaultBackupRpcUrl;
+  }
   return "";
 })();
+
+/** True when track/mint are public Ink endpoints (not Alchemy/Chainstack). */
+const publicRpcOnly =
+  !/alchemy\.com|chainstack\.com/i.test(trackRpcUrl) &&
+  !/alchemy\.com|chainstack\.com/i.test(mintRpcUrl);
 
 if (!trackRpcUrl.startsWith("http")) {
   throw new Error("TRACK_RPC_URL / ROBINHOOD_RPC_URL must be a valid RPC URL");
@@ -215,6 +225,8 @@ export const config = {
   telegramToken: env.TELEGRAM_BOT_TOKEN,
   allowedChatIds: new Set(splitCsv(env.TELEGRAM_ALLOWED_CHAT_IDS)),
   chain,
+  /** Ink bot always runs on public RPCs (no Alchemy/Chainstack). */
+  publicRpcOnly,
   /** @deprecated use trackRpcUrl — kept for older call sites */
   rpcUrl: trackRpcUrl,
   trackRpcUrl,
@@ -224,19 +236,21 @@ export const config = {
       : "",
   mintRpcUrl,
   mintBackupRpcUrl,
-  alchemyApiKey:
-    env.ALCHEMY_API_KEY.trim() ||
-    extractAlchemyKey(trackRpcUrl) ||
-    extractAlchemyKey(mintRpcUrl) ||
-    extractAlchemyKey(trackBackupRpcUrl) ||
-    "",
-  alchemyAdminKey: env.ALCHEMY_ADMIN_KEY.trim(),
+  // Never wire RH Alchemy keys into the Ink bot.
+  alchemyApiKey: publicRpcOnly
+    ? ""
+    : env.ALCHEMY_API_KEY.trim() ||
+      extractAlchemyKey(trackRpcUrl) ||
+      extractAlchemyKey(mintRpcUrl) ||
+      extractAlchemyKey(trackBackupRpcUrl) ||
+      "",
+  alchemyAdminKey: publicRpcOnly ? "" : env.ALCHEMY_ADMIN_KEY.trim(),
   alchemyMonthlyCuLimit:
     Number.isFinite(env.ALCHEMY_MONTHLY_CU_LIMIT) &&
     env.ALCHEMY_MONTHLY_CU_LIMIT > 0
       ? Math.floor(env.ALCHEMY_MONTHLY_CU_LIMIT)
       : 30_000_000,
-  chainstackApiKey: env.CHAINSTACK_API_KEY.trim(),
+  chainstackApiKey: publicRpcOnly ? "" : env.CHAINSTACK_API_KEY.trim(),
   chainstackMonthlyRuLimit:
     Number.isFinite(env.CHAINSTACK_MONTHLY_RU_LIMIT) &&
     env.CHAINSTACK_MONTHLY_RU_LIMIT > 0

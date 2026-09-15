@@ -5,6 +5,8 @@ export interface ChainConfig {
   name: string;
   chainId: bigint;
   defaultRpcUrl: string;
+  /** Secondary public RPC (failover). */
+  defaultBackupRpcUrl: string;
   explorerTxUrl: (txHash: string) => string;
   explorerAddressUrl: (address: string) => string;
   /** OpenSea API chain slug */
@@ -20,7 +22,9 @@ export interface ChainConfig {
 
 /**
  * Ink (Kraken) — OP Stack L2, ETH gas.
- * Public RPCs: https://docs.inkonchain.com/general/network-information
+ * Public RPCs only: https://docs.inkonchain.com/general/network-information
+ *
+ * Keep getLogs / poll gentle — public endpoints rate-limit aggressively.
  */
 export const CHAINS: Record<ChainKey, ChainConfig> = {
   ink: {
@@ -28,14 +32,15 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     name: "Ink",
     chainId: 57073n,
     defaultRpcUrl: "https://rpc-gel.inkonchain.com",
+    defaultBackupRpcUrl: "https://rpc-qnd.inkonchain.com",
     explorerTxUrl: (tx) => `https://explorer.inkonchain.com/tx/${tx}`,
     explorerAddressUrl: (addr) =>
       `https://explorer.inkonchain.com/address/${addr}`,
     openseaChain: "ink",
-    maxScanBlocks: 300,
-    getLogsMaxBlocks: 50,
-    defaultLookbackBlocks: 600,
-    defaultPollIntervalMs: 3_000,
+    maxScanBlocks: 40,
+    getLogsMaxBlocks: 8,
+    defaultLookbackBlocks: 80,
+    defaultPollIntervalMs: 10_000,
     nativeSymbol: "ETH",
   },
   "ink-sepolia": {
@@ -43,14 +48,15 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     name: "Ink Sepolia",
     chainId: 763373n,
     defaultRpcUrl: "https://rpc-gel-sepolia.inkonchain.com",
+    defaultBackupRpcUrl: "https://rpc-qnd-sepolia.inkonchain.com",
     explorerTxUrl: (tx) => `https://explorer-sepolia.inkonchain.com/tx/${tx}`,
     explorerAddressUrl: (addr) =>
       `https://explorer-sepolia.inkonchain.com/address/${addr}`,
     openseaChain: "ink",
-    maxScanBlocks: 300,
-    getLogsMaxBlocks: 50,
-    defaultLookbackBlocks: 600,
-    defaultPollIntervalMs: 3_000,
+    maxScanBlocks: 40,
+    getLogsMaxBlocks: 8,
+    defaultLookbackBlocks: 80,
+    defaultPollIntervalMs: 10_000,
     nativeSymbol: "ETH",
   },
 };
