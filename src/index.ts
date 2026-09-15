@@ -38,6 +38,7 @@ import {
   broadcastRpcAlert,
   broadcastScheduleResult,
   createTelegramBot,
+  registerBotCommands,
 } from "./telegram/bot";
 import { formatSlotRaceEvent } from "./telegram/formatter";
 import { setSlotRaceHandler } from "./robinhood/slotRace";
@@ -110,6 +111,10 @@ async function main(): Promise<void> {
   } else {
     console.log(`[boot] Telegram API ok — @${me.username} (id=${me.id})`);
   }
+  await withBootTimeout("telegram-setMyCommands", 8_000, () =>
+    registerBotCommands(bot)
+  );
+  console.log("[boot] Telegram slash commands registered (incl. /menu)");
 
   await withBootTimeout("opensea-key", 12_000, async () => {
     await ensureOpenSeaApiKey();

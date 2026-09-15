@@ -182,6 +182,7 @@ export function helpText(): string {
     `<b>Commands</b>`,
     `/start — register + show button menu`,
     `/menu — show the reply keyboard`,
+    `/hidemenu — hide the reply keyboard`,
     `/help — show this help`,
     `/status — bot + wallet status`,
     `/watchlist — tracked wallets + price watches`,

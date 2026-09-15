@@ -118,7 +118,10 @@ async function deny(ctx: Context): Promise<void> {
 }
 
 async function replyHelp(ctx: Context): Promise<void> {
-  await ctx.reply(helpText(), { parse_mode: "HTML" });
+  await ctx.reply(helpText(), {
+    parse_mode: "HTML",
+    reply_markup: mainMenuKeyboard(),
+  });
 }
 
 async function replyStatus(ctx: Context): Promise<void> {
@@ -405,6 +408,23 @@ async function replyHideMenu(ctx: Context): Promise<void> {
   });
 }
 
+const BOT_COMMANDS = [
+  { command: "start", description: "Register + show button menu" },
+  { command: "menu", description: "Show the reply keyboard" },
+  { command: "hidemenu", description: "Hide the reply keyboard" },
+  { command: "help", description: "All commands" },
+  { command: "status", description: "Bot + wallet status" },
+  { command: "watchlist", description: "Tracked wallets + prices" },
+  { command: "balances", description: "Mint wallet balances" },
+  { command: "keys", description: "List mint keys" },
+  { command: "wallets", description: "List tracked wallets" },
+] as const;
+
+/** Register Telegram slash-command menu (Bot API setMyCommands). */
+export async function registerBotCommands(bot: Bot): Promise<void> {
+  await bot.api.setMyCommands([...BOT_COMMANDS]);
+}
+
 export function createTelegramBot(): Bot {
   const bot = new Bot(config.telegramToken);
 
@@ -427,6 +447,7 @@ export function createTelegramBot(): Bot {
   });
 
   bot.command("menu", replyShowMenu);
+  bot.command("hidemenu", replyHideMenu);
   bot.command("help", replyHelp);
   bot.command("status", replyStatus);
   bot.command("watchlist", replyWatchlist);
