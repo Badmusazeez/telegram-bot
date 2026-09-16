@@ -405,6 +405,26 @@ async function replyHideMenu(ctx: Context): Promise<void> {
   });
 }
 
+
+const BOT_COMMANDS = [
+  { command: "start", description: "Register + show button menu" },
+  { command: "menu", description: "Show the reply keyboard" },
+  { command: "help", description: "All commands" },
+  { command: "status", description: "Bot + wallet status" },
+  { command: "balances", description: "Mint wallet balances" },
+  { command: "keys", description: "List mint keys" },
+  { command: "wallets", description: "List tracked wallets" },
+  { command: "consolidate", description: "Sweep native gas → funding wallet" },
+  { command: "disburse", description: "Fund mint keys from funding wallet" },
+  { command: "disburseall", description: "Fund every mint key" },
+  { command: "golive", description: "Live MAX mint (copy on + dryrun off)" },
+] as const;
+
+/** Register Telegram slash-command menu (Bot API setMyCommands). */
+export async function registerBotCommands(bot: Bot): Promise<void> {
+  await bot.api.setMyCommands([...BOT_COMMANDS]);
+}
+
 export function createTelegramBot(): Bot {
   const bot = new Bot(config.telegramToken);
 
@@ -1371,8 +1391,8 @@ export function createTelegramBot(): Bot {
       const fund = getFundingWallet();
       await ctx.reply(
         [
-          "<b>Consolidate ETH</b>",
-          "Sweep mint-wallet ETH → one address (leaves gas dust).",
+          `<b>Consolidate ${config.chain.nativeSymbol}</b>`,
+          `Sweep mint-wallet ${config.chain.nativeSymbol} → one address (leaves gas dust).`,
           "",
           "/consolidate — to funding wallet / key #1",
           "/consolidate 0xAddress — to a specific address",
@@ -1393,7 +1413,7 @@ export function createTelegramBot(): Bot {
       return;
     }
     await registerNotifyChat(chatId(ctx));
-    await ctx.reply("🧹 Consolidating ETH…");
+    await ctx.reply(`🧹 Consolidating ${config.chain.nativeSymbol}…`);
     try {
       const result = await runConsolidate({
         toAddress: to || undefined,
@@ -1417,13 +1437,13 @@ export function createTelegramBot(): Bot {
       const fund = getFundingWallet();
       await ctx.reply(
         [
-          "<b>Disburse ETH</b>",
-          "Send ETH from funding wallet → mint keys.",
+          `<b>Disburse ${config.chain.nativeSymbol}</b>`,
+          `Send ${config.chain.nativeSymbol} from funding wallet → mint keys.`,
           "",
-          "/disburse 0.001 all — every mint key (except funding)",
-          "/disburse 0.001 1 2 — by /listkeys numbers",
-          "/disburse 0.001 0xA 0xB — by addresses",
-          "/disburseall 0.001 — same as /disburse 0.001 all",
+          `/disburse 1 all — every mint key (except funding)`,
+          `/disburse 0.5 1 2 — by /listkeys numbers`,
+          `/disburse 1 0xA 0xB — by addresses`,
+          `/disburseall 1 — same as /disburse 1 all`,
           "",
           fund
             ? `Funding: <code>${fund.address}</code>`
@@ -1437,7 +1457,7 @@ export function createTelegramBot(): Bot {
 
     const parsedAmt = parseDisburseArgs(raw);
     if (!parsedAmt) {
-      await ctx.reply("Usage: /disburse &lt;amountEth&gt; [all|1 2|0x…]\nExample: /disburse 0.001 all", {
+      await ctx.reply(`Usage: /disburse &lt;amount&gt; [all|1 2|0x…]\nExample: /disburse 1 all (${config.chain.nativeSymbol})`, {
         parse_mode: "HTML",
       });
       return;
@@ -1451,7 +1471,7 @@ export function createTelegramBot(): Bot {
 
     await registerNotifyChat(chatId(ctx));
     await ctx.reply(
-      `💸 Disbursing ${formatEther(parsedAmt.amountWei)} ETH…`
+      `💸 Disbursing ${formatEther(parsedAmt.amountWei)} ${config.chain.nativeSymbol}…`
     );
     try {
       const result = await runDisburse({
@@ -1474,18 +1494,18 @@ export function createTelegramBot(): Bot {
     const raw = (ctx.match || "").trim();
     if (!raw || raw.toLowerCase() === "help") {
       await ctx.reply(
-        "Usage: /disburseall &lt;amountEth&gt;\nExample: /disburseall 0.001\n(same as /disburse 0.001 all)",
+        `Usage: /disburseall &lt;amount&gt;\nExample: /disburseall 1\n(same as /disburse 1 all · ${config.chain.nativeSymbol})`,
         { parse_mode: "HTML" }
       );
       return;
     }
     const amt = parseEthAmount(raw.split(/\s+/)[0] || "");
     if (amt == null) {
-      await ctx.reply("Usage: /disburseall 0.001");
+      await ctx.reply("Usage: /disburseall 1");
       return;
     }
     await registerNotifyChat(chatId(ctx));
-    await ctx.reply(`💸 DisburseAll ${formatEther(amt)} ETH → all mint keys…`);
+    await ctx.reply(`💸 DisburseAll ${formatEther(amt)} ${config.chain.nativeSymbol} → all mint keys…`);
     try {
       const result = await runDisburse({
         amountEachWei: amt,
@@ -1606,7 +1626,7 @@ async function replyEthMoveResult(
     result.from ? `<b>From:</b> <code>${escape(result.from)}</code>` : "",
     result.to ? `<b>To:</b> <code>${escape(result.to)}</code>` : "",
     result.amountEachWei != null
-      ? `<b>Each:</b> ${escape(formatEther(result.amountEachWei))} ETH`
+      ? `<b>Each:</b> ${escape(formatEther(result.amountEachWei))} ${escape(config.chain.nativeSymbol)}`
       : "",
     ``,
     `<b>Result:</b> ${escape(result.reason.slice(0, 1200))}`,
@@ -1618,14 +1638,14 @@ async function replyEthMoveResult(
       if (r.ok && r.txHash) {
         lines.push(
           `• <code>${escape(r.address.slice(0, 10))}…</code> ` +
-            `${r.valueWei != null ? escape(formatEther(r.valueWei)) + " ETH · " : ""}` +
+            `${r.valueWei != null ? escape(formatEther(r.valueWei)) + " " + escape(config.chain.nativeSymbol) + " · " : ""}` +
             `<a href="${config.chain.explorerTxUrl(r.txHash)}">tx</a>`
         );
       } else if (r.ok) {
         lines.push(
           `• <code>${escape(r.address.slice(0, 10))}…</code> OK` +
             (r.valueWei != null
-              ? ` ${escape(formatEther(r.valueWei))} ETH`
+              ? ` ${escape(formatEther(r.valueWei))} ${escape(config.chain.nativeSymbol)}`
               : "")
         );
       } else {

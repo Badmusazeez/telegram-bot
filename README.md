@@ -51,3 +51,20 @@ pm2 start ecosystem.config.cjs
 - Testnet: `CHAIN=arc-testnet` · `https://rpc.testnet.arc.io` · chainId `5042002`
 
 Gas token is **USDC** (native).
+
+
+## Treasury (native USDC)
+
+Arc gas is **USDC**. From Telegram `@arcybot_bot` (requires `/dryrun off` for live sends):
+
+```
+/consolidate help
+/consolidate              # sweep mint keys → funding / key #1
+/consolidate 0xAddress
+
+/disburse 1 all           # fund every mint key with 1 USDC
+/disburse 0.5 1 2         # by /listkeys numbers
+/disburseall 1            # same as /disburse 1 all
+```
+
+Funding wallet = `FUNDING_PRIVATE_KEY` in `.env`, else mint key #1.

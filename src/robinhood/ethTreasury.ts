@@ -21,8 +21,13 @@ import { clearWalletReadinessCache } from "./walletReady";
 import { classifyRpcError } from "./rpcHealth";
 import { reportMintRpcIssue } from "./mintRpcAlerts";
 
-/** Leave this much ETH on source wallets after consolidate (covers gas). */
-export const CONSOLIDATE_DUST_WEI = 80_000_000_000_000n; // 0.00008 ETH
+/** Native gas symbol on this chain (Arc = USDC). */
+export function nativeSymbol(): string {
+  return config.chain.nativeSymbol || "ETH";
+}
+
+/** Leave this much native on source wallets after consolidate (covers gas). */
+export const CONSOLIDATE_DUST_WEI = 80_000_000_000_000n; // 0.00008 native
 const TRANSFER_GAS_LIMIT = 21_000n;
 
 export type EthMoveWalletResult = {
@@ -52,6 +57,10 @@ function shortErr(err: unknown): string {
     .slice(0, 160);
 }
 
+function fmtNative(wei: bigint): string {
+  return `${formatEther(wei)} ${nativeSymbol()}`;
+}
+
 async function feeFields(provider: JsonRpcProvider): Promise<{
   maxFeePerGas?: bigint;
   maxPriorityFeePerGas?: bigint;
@@ -72,7 +81,6 @@ async function feeFields(provider: JsonRpcProvider): Promise<{
     const gasPrice = (fee.gasPrice * 130n) / 100n;
     return { gasPrice, tipWei: gasPrice };
   }
-  // Fallback ~0.1 gwei
   const gasPrice = 100_000_000n;
   return { gasPrice, tipWei: gasPrice };
 }
@@ -93,8 +101,14 @@ export function getFundingWallet(): Wallet | null {
   return getWallet()?.connect(provider) ?? null;
 }
 
+/** Parse native amount (ETH or USDC suffix optional). */
 export function parseEthAmount(raw: string): bigint | null {
-  const t = raw.trim().toLowerCase().replace(/eth$/, "").trim();
+  const t = raw
+    .trim()
+    .toLowerCase()
+    .replace(/usdc$/, "")
+    .replace(/eth$/, "")
+    .trim();
   if (!t || !/^\d+(\.\d+)?$/.test(t)) return null;
   try {
     const wei = parseEther(t);
@@ -162,7 +176,7 @@ async function sendNative(params: {
 }
 
 /**
- * Sweep ETH from mint wallets → destination (default: funding / wallet #1).
+ * Sweep native gas from mint wallets → destination (default: funding / wallet #1).
  * Leaves dust for gas on each source.
  */
 export async function runConsolidate(options: {
@@ -208,7 +222,7 @@ export async function runConsolidate(options: {
   if (options.onProgress) {
     await options.onProgress(
       `🧹 Consolidate → ${to.slice(0, 10)}… · ` +
-        `${sources.length} source(s) · leave ~${formatEther(keep)} ETH dust`
+        `${sources.length} source(s) · leave ~${fmtNative(keep)} dust`
     );
   }
 
@@ -225,7 +239,7 @@ export async function runConsolidate(options: {
       success: false,
       action: "consolidate",
       to,
-      reason: `Nothing to sweep — all sources ≤ dust+gas (~${formatEther(keep)} ETH).`,
+      reason: `Nothing to sweep — all sources ≤ dust+gas (~${fmtNative(keep)}).`,
       results: sources.map((w) => ({
         address: w.address.toLowerCase(),
         ok: false,
@@ -243,7 +257,7 @@ export async function runConsolidate(options: {
       to,
       reason:
         `DRY RUN — would sweep ${plan.length} wallet(s) → ${to.slice(0, 10)}… ` +
-        `total ~${formatEther(total)} ETH. /dryrun off to go live.`,
+        `total ~${fmtNative(total)}. /dryrun off to go live.`,
       results: plan.map((p) => ({
         address: p.wallet.address.toLowerCase(),
         ok: true,
@@ -267,14 +281,14 @@ export async function runConsolidate(options: {
     to,
     reason:
       wins.length > 0
-        ? `Consolidated ${wins.length}/${plan.length} → ${to.slice(0, 10)}… (~${formatEther(total)} ETH broadcast)`
+        ? `Consolidated ${wins.length}/${plan.length} → ${to.slice(0, 10)}… (~${fmtNative(total)} broadcast)`
         : `Consolidate failed: 0/${plan.length} sends`,
     results,
   };
 }
 
 /**
- * Send `amountEach` ETH from funding wallet to target mint wallets.
+ * Send `amountEach` native from funding wallet to target mint wallets.
  */
 export async function runDisburse(options: {
   amountEachWei: bigint;
@@ -305,7 +319,6 @@ export async function runDisburse(options: {
   if (options.targets && options.targets.length > 0) {
     const want = new Set(options.targets.map((a) => a.toLowerCase()));
     targets = all.filter((w) => want.has(w.address.toLowerCase()));
-    // Allow disbursing to addresses that are mint wallets only
     const missing = [...want].filter(
       (a) => !all.some((w) => w.address.toLowerCase() === a)
     );
@@ -326,7 +339,6 @@ export async function runDisburse(options: {
     targets = all.filter((w) => w.address.toLowerCase() !== from);
   }
 
-  // Never send to self
   targets = targets.filter((w) => w.address.toLowerCase() !== from);
 
   if (targets.length === 0) {
@@ -352,9 +364,9 @@ export async function runDisburse(options: {
 
   if (options.onProgress) {
     await options.onProgress(
-      `💸 Disburse ${formatEther(options.amountEachWei)} ETH × ` +
+      `💸 Disburse ${fmtNative(options.amountEachWei)} × ` +
         `${targets.length} → from ${from.slice(0, 10)}… ` +
-        `(bal ${formatEther(bal)} ETH)`
+        `(bal ${fmtNative(bal)})`
     );
   }
 
@@ -366,8 +378,8 @@ export async function runDisburse(options: {
       from,
       amountEachWei: options.amountEachWei,
       reason:
-        `Funding wallet low: have ${formatEther(bal)} ETH, need ~${formatEther(need)} ETH ` +
-        `(${targets.length}×${formatEther(options.amountEachWei)} + gas).`,
+        `Funding wallet low: have ${fmtNative(bal)}, need ~${fmtNative(need)} ` +
+        `(${targets.length}×${fmtNative(options.amountEachWei)} + gas).`,
       results: [],
     };
   }
@@ -380,7 +392,7 @@ export async function runDisburse(options: {
       from,
       amountEachWei: options.amountEachWei,
       reason:
-        `DRY RUN — would send ${formatEther(options.amountEachWei)} ETH to ` +
+        `DRY RUN — would send ${fmtNative(options.amountEachWei)} to ` +
         `${targets.length} wallet(s) from ${from.slice(0, 10)}…. /dryrun off to go live.`,
       results: targets.map((w) => ({
         address: w.address.toLowerCase(),
@@ -390,7 +402,6 @@ export async function runDisburse(options: {
     };
   }
 
-  // Sequential from funding wallet (shared nonce)
   const results: EthMoveWalletResult[] = [];
   for (const w of targets) {
     const sent = await sendNative({
@@ -398,7 +409,6 @@ export async function runDisburse(options: {
       to: w.address,
       valueWei: options.amountEachWei,
     });
-    // Attribute result to recipient for clearer Telegram output
     results.push({
       ...sent,
       address: w.address.toLowerCase(),
@@ -406,7 +416,7 @@ export async function runDisburse(options: {
     if (options.onProgress) {
       await options.onProgress(
         sent.ok
-          ? `✅ ${w.address.slice(0, 10)}… ${formatEther(options.amountEachWei)} ETH · ${sent.txHash?.slice(0, 12)}…`
+          ? `✅ ${w.address.slice(0, 10)}… ${fmtNative(options.amountEachWei)} · ${sent.txHash?.slice(0, 12)}…`
           : `❌ ${w.address.slice(0, 10)}… ${sent.error}`
       );
     }
@@ -421,7 +431,7 @@ export async function runDisburse(options: {
     amountEachWei: options.amountEachWei,
     reason:
       wins.length > 0
-        ? `Disbursed ${formatEther(options.amountEachWei)} ETH to ${wins.length}/${targets.length} wallet(s)`
+        ? `Disbursed ${fmtNative(options.amountEachWei)} to ${wins.length}/${targets.length} wallet(s)`
         : `Disburse failed: 0/${targets.length} sends`,
     results,
   };

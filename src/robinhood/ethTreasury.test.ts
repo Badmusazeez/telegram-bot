@@ -11,6 +11,8 @@ describe("ethTreasury parsers", () => {
   it("parseEthAmount", () => {
     assert.equal(parseEthAmount("0.001"), parseEther("0.001"));
     assert.equal(parseEthAmount("1eth"), parseEther("1"));
+    assert.equal(parseEthAmount("1usdc"), parseEther("1"));
+    assert.equal(parseEthAmount("2.5usdc"), parseEther("2.5"));
     assert.equal(parseEthAmount("0"), null);
     assert.equal(parseEthAmount(""), null);
     assert.equal(parseEthAmount("abc"), null);
